@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { CodexInputItem } from "../src/services/codex/app-server-client.js";
+import { SessionManager } from "../src/services/session-manager.js";
+import { StateStore } from "../src/store/state-store.js";
+import type { PersistedInboundMessage } from "../src/types.js";
 import { MockCodexAppServer } from "./helpers/mock-codex-app-server.js";
 import { MockSlackServer } from "./manual/mock-slack-server.js";
 
@@ -205,6 +208,96 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(recoveredText).toContain("漏掉的第一条");
     expect(recoveredText).toContain("漏掉的第二条");
     expect(recoveredText).toContain("\"batch_message_count\": 2");
+  }, 60_000);
+
+  it("recovers persisted pending backlog on startup when a session has no active turn", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await fs.rm(tempRoot, { force: true, recursive: true });
+    });
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const port = await getFreePort();
+    const broker = await startBrokerProcess({
+      port,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "666.220",
+      ts: "666.221",
+      text: "<@UBOT> 开个 session"
+    });
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "session bootstrap turn");
+    await waitForSessionIdle(tempRoot, "C123:666.220");
+    await broker.stop();
+    cleanups.pop();
+
+    const stateStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await sessions.load();
+    const session = sessions.getSession("C123", "666.220");
+    expect(session).toBeTruthy();
+
+    const now = new Date().toISOString();
+    const pendingMessage: PersistedInboundMessage = {
+      key: `C123:666.220:666.222`,
+      sessionKey: "C123:666.220",
+      channelId: "C123",
+      rootThreadTs: "666.220",
+      messageTs: "666.222",
+      source: "thread_reply",
+      userId: "U234",
+      text: "BOOT_PENDING_RECOVERY",
+      senderKind: "user",
+      mentionedUserIds: [],
+      images: [],
+      slackMessage: {
+        type: "message",
+        user: "U234",
+        ts: "666.222",
+        text: "BOOT_PENDING_RECOVERY",
+        thread_ts: "666.220",
+        channel: "C123"
+      },
+      status: "pending",
+      createdAt: now,
+      updatedAt: now
+    };
+    await sessions.upsertInboundMessage(pendingMessage);
+
+    const restarted = await startBrokerProcess({
+      port,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => restarted.stop());
+
+    await waitFor(() => {
+      const deliveredTexts = mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input));
+      return deliveredTexts.some((text) => text.includes("BOOT_PENDING_RECOVERY"));
+    }, "startup recovery of persisted pending backlog");
   }, 60_000);
 
   it("injects background job events back into the same session", async () => {

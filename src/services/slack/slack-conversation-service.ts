@@ -97,6 +97,7 @@ export class SlackConversationService {
 
   async start(): Promise<void> {
     await this.#reconcilePersistedActiveTurns();
+    await this.#recoverPendingSessionsOnBoot();
     await this.#recoverPendingSyntheticMessages();
     this.#startActiveTurnReconciler();
   }
@@ -199,6 +200,31 @@ export class SlackConversationService {
 
     await this.acceptInboundMessage(session, input);
     return input;
+  }
+
+  async resumePendingSession(options: {
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly forceReset?: boolean | undefined;
+  }): Promise<{
+    readonly sessionKey: string;
+    readonly pendingCount: number;
+    readonly resumed: boolean;
+  } | null> {
+    const session = this.#sessions.getSession(options.channelId, options.rootThreadTs);
+    if (!session) {
+      return null;
+    }
+
+    const pendingCount = await this.#resumePendingDispatch(session.key, {
+      forceReset: options.forceReset ?? true
+    });
+
+    return {
+      sessionKey: session.key,
+      pendingCount,
+      resumed: pendingCount > 0
+    };
   }
 
   async acceptBackgroundJobEvent(options: {
@@ -405,6 +431,8 @@ export class SlackConversationService {
         });
       }
     }
+
+    await this.#recoverDormantPendingSessions();
   }
 
   async #reconcileSingleActiveTurn(session: SlackSessionRecord): Promise<"cleared" | "retained"> {
@@ -787,19 +815,78 @@ export class SlackConversationService {
     runtime.processing = false;
   }
 
-  async #resumePendingDispatch(sessionKey: string): Promise<void> {
+  async #resumePendingDispatch(sessionKey: string, options?: {
+    readonly forceReset?: boolean | undefined;
+  }): Promise<number> {
     const session = this.#sessions.listSessions().find((entry) => entry.key === sessionKey);
     if (!session) {
-      return;
+      return 0;
     }
 
-    if (this.#inboundStore.listPendingMessages(session).length === 0) {
-      return;
+    const pendingMessages = this.#inboundStore.listPendingMessages(session);
+    if (pendingMessages.length === 0) {
+      return 0;
+    }
+
+    if (!session.activeTurnId && options?.forceReset) {
+      logger.warn("Force-resetting broker runtime state before resuming pending Slack dispatch", {
+        sessionKey,
+        pendingCount: pendingMessages.length
+      });
+      this.#resetRuntimeProcessing(sessionKey);
     }
 
     this.#enqueueDispatch(session, {
       kind: "dispatch_pending"
     });
+
+    return pendingMessages.length;
+  }
+
+  async #recoverPendingSessionsOnBoot(): Promise<void> {
+    const sessions = this.#sessions
+      .listSessions()
+      .filter((session) => !session.activeTurnId)
+      .sort((left, right) => compareIsoTimestamp(right.updatedAt, left.updatedAt));
+
+    let resumedSessionCount = 0;
+    let resumedMessageCount = 0;
+
+    for (const session of sessions) {
+      const resumedCount = await this.#resumePendingDispatch(session.key, {
+        forceReset: true
+      });
+
+      if (resumedCount === 0) {
+        continue;
+      }
+
+      resumedSessionCount += 1;
+      resumedMessageCount += resumedCount;
+    }
+
+    if (resumedSessionCount > 0) {
+      logger.warn("Recovered pending Slack dispatch backlog during broker startup", {
+        resumedSessionCount,
+        resumedMessageCount
+      });
+    }
+  }
+
+  async #recoverDormantPendingSessions(): Promise<void> {
+    const sessions = this.#sessions
+      .listSessions()
+      .filter((session) => !session.activeTurnId)
+      .sort((left, right) => compareIsoTimestamp(right.updatedAt, left.updatedAt));
+
+    for (const session of sessions) {
+      const runtime = this.#getRuntimeSession(session.key);
+      if (runtime.processing) {
+        continue;
+      }
+
+      await this.#resumePendingDispatch(session.key);
+    }
   }
 
   async #recoverPendingSyntheticMessages(): Promise<void> {

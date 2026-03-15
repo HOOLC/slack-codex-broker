@@ -110,6 +110,14 @@ export class SlackCodexBridge {
     return await this.#conversations.replayThreadMessage(options);
   }
 
+  async resumePendingSession(options: {
+    readonly channelId: string;
+    readonly rootThreadTs: string;
+    readonly forceReset?: boolean | undefined;
+  }) {
+    return await this.#conversations.resumePendingSession(options);
+  }
+
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;

@@ -135,11 +135,13 @@ Operational scripts for the real container:
 ```bash
 pnpm ops:check:real
 pnpm ops:rollout:real
+pnpm ops:resume:real -- --channel-id C123 --thread-ts 111.222
 pnpm ops:status:real
 ```
 
 `ops:rollout:real` reuses the current `slack-codex-broker-real` container's env vars and bind mounts, refuses to restart while active turns exist unless you pass `--allow-active`, rebuilds the image, recreates the container, and then runs the fixed post-update checks. Each rollout also writes sanitized metadata plus pre-rollout logs under `.backups/rollouts/`.
 `ops:status:real` prints a structured runtime snapshot for the live container, including health, active sessions, open inbound messages, background jobs, and recent broker logs. Use `--open-inbound-limit` and `--log-lines` to tune output volume.
+`ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 
 The container image:
 
@@ -252,6 +254,21 @@ Optional fields:
 - `alt_text`
 - `snippet_type`
 - `content_type`
+
+## Slack Recovery API
+
+The broker also exposes a local-only operator endpoint for manually resuming a stuck session:
+
+```bash
+curl -sS -X POST http://127.0.0.1:3000/slack/resume-pending-session \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  --data-urlencode 'channel_id=C123' \
+  --data-urlencode 'thread_ts=111.222'
+```
+
+Optional fields:
+
+- `force_reset=true|false` (defaults to `true`)
 
 ## Notes
 

@@ -31,22 +31,16 @@ export class SlackTurnReconciler {
     const activeTurnId = hydratedSession.activeTurnId!;
     const snapshot = await this.#turnRunner.readTurnSnapshot(hydratedSession, activeTurnId, {
       syncActiveTurn: true,
-      treatMissingAsStale: true
+      treatMissingAsStale: false
     });
 
     if (!snapshot) {
-      logger.warn("Clearing stale active Codex turn after snapshot reconciliation", {
+      logger.debug("Active Codex turn not present in thread snapshot yet; retaining turn", {
         sessionKey: session.key,
         turnId: activeTurnId,
         reason: "turn_missing_from_snapshot"
       });
-      await this.#inboundStore.resetTurnBatchToPending(hydratedSession, activeTurnId);
-      await this.#sessions.setActiveTurnId(
-        hydratedSession.channelId,
-        hydratedSession.rootThreadTs,
-        undefined
-      );
-      return "cleared";
+      return "retained";
     }
 
     if (snapshot.status === "inProgress" || snapshot.status === "unknown") {
