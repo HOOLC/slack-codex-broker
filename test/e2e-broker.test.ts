@@ -230,6 +230,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 先起一个 session"
     });
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "initial turn");
+    await waitFor(() => mockCodex.turnsStarted[0]?.status === "completed", "initial turn completion");
 
     const registerResponse = await fetch(`${broker.baseUrl}/jobs/register`, {
       method: "POST",
