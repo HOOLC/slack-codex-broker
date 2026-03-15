@@ -75,6 +75,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
 
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
+    await waitFor(() => mockCodex.turnsStarted[0]?.status === "completed", "first turn completion");
     const firstTurnText = collectTextInput(mockCodex.turnsStarted[0]!.input);
     expect(firstTurnText).toContain("ROOT_CONTEXT_ABC");
     expect(firstTurnText).toContain("RECENT_CONTEXT_DEF");
