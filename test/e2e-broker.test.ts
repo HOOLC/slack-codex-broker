@@ -75,7 +75,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     });
 
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
-    await waitFor(() => mockCodex.turnsStarted[0]?.status === "completed", "first turn completion");
+    await waitForSessionIdle(tempRoot, "C123:111.220");
     const firstTurnText = collectTextInput(mockCodex.turnsStarted[0]!.input);
     expect(firstTurnText).toContain("ROOT_CONTEXT_ABC");
     expect(firstTurnText).toContain("RECENT_CONTEXT_DEF");
@@ -231,7 +231,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       text: "<@UBOT> 先起一个 session"
     });
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "initial turn");
-    await waitFor(() => mockCodex.turnsStarted[0]?.status === "completed", "initial turn completion");
+    await waitForSessionIdle(tempRoot, "C123:333.220");
 
     const registerResponse = await fetch(`${broker.baseUrl}/jobs/register`, {
       method: "POST",
@@ -436,6 +436,38 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 15_0
   }
 
   throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function waitForSessionIdle(
+  tempRoot: string,
+  sessionKey: string,
+  timeoutMs = 15_000
+): Promise<void> {
+  const sessionFile = path.join(
+    tempRoot,
+    "state",
+    "sessions",
+    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
+  );
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const raw = await fs.readFile(sessionFile, "utf8");
+      const session = JSON.parse(raw) as {
+        readonly activeTurnId?: string | undefined;
+      };
+      if (!session.activeTurnId) {
+        return;
+      }
+    } catch {
+      // session file may not exist yet
+    }
+
+    await delay(100);
+  }
+
+  throw new Error(`Timed out waiting for session idle: ${sessionKey}`);
 }
 
 async function delay(timeoutMs: number): Promise<void> {
