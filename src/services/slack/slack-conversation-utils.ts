@@ -95,7 +95,23 @@ export function isRecoverableCodexTurnFailure(error: unknown): boolean {
 
 export function isMissingActiveTurnSteerError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /no active turn to steer/i.test(message) || /expectedTurnId/i.test(message);
+  return /no active turn to steer/i.test(message) || /expected active turn id `[^`]+` but found `[^`]+`/i.test(message);
+}
+
+export function parseActiveTurnMismatch(error: unknown): {
+  readonly expectedTurnId: string;
+  readonly actualTurnId: string;
+} | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/expected active turn id `([^`]+)` but found `([^`]+)`/i);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    expectedTurnId: match[1]!,
+    actualTurnId: match[2]!
+  };
 }
 
 export function isSlackInboundSource(

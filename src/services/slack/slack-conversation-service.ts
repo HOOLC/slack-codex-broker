@@ -27,6 +27,7 @@ import {
   clampHistoryLimit,
   compareIsoTimestamp,
   isBeforeSlackTs,
+  parseActiveTurnMismatch,
   isMissingActiveTurnSteerError,
   isSlackMessageAfterCursor,
   shouldAutoRecoverSession
@@ -559,6 +560,7 @@ export class SlackConversationService {
       );
     } catch (error) {
       if (isMissingActiveTurnSteerError(error)) {
+        await this.#syncActiveTurnFromSteerError(session, error);
         return;
       }
       throw error;
@@ -585,15 +587,11 @@ export class SlackConversationService {
     if (latestSession.activeTurnId) {
       try {
         const input = this.#inboundStore.createSlackInputFromPersistedMessage(pendingMessage);
-        await this.#turnRunner.steerActiveTurn(latestSession, input);
-        await this.#inboundStore.markMessagesInflight(latestSession, [pendingMessage], latestSession.activeTurnId);
-        logger.debug("Steered persisted Slack message into active Codex turn", {
-          sessionKey: session.key,
-          turnId: latestSession.activeTurnId,
-          source: input.source,
-          userId: input.userId
-        });
-        return;
+        const steeredSession = await this.#steerPersistedMessageIntoActiveTurn(latestSession, pendingMessage, input);
+        if (steeredSession) {
+          latestSession = steeredSession;
+          return;
+        }
       } catch (error) {
         logger.warn("Failed to steer persisted Slack message into active Codex turn; falling back to queue", {
           sessionKey: session.key,
@@ -603,22 +601,9 @@ export class SlackConversationService {
         });
 
         if (isMissingActiveTurnSteerError(error)) {
-          logger.warn("Detected stale active Codex turn; resetting broker runtime state", {
-            sessionKey: session.key,
-            turnId: latestSession.activeTurnId,
+          latestSession = await this.#syncActiveTurnFromSteerError(latestSession, error, {
             messageTs
           });
-          await this.#sessions.resetInflightMessages(
-            latestSession.channelId,
-            latestSession.rootThreadTs,
-            latestSession.activeTurnId
-          );
-          latestSession = await this.#sessions.setActiveTurnId(
-            latestSession.channelId,
-            latestSession.rootThreadTs,
-            undefined
-          );
-          this.#resetRuntimeProcessing(session.key);
         }
       }
     }
@@ -648,9 +633,15 @@ export class SlackConversationService {
           return 0;
         }
 
-        await this.#turnRunner.steerActiveTurn(latestSession, input);
-        await this.#inboundStore.markMessagesInflight(latestSession, pendingMessages, latestSession.activeTurnId);
-        return pendingMessages.length;
+        const steeredSession = await this.#steerPersistedBatchIntoActiveTurn(
+          latestSession,
+          pendingMessages,
+          input
+        );
+        if (steeredSession) {
+          latestSession = steeredSession;
+          return pendingMessages.length;
+        }
       } catch (error) {
         logger.warn("Failed to steer recovered Slack backlog into active Codex turn; queuing backlog", {
           sessionKey: session.key,
@@ -660,17 +651,7 @@ export class SlackConversationService {
         });
 
         if (isMissingActiveTurnSteerError(error)) {
-          await this.#sessions.resetInflightMessages(
-            latestSession.channelId,
-            latestSession.rootThreadTs,
-            latestSession.activeTurnId
-          );
-          latestSession = await this.#sessions.setActiveTurnId(
-            latestSession.channelId,
-            latestSession.rootThreadTs,
-            undefined
-          );
-          this.#resetRuntimeProcessing(session.key);
+          latestSession = await this.#syncActiveTurnFromSteerError(latestSession, error);
         }
       }
     }
@@ -703,6 +684,125 @@ export class SlackConversationService {
     if (!runtime.processing) {
       void this.#drainQueue(session.key);
     }
+  }
+
+  async #steerPersistedMessageIntoActiveTurn(
+    session: SlackSessionRecord,
+    pendingMessage: PersistedInboundMessage,
+    input: SlackInputMessage
+  ): Promise<SlackSessionRecord | null> {
+    let latestSession = session;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!latestSession.activeTurnId) {
+        return null;
+      }
+
+      try {
+        await this.#turnRunner.steerActiveTurn(latestSession, input);
+        await this.#inboundStore.markMessagesInflight(
+          latestSession,
+          [pendingMessage],
+          latestSession.activeTurnId
+        );
+        logger.debug("Steered persisted Slack message into active Codex turn", {
+          sessionKey: session.key,
+          turnId: latestSession.activeTurnId,
+          source: input.source,
+          userId: input.userId
+        });
+        return latestSession;
+      } catch (error) {
+        const syncedSession = isMissingActiveTurnSteerError(error)
+          ? await this.#syncActiveTurnFromSteerError(latestSession, error, {
+              messageTs: pendingMessage.messageTs
+            })
+          : latestSession;
+        if (syncedSession.activeTurnId && syncedSession.activeTurnId !== latestSession.activeTurnId) {
+          latestSession = syncedSession;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return null;
+  }
+
+  async #steerPersistedBatchIntoActiveTurn(
+    session: SlackSessionRecord,
+    pendingMessages: readonly PersistedInboundMessage[],
+    input: SlackInputMessage
+  ): Promise<SlackSessionRecord | null> {
+    let latestSession = session;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!latestSession.activeTurnId) {
+        return null;
+      }
+
+      try {
+        await this.#turnRunner.steerActiveTurn(latestSession, input);
+        await this.#inboundStore.markMessagesInflight(
+          latestSession,
+          pendingMessages,
+          latestSession.activeTurnId
+        );
+        return latestSession;
+      } catch (error) {
+        const syncedSession = isMissingActiveTurnSteerError(error)
+          ? await this.#syncActiveTurnFromSteerError(latestSession, error)
+          : latestSession;
+        if (syncedSession.activeTurnId && syncedSession.activeTurnId !== latestSession.activeTurnId) {
+          latestSession = syncedSession;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return null;
+  }
+
+  async #syncActiveTurnFromSteerError(
+    session: SlackSessionRecord,
+    error: unknown,
+    options?: {
+      readonly messageTs?: string | undefined;
+    }
+  ): Promise<SlackSessionRecord> {
+    const mismatch = parseActiveTurnMismatch(error);
+    if (mismatch && mismatch.actualTurnId !== session.activeTurnId) {
+      logger.warn("Synchronizing broker active turn id to Codex-reported active turn", {
+        sessionKey: session.key,
+        previousTurnId: session.activeTurnId,
+        actualTurnId: mismatch.actualTurnId,
+        messageTs: options?.messageTs ?? null
+      });
+      return await this.#sessions.setActiveTurnId(
+        session.channelId,
+        session.rootThreadTs,
+        mismatch.actualTurnId
+      );
+    }
+
+    logger.warn("Detected stale active Codex turn; resetting broker runtime state", {
+      sessionKey: session.key,
+      turnId: session.activeTurnId,
+      messageTs: options?.messageTs ?? null
+    });
+    await this.#sessions.resetInflightMessages(
+      session.channelId,
+      session.rootThreadTs,
+      session.activeTurnId
+    );
+    const latestSession = await this.#sessions.setActiveTurnId(
+      session.channelId,
+      session.rootThreadTs,
+      undefined
+    );
+    this.#resetRuntimeProcessing(session.key);
+    return latestSession;
   }
 
   async #drainQueue(sessionKey: string): Promise<void> {
