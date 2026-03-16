@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatSlackRunFailureMessage,
   isMissingActiveTurnSteerError,
   parseActiveTurnMismatch
 } from "../src/services/slack/slack-conversation-utils.js";
@@ -31,5 +32,27 @@ describe("slack conversation utils", () => {
 
   it("returns null for unrelated errors", () => {
     expect(parseActiveTurnMismatch(new Error("socket hang up"))).toBeNull();
+  });
+
+  it("formats recoverable websocket failures for Slack users", () => {
+    expect(formatSlackRunFailureMessage(new Error("Codex app-server websocket closed"))).toBe(
+      "I lost my connection while working on this thread. I will resume as soon as the connection comes back."
+    );
+  });
+
+  it("formats active turn mismatches for Slack users", () => {
+    expect(
+      formatSlackRunFailureMessage(
+        new Error("expected active turn id `turn-old` but found `turn-new`")
+      )
+    ).toBe(
+      "I lost track of the current run while reconnecting. I am resyncing and will continue from the latest state."
+    );
+  });
+
+  it("formats generic failures for Slack users", () => {
+    expect(formatSlackRunFailureMessage(new Error("something unexpected happened"))).toBe(
+      "I hit an internal issue while working on this thread. Send a quick follow-up and I will continue from the latest state."
+    );
   });
 });

@@ -93,6 +93,24 @@ export function isRecoverableCodexTurnFailure(error: unknown): boolean {
   ].some((pattern) => message.includes(pattern));
 }
 
+export function formatSlackRunFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (isRecoverableCodexTurnFailure(error)) {
+    return "I lost my connection while working on this thread. I will resume as soon as the connection comes back.";
+  }
+
+  if (isMissingActiveTurnSteerError(error)) {
+    return "I lost track of the current run while reconnecting. I am resyncing and will continue from the latest state.";
+  }
+
+  if (/interrupt/i.test(message) || /aborted/i.test(message) || /cancel/i.test(message)) {
+    return "I stopped the current run before it finished.";
+  }
+
+  return "I hit an internal issue while working on this thread. Send a quick follow-up and I will continue from the latest state.";
+}
+
 export function isMissingActiveTurnSteerError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /no active turn to steer/i.test(message) || /expected active turn id `[^`]+` but found `[^`]+`/i.test(message);

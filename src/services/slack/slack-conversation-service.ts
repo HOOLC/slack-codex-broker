@@ -26,6 +26,7 @@ import {
   chunkSlackMessage,
   clampHistoryLimit,
   compareIsoTimestamp,
+  formatSlackRunFailureMessage,
   isBeforeSlackTs,
   parseActiveTurnMismatch,
   isMissingActiveTurnSteerError,
@@ -870,10 +871,16 @@ export class SlackConversationService {
           return;
         }
 
+        logger.error("Slack conversation turn dispatch failed", {
+          sessionKey,
+          channelId: session.channelId,
+          rootThreadTs: session.rootThreadTs,
+          error: error instanceof Error ? error.message : String(error)
+        });
         await this.#postBotThreadMessage(
           session.channelId,
           session.rootThreadTs,
-          `Codex run failed: ${error instanceof Error ? error.message : String(error)}`
+          formatSlackRunFailureMessage(error)
         );
         await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
         break;
