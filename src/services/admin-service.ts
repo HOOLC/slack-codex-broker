@@ -40,10 +40,10 @@ export class AdminService {
   }
 
   async getStatus(): Promise<Record<string, unknown>> {
-    const activeSessions = this.options.sessions
+    const allSessions = this.options.sessions
       .listSessions()
-      .filter((session) => Boolean(session.activeTurnId))
-      .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+      .sort((left, right) => compareSessions(left, right));
+    const activeSessions = allSessions.filter((session) => Boolean(session.activeTurnId));
     const openInbound = this.options.sessions
       .listInboundMessages({
         status: ["pending", "inflight"]
@@ -52,7 +52,18 @@ export class AdminService {
     const backgroundJobs = this.options.sessions
       .listBackgroundJobs()
       .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+    const openInboundBySession = groupBySession(openInbound);
+    const jobsBySession = groupBySession(backgroundJobs);
+    const sessionSummaries = allSessions.slice(0, 50).map((session) =>
+      this.#summarizeSession(session, {
+        inbound: openInboundBySession.get(session.key) ?? [],
+        jobs: jobsBySession.get(session.key) ?? []
+      })
+    );
     const account = await this.#readAccountSummary();
+    const backgroundJobCount = backgroundJobs.length;
+    const runningBackgroundJobCount = backgroundJobs.filter((job) => job.status === "running").length;
+    const failedBackgroundJobCount = backgroundJobs.filter((job) => job.status === "failed").length;
 
     return {
       service: {
@@ -74,19 +85,22 @@ export class AdminService {
       },
       account,
       state: {
-        sessionCount: this.options.sessions.listSessions().length,
+        sessionCount: allSessions.length,
         activeCount: activeSessions.length,
         activeSessions,
         openInboundCount: openInbound.length,
         openInbound: openInbound.slice(0, 25).map((message) => this.#summarizeInbound(message)),
-        backgroundJobs: backgroundJobs.slice(0, 50).map((job) => this.#summarizeJob(job)),
+        backgroundJobCount,
+        runningBackgroundJobCount,
+        failedBackgroundJobCount,
+        sessions: sessionSummaries,
         recentBrokerLogs: await this.#readRecentBrokerLogs(40)
       }
     };
   }
 
   async replaceAuthFiles(options: {
-    readonly authJsonContent: string;
+    readonly authJsonContent?: string | undefined;
     readonly credentialsJsonContent?: string | undefined;
     readonly configTomlContent?: string | undefined;
     readonly allowActive: boolean;
@@ -101,10 +115,12 @@ export class AdminService {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backupDir = path.join(this.#backupsRoot, stamp);
     const replacements = [
-      {
-        relativePath: "auth.json",
-        content: options.authJsonContent
-      },
+      options.authJsonContent != null
+        ? {
+            relativePath: "auth.json",
+            content: options.authJsonContent
+          }
+        : null,
       options.credentialsJsonContent != null
         ? {
             relativePath: ".credentials.json",
@@ -118,6 +134,10 @@ export class AdminService {
           }
         : null
     ].filter((entry): entry is { relativePath: string; content: string } => entry != null);
+
+    if (replacements.length === 0) {
+      throw new Error("No auth files were provided to replace.");
+    }
 
     const backups = [];
     for (const replacement of replacements) {
@@ -255,4 +275,51 @@ export class AdminService {
       error: job.error ?? null
     };
   }
+
+  #summarizeSession(
+    session: SlackSessionRecord,
+    related: {
+      readonly inbound: readonly PersistedInboundMessage[];
+      readonly jobs: readonly PersistedBackgroundJob[];
+    }
+  ): Record<string, unknown> {
+    return {
+      key: session.key,
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      workspacePath: session.workspacePath,
+      updatedAt: session.updatedAt,
+      createdAt: session.createdAt,
+      activeTurnId: session.activeTurnId ?? null,
+      lastSlackReplyAt: session.lastSlackReplyAt ?? null,
+      lastObservedMessageTs: session.lastObservedMessageTs ?? null,
+      lastDeliveredMessageTs: session.lastDeliveredMessageTs ?? null,
+      openInboundCount: related.inbound.length,
+      openInbound: related.inbound.slice(0, 5).map((message) => this.#summarizeInbound(message)),
+      backgroundJobCount: related.jobs.length,
+      backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job))
+    };
+  }
+}
+
+function compareSessions(left: SlackSessionRecord, right: SlackSessionRecord): number {
+  const leftActive = left.activeTurnId ? 1 : 0;
+  const rightActive = right.activeTurnId ? 1 : 0;
+  if (leftActive !== rightActive) {
+    return rightActive - leftActive;
+  }
+  return String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""));
+}
+
+function groupBySession<T extends { readonly sessionKey: string }>(items: readonly T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const existing = groups.get(item.sessionKey);
+    if (existing) {
+      existing.push(item);
+      continue;
+    }
+    groups.set(item.sessionKey, [item]);
+  }
+  return groups;
 }

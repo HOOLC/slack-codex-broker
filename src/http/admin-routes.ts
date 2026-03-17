@@ -59,11 +59,11 @@ export async function handleAdminRequest(
     const configTomlContent = typeof body.config_toml_content === "string" ? body.config_toml_content : undefined;
     const allowActive = body.allow_active === true;
 
-    if (!authJsonContent?.trim()) {
+    if (!authJsonContent?.trim() && !credentialsJsonContent?.trim() && !configTomlContent?.trim()) {
       respondJson(response, 400, {
         ok: false,
         error: "missing_required_body",
-        required: ["auth_json_content"]
+        required: ["auth_json_content | credentials_json_content | config_toml_content"]
       });
       return true;
     }
@@ -545,7 +545,7 @@ function renderAdminPage(options: {
         <div class="summary-detail" id="summary-sessions-detail">正在读取会话状态…</div>
       </div>
       <div class="summary-card">
-        <div class="summary-kicker">后台任务</div>
+        <div class="summary-kicker">关联任务</div>
         <div class="summary-value" id="summary-jobs">--</div>
         <div class="summary-detail" id="summary-jobs-detail">正在读取后台任务…</div>
       </div>
@@ -586,7 +586,7 @@ function renderAdminPage(options: {
         <div class="section-head">
           <div>
             <h2>替换登录态</h2>
-            <div class="section-copy">把新的 <span class="mono">auth.json</span> 上传到容器里，并可选一起替换 <span class="mono">.credentials.json</span> 和 <span class="mono">config.toml</span>。</div>
+            <div class="section-copy">只会替换你这次真正提供的文件。可以只改 <span class="mono">auth.json</span>，也可以单独改 <span class="mono">.credentials.json</span> 或 <span class="mono">config.toml</span>。</div>
           </div>
           <div class="badge warn">会重启内置 Codex runtime</div>
         </div>
@@ -614,31 +614,21 @@ function renderAdminPage(options: {
             即使当前有活跃 session，也允许替换并打断它们
           </label>
           <div class="actions">
-            <button id="replace-button">替换并重启 runtime</button>
+            <button id="replace-button">应用这些变更</button>
           </div>
-          <div class="hint">系统会先把旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。</div>
+          <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。没填的文件不会动。</div>
           <div class="status-line" id="replace-status"></div>
         </div>
       </section>
 
-      <section class="card span-8">
+      <section class="card span-12">
         <div class="section-head">
           <div>
             <h2>会话状态</h2>
-            <div class="section-copy">优先看这里：哪些 thread 还在跑，哪些消息已经进队列但还没吃掉。</div>
+            <div class="section-copy">每条 session 会同时展示自己的待处理消息和关联后台任务，不再拆成两块分开看。</div>
           </div>
         </div>
         <div id="sessions-panel" class="list"></div>
-      </section>
-
-      <section class="card span-4">
-        <div class="section-head">
-          <div>
-            <h2>后台任务</h2>
-            <div class="section-copy">这些是 broker 托管的 watch / polling 脚本。</div>
-          </div>
-        </div>
-        <div id="jobs-panel" class="list"></div>
       </section>
 
       <section class="card span-12">
@@ -737,8 +727,8 @@ function renderAdminPage(options: {
       const service = data.service || {};
       const state = data.state || {};
       const account = data.account || {};
-      const runningJobs = (state.backgroundJobs || []).filter((job) => String(job.status || "").toLowerCase() === "running").length;
-      const failedJobs = (state.backgroundJobs || []).filter((job) => String(job.status || "").toLowerCase() === "failed").length;
+      const runningJobs = Number(state.runningBackgroundJobCount || 0);
+      const failedJobs = Number(state.failedBackgroundJobCount || 0);
 
       document.getElementById("summary-service").textContent = "在线";
       document.getElementById("summary-service-detail").textContent =
@@ -757,7 +747,7 @@ function renderAdminPage(options: {
 
       document.getElementById("summary-jobs").textContent = String(runningJobs);
       document.getElementById("summary-jobs-detail").textContent =
-        "正在运行的后台任务。失败 " + String(failedJobs) + " 个。";
+        "正在运行的关联后台任务。失败 " + String(failedJobs) + " 个。";
     }
 
     function renderService(data) {
@@ -810,47 +800,58 @@ function renderAdminPage(options: {
     function renderSessions(data) {
       const panel = document.getElementById("sessions-panel");
       const state = data.state || {};
-      const active = state.activeSessions || [];
-      const inbound = state.openInbound || [];
+      const sessions = state.sessions || [];
       const parts = [];
-      if (active.length > 0) {
+      if (sessions.length > 0) {
         parts.push(
-          active.map((session) =>
+          sessions.map((session) => {
+            const jobs = session.backgroundJobs || [];
+            const inbound = session.openInbound || [];
+            const isActive = Boolean(session.activeTurnId);
+            const turnBadge = isActive ? renderBadge("active", "good") : renderBadge("idle", "warn");
+            const jobsSection = jobs.length
+              ? '<div class="hint" style="margin-top:12px;"><strong>关联后台任务</strong></div>' +
+                jobs
+                  .map((job) =>
+                    '<div class="item" style="margin-top:8px;">' +
+                      '<div class="item-head"><div class="item-title mono">' + esc(job.id || "—") + '</div>' + renderBadge(job.status || "unknown", statusTone(job.status)) + '</div>' +
+                      '<div class="meta"><span>类型：' + esc(job.kind || "—") + '</span><span>更新时间：' + esc(fmtTime(job.updatedAt)) + '</span></div>' +
+                      '<div class="hint mono">' + esc(job.cwd || "—") + '</div>' +
+                      (job.error ? '<div class="item-text danger">' + esc(job.error) + '</div>' : "") +
+                    '</div>'
+                  )
+                  .join("")
+              : '<div class="hint" style="margin-top:12px;">没有关联后台任务。</div>';
+            const inboundSection = inbound.length
+              ? '<div class="hint" style="margin-top:12px;"><strong>待处理消息</strong></div>' +
+                inbound
+                  .map((item) =>
+                    '<div class="item" style="margin-top:8px;">' +
+                      '<div class="item-head"><div class="item-title mono">' + esc(item.messageTs || "—") + '</div>' + renderBadge(item.status || "unknown", statusTone(item.status)) + '</div>' +
+                      '<div class="meta"><span>来源：' + esc(item.source || "—") + '</span></div>' +
+                      '<div class="item-text">' + esc(item.textPreview || "—") + '</div>' +
+                    '</div>'
+                  )
+                  .join("")
+              : '<div class="hint" style="margin-top:12px;">没有待处理消息。</div>';
+            return (
             '<div class="item">' +
-              '<div class="item-head"><div class="item-title mono">' + esc(session.key || "—") + '</div>' + renderBadge("active", "good") + '</div>' +
-              '<div class="meta"><span>最近更新：' + esc(fmtTime(session.updatedAt)) + '</span><span>turn：<span class="mono">' + esc(session.activeTurnId || "—") + '</span></span></div>' +
-              '<div class="hint mono">' + esc(session.workspacePath || "—") + "</div>" +
+              '<div class="item-head"><div class="item-title mono">' + esc(session.key || "—") + '</div>' + turnBadge + '</div>' +
+              '<div class="meta"><span>最近更新：' + esc(fmtTime(session.updatedAt)) + '</span><span>最近 Slack 回复：' + esc(fmtTime(session.lastSlackReplyAt)) + '</span></div>' +
+              '<div class="meta"><span>待处理消息：' + esc(session.openInboundCount || 0) + '</span><span>关联任务：' + esc(session.backgroundJobCount || 0) + '</span>' +
+              (session.activeTurnId ? '<span>turn：<span class="mono">' + esc(session.activeTurnId) + '</span></span>' : "") +
+              '</div>' +
+              '<div class="hint mono">' + esc(session.workspacePath || "—") + '</div>' +
+              inboundSection +
+              jobsSection +
             "</div>"
-          ).join("")
+            );
+          }).join("")
         );
       } else {
-        parts.push('<div class="empty">当前没有活跃会话。</div>');
-      }
-      if (inbound.length > 0) {
-        parts.push(
-          '<div class="section-head" style="margin-top:10px;"><div><h3>待处理消息</h3><div class="section-copy">这些消息已经进了 broker，但还没有完全消化完。</div></div></div>' +
-          inbound.map((item) =>
-            '<div class="item">' +
-              '<div class="item-head"><div class="item-title mono">' + esc(item.sessionKey || "—") + '</div>' + renderBadge(item.status || "unknown", statusTone(item.status)) + '</div>' +
-              '<div class="meta"><span>来源：' + esc(item.source || "—") + '</span><span>消息时间：<span class="mono">' + esc(item.messageTs || "—") + "</span></span></div>" +
-              '<div class="item-text">' + esc(item.textPreview || "—") + "</div>" +
-            "</div>"
-          ).join("")
-        );
+        parts.push('<div class="empty">当前没有任何 session。</div>');
       }
       panel.innerHTML = parts.join("");
-    }
-
-    function renderJobs(data) {
-      const panel = document.getElementById("jobs-panel");
-      const jobs = data.state.backgroundJobs || [];
-      if (!jobs.length) {
-        panel.innerHTML = '<div class="empty">当前没有后台任务。</div>';
-        return;
-      }
-      panel.innerHTML = jobs.map((job) =>
-        '<div class="item"><div class="item-head"><div class="item-title mono">' + esc(job.id || "—") + '</div>' + renderBadge(job.status || "unknown", statusTone(job.status)) + '</div><div class="meta"><span>类型：' + esc(job.kind || "—") + '</span><span>更新时间：' + esc(fmtTime(job.updatedAt)) + '</span></div><div class="hint mono">' + esc(job.cwd || "—") + "</div>" + (job.error ? '<div class="item-text danger">' + esc(job.error) + "</div>" : "") + "</div>"
-      ).join("");
     }
 
     function renderLogs(data) {
@@ -878,7 +879,6 @@ function renderAdminPage(options: {
       renderAccount(data);
       renderAuthFiles(data);
       renderSessions(data);
-      renderJobs(data);
       renderLogs(data);
     }
 
@@ -915,8 +915,10 @@ function renderAdminPage(options: {
       try {
         const pastedAuthJson = authJsonText.value.trim();
         const authJsonContent = pastedAuthJson || await readOptionalFile("auth-json-file");
-        if (!authJsonContent) {
-          throw new Error("必须先选择 auth.json 文件，或者直接粘贴 auth.json 内容");
+        const credentialsJsonContent = await readOptionalFile("credentials-json-file");
+        const configTomlContent = await readOptionalFile("config-toml-file");
+        if (!authJsonContent && !credentialsJsonContent && !configTomlContent) {
+          throw new Error("至少要提供一个文件内容：auth.json、.credentials.json 或 config.toml");
         }
         const response = await fetch("/admin/api/replace-auth", {
           method: "POST",
@@ -925,8 +927,8 @@ function renderAdminPage(options: {
           }),
           body: JSON.stringify({
             auth_json_content: authJsonContent,
-            credentials_json_content: await readOptionalFile("credentials-json-file"),
-            config_toml_content: await readOptionalFile("config-toml-file"),
+            credentials_json_content: credentialsJsonContent,
+            config_toml_content: configTomlContent,
             allow_active: document.getElementById("allow-active").checked
           })
         });
