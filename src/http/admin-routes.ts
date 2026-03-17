@@ -301,7 +301,7 @@ function renderAdminPage(options: {
       color: var(--text);
       border: 1px solid var(--line);
     }
-    input[type="password"], input[type="file"] {
+    input[type="password"], input[type="file"], textarea {
       width: 100%;
       box-sizing: border-box;
       border-radius: 12px;
@@ -310,6 +310,13 @@ function renderAdminPage(options: {
       color: var(--text);
       padding: 10px 12px;
       font: inherit;
+    }
+    textarea {
+      min-height: 180px;
+      resize: vertical;
+      line-height: 1.5;
+      font-family: var(--mono);
+      font-size: 12px;
     }
     label {
       display: grid;
@@ -586,7 +593,7 @@ function renderAdminPage(options: {
         <div class="form-grid">
           <div class="inline-grid">
             <label>
-              auth.json
+              auth.json 文件
               <input id="auth-json-file" type="file" accept=".json,application/json" />
             </label>
             <label>
@@ -594,6 +601,10 @@ function renderAdminPage(options: {
               <input id="credentials-json-file" type="file" accept=".json,application/json" />
             </label>
           </div>
+          <label>
+            或者直接粘贴 auth.json
+            <textarea id="auth-json-text" placeholder='把完整 auth.json 直接粘贴到这里。这里有内容时，会优先使用这里，不再读取上面的文件。'></textarea>
+          </label>
           <label>
             config.toml（可选）
             <input id="config-toml-file" type="file" accept=".toml,text/plain" />
@@ -651,6 +662,7 @@ function renderAdminPage(options: {
     const replaceButton = document.getElementById("replace-button");
     const replaceStatus = document.getElementById("replace-status");
     const lastRefresh = document.getElementById("last-refresh");
+    const authJsonText = document.getElementById("auth-json-text");
 
     tokenInput.value = localStorage.getItem(tokenKey) || "";
 
@@ -898,12 +910,13 @@ function renderAdminPage(options: {
     refreshButton.addEventListener("click", refresh);
 
     replaceButton.addEventListener("click", async () => {
-      replaceButton.disabled = true;
+        replaceButton.disabled = true;
       replaceStatus.textContent = "正在写入新文件，并重启容器里的 Codex runtime…";
       try {
-        const authJsonContent = await readOptionalFile("auth-json-file");
+        const pastedAuthJson = authJsonText.value.trim();
+        const authJsonContent = pastedAuthJson || await readOptionalFile("auth-json-file");
         if (!authJsonContent) {
-          throw new Error("必须先选择 auth.json");
+          throw new Error("必须先选择 auth.json 文件，或者直接粘贴 auth.json 内容");
         }
         const response = await fetch("/admin/api/replace-auth", {
           method: "POST",
