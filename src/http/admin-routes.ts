@@ -121,40 +121,52 @@ function renderAdminPage(options: {
   <title>${escapeHtml(options.serviceName)} 控制台</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #081018;
-      --bg-soft: #101b26;
-      --panel: rgba(15, 24, 35, 0.94);
-      --panel-soft: rgba(24, 37, 52, 0.92);
-      --panel-strong: rgba(9, 16, 24, 0.94);
-      --line: rgba(154, 167, 184, 0.16);
-      --line-strong: rgba(154, 167, 184, 0.26);
-      --text: #f4f7fb;
-      --muted: #9da9b7;
-      --accent: #5cc8ff;
-      --accent-soft: rgba(92, 200, 255, 0.12);
-      --good: #4ade80;
-      --good-soft: rgba(74, 222, 128, 0.12);
-      --warn: #fbbf24;
-      --warn-soft: rgba(251, 191, 36, 0.12);
-      --danger: #fb7185;
-      --danger-soft: rgba(251, 113, 133, 0.12);
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+      --bg: #ff972f;
+      --bg-deep: #e57d17;
+      --panel: #080808;
+      --panel-soft: #0b0b0b;
+      --panel-strong: #050505;
+      --line: rgba(255, 155, 47, 0.15);
+      --line-strong: rgba(255, 155, 47, 0.34);
+      --text: #fff1de;
+      --muted: #a08d75;
+      --accent: #ff9b2f;
+      --accent-soft: rgba(255, 155, 47, 0.14);
+      --good: #31d88a;
+      --good-soft: rgba(49, 216, 138, 0.12);
+      --warn: #ffc155;
+      --warn-soft: rgba(255, 193, 85, 0.14);
+      --danger: #ff6e53;
+      --danger-soft: rgba(255, 110, 83, 0.14);
+      --mono: "SF Mono", "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+      --sans: "SF Mono", "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
     }
     body {
       margin: 0;
+      min-height: 100vh;
       background:
-        radial-gradient(circle at top left, rgba(92, 200, 255, 0.16), transparent 28%),
-        radial-gradient(circle at top right, rgba(74, 222, 128, 0.1), transparent 20%),
-        linear-gradient(180deg, #0a121a 0%, #081018 100%);
+        radial-gradient(circle at 16% 14%, rgba(255, 203, 140, 0.32), transparent 0 18%),
+        radial-gradient(circle at 84% 12%, rgba(255, 210, 150, 0.25), transparent 0 16%),
+        linear-gradient(145deg, rgba(255,255,255,0.07) 0 4%, transparent 4% 15%, rgba(255,255,255,0.05) 15% 18%, transparent 18% 34%, rgba(255,255,255,0.06) 34% 37%, transparent 37% 100%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
       color: var(--text);
       font-family: var(--sans);
+      letter-spacing: 0.01em;
     }
     .wrap {
-      max-width: 1440px;
+      max-width: 1640px;
       margin: 0 auto;
-      padding: 20px;
+      padding: 28px;
+    }
+    .dashboard {
+      border: 1px solid rgba(255, 155, 47, 0.24);
+      background: linear-gradient(180deg, rgba(8, 8, 8, 0.995), rgba(4, 4, 4, 0.995));
+      border-radius: 16px;
+      box-shadow:
+        0 24px 70px rgba(82, 32, 0, 0.28),
+        inset 0 0 0 1px rgba(255,255,255,0.02);
+      padding: 12px;
     }
     h1, h2, h3 {
       margin: 0;
@@ -164,19 +176,25 @@ function renderAdminPage(options: {
     h1 {
       font-size: 22px;
       margin-bottom: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
     h2 {
-      font-size: 15px;
+      font-size: 14px;
       margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
     h3 {
-      font-size: 15px;
-      margin-bottom: 4px;
+      font-size: 13px;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
     p {
       margin: 0;
       color: var(--muted);
-      line-height: 1.55;
+      line-height: 1.35;
     }
     .grid {
       display: grid;
@@ -186,10 +204,9 @@ function renderAdminPage(options: {
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
-      backdrop-filter: blur(12px);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.015);
     }
     .span-4 { grid-column: span 4; }
     .span-5 { grid-column: span 5; }
@@ -202,11 +219,11 @@ function renderAdminPage(options: {
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      margin-bottom: 12px;
-      padding: 12px 14px;
-      border-radius: 16px;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
+      background: rgba(255,255,255,0.012);
     }
     .header-main {
       display: grid;
@@ -215,8 +232,9 @@ function renderAdminPage(options: {
     }
     .header-subtitle {
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.4;
+      font-size: 11px;
+      line-height: 1.3;
+      text-transform: uppercase;
     }
     .header-meta {
       display: flex;
@@ -231,10 +249,21 @@ function renderAdminPage(options: {
       margin-bottom: 12px;
     }
     .summary-pill {
-      background: rgba(255,255,255,0.035);
+      background: var(--panel-soft);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 10px 12px;
+      border-radius: 10px;
+      padding: 8px 10px;
+      position: relative;
+      overflow: hidden;
+    }
+    .summary-pill::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--accent);
     }
     .summary-pill-label {
       color: var(--muted);
@@ -247,6 +276,7 @@ function renderAdminPage(options: {
       font-size: 18px;
       font-weight: 700;
       line-height: 1.2;
+      color: var(--accent);
     }
     .summary-pill-detail {
       color: var(--muted);
@@ -257,13 +287,15 @@ function renderAdminPage(options: {
     .badge {
       display: inline-flex;
       border-radius: 999px;
-      padding: 6px 11px;
+      padding: 4px 8px;
       border: 1px solid var(--line-strong);
-      background: rgba(255,255,255,0.04);
-      font-size: 12px;
+      background: rgba(255, 155, 47, 0.08);
+      font-size: 11px;
       font-weight: 700;
       gap: 6px;
       align-items: center;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
     .badge.good { color: var(--good); background: var(--good-soft); }
     .badge.warn { color: var(--warn); background: var(--warn-soft); }
@@ -281,14 +313,16 @@ function renderAdminPage(options: {
     }
     button {
       border: 0;
-      border-radius: 12px;
-      background: linear-gradient(135deg, #59c7ff, #32b7f5);
-      color: #03111b;
-      padding: 11px 15px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #190b00;
+      padding: 8px 11px;
       font: inherit;
       font-weight: 700;
       cursor: pointer;
       transition: transform 120ms ease, opacity 120ms ease;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
     button:hover {
       transform: translateY(-1px);
@@ -299,24 +333,24 @@ function renderAdminPage(options: {
       transform: none;
     }
     button.secondary {
-      background: var(--panel-soft);
+      background: transparent;
       color: var(--text);
       border: 1px solid var(--line);
     }
     input[type="password"], input[type="file"], textarea {
       width: 100%;
       box-sizing: border-box;
-      border-radius: 12px;
+      border-radius: 8px;
       border: 1px solid var(--line);
       background: var(--panel-strong);
       color: var(--text);
-      padding: 10px 12px;
+      padding: 8px 10px;
       font: inherit;
     }
     textarea {
       min-height: 180px;
       resize: vertical;
-      line-height: 1.5;
+      line-height: 1.4;
       font-family: var(--mono);
       font-size: 12px;
     }
@@ -348,9 +382,9 @@ function renderAdminPage(options: {
     }
     .item {
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: rgba(255,255,255,0.025);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.015);
     }
     .item-head {
       display: flex;
@@ -401,8 +435,8 @@ function renderAdminPage(options: {
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 14px;
-      font-size: 13px;
+      margin-top: 8px;
+      font-size: 12px;
     }
     th, td {
       text-align: left;
@@ -413,12 +447,15 @@ function renderAdminPage(options: {
     th {
       color: var(--muted);
       font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 10px;
     }
     pre {
       margin: 0;
-      padding: 12px;
-      border-radius: 14px;
-      background: #091018;
+      padding: 10px;
+      border-radius: 10px;
+      background: #050505;
       overflow: auto;
       border: 1px solid var(--line);
       font-family: var(--mono);
@@ -448,11 +485,11 @@ function renderAdminPage(options: {
       line-height: 1.55;
     }
     .empty {
-      padding: 18px;
-      border-radius: 16px;
+      padding: 12px;
+      border-radius: 10px;
       border: 1px dashed var(--line-strong);
       color: var(--muted);
-      background: rgba(255,255,255,0.02);
+      background: rgba(255,255,255,0.01);
     }
     .log-list {
       display: grid;
@@ -461,9 +498,9 @@ function renderAdminPage(options: {
     }
     .log-entry {
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 10px 12px;
-      background: rgba(255,255,255,0.02);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.012);
     }
     .log-entry.warn {
       border-color: rgba(251, 191, 36, 0.28);
@@ -482,35 +519,35 @@ function renderAdminPage(options: {
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 10px 12px;
-      border-radius: 12px;
+      padding: 8px 10px;
+      border-radius: 10px;
       border: 1px solid var(--line);
-      background: rgba(255,255,255,0.025);
+      background: rgba(255,255,255,0.012);
     }
     .session-shell {
       border: 1px solid var(--line);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.025);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.01);
       overflow: hidden;
     }
     .session-shell[open] {
       border-color: var(--line-strong);
-      background: rgba(255,255,255,0.04);
+      background: rgba(255, 155, 47, 0.04);
     }
     .session-summary {
       list-style: none;
       cursor: pointer;
       display: grid;
       gap: 6px;
-      padding: 9px 12px;
+      padding: 8px 10px;
     }
     .session-summary::-webkit-details-marker {
       display: none;
     }
     .session-summary-top {
       display: grid;
-      grid-template-columns: minmax(240px, 2.2fr) minmax(150px, 1fr) minmax(160px, 1fr) minmax(150px, 1fr) minmax(220px, 2fr);
-      gap: 8px;
+      grid-template-columns: minmax(220px, 2.2fr) minmax(140px, .95fr) minmax(150px, 1fr) minmax(140px, .95fr) minmax(220px, 1.8fr);
+      gap: 6px;
       align-items: start;
     }
     .session-summary-main {
@@ -521,13 +558,14 @@ function renderAdminPage(options: {
     .session-summary-title {
       font-weight: 650;
       word-break: break-word;
+      color: var(--accent);
     }
     .session-summary-meta {
       display: flex;
       flex-wrap: wrap;
       gap: 6px 10px;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
     }
     .session-summary-side {
       display: grid;
@@ -537,12 +575,12 @@ function renderAdminPage(options: {
     .session-counts {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
+      gap: 4px;
     }
     .session-body {
       padding: 0 14px 14px;
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
     .session-divider {
       height: 1px;
@@ -563,11 +601,11 @@ function renderAdminPage(options: {
     .modal-card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 24px;
-      padding: 22px;
+      border-radius: 14px;
+      padding: 16px;
       box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
       display: grid;
-      gap: 16px;
+      gap: 12px;
     }
     .modal-head {
       display: flex;
@@ -593,9 +631,9 @@ function renderAdminPage(options: {
     }
     .compact-stat {
       border: 1px solid var(--line);
-      background: rgba(255,255,255,0.025);
-      border-radius: 12px;
-      padding: 10px 12px;
+      background: rgba(255,255,255,0.012);
+      border-radius: 8px;
+      padding: 8px 10px;
     }
     .compact-stat-label {
       font-size: 11px;
@@ -656,7 +694,7 @@ function renderAdminPage(options: {
     }
     .dense-table th,
     .dense-table td {
-      padding: 8px 6px;
+      padding: 6px 5px;
       border-bottom: 1px solid var(--line);
       vertical-align: top;
     }
@@ -678,9 +716,9 @@ function renderAdminPage(options: {
     }
     .subpanel {
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
       padding: 8px 10px;
-      background: rgba(255,255,255,0.02);
+      background: rgba(255,255,255,0.01);
     }
     .subpanel-head {
       display: flex;
@@ -760,42 +798,43 @@ function renderAdminPage(options: {
 </head>
 <body>
   <div class="wrap">
-    <div class="headerbar">
-      <div class="header-main">
-        <h1>${escapeHtml(options.serviceName)} Admin</h1>
-        <div class="header-subtitle">live 状态、账号、session、后台任务、登录态切换都在这里。重点是快速扫一眼，不是看说明书。</div>
+    <div class="dashboard">
+      <div class="headerbar">
+        <div class="header-main">
+          <h1>${escapeHtml(options.serviceName)} Admin</h1>
+          <div class="header-subtitle">live 状态、账号、session、后台任务、登录态切换都在这里。重点是快速扫一眼，不是看说明书。</div>
+        </div>
+        <div class="header-meta">
+            <div class="badge ${options.tokenConfigured ? "good" : "warn"}">${options.tokenConfigured ? "已启用管理员令牌" : "未启用管理员令牌"}</div>
+            <div class="badge">每 10 秒自动刷新</div>
+            <div class="badge">也可以手动刷新</div>
+        </div>
       </div>
-      <div class="header-meta">
-          <div class="badge ${options.tokenConfigured ? "good" : "warn"}">${options.tokenConfigured ? "已启用管理员令牌" : "未启用管理员令牌"}</div>
-          <div class="badge">每 10 秒自动刷新</div>
-          <div class="badge">也可以手动刷新</div>
-      </div>
-    </div>
 
-    <section class="summary-strip">
-      <div class="summary-pill">
-        <div class="summary-pill-label">服务</div>
-        <div class="summary-pill-value" id="summary-service">--</div>
-        <div class="summary-pill-detail" id="summary-service-detail">正在读取服务信息…</div>
-      </div>
-      <div class="summary-pill">
-        <div class="summary-pill-label">账号</div>
-        <div class="summary-pill-value" id="summary-account">--</div>
-        <div class="summary-pill-detail" id="summary-account-detail">正在读取账号信息…</div>
-      </div>
-      <div class="summary-pill">
-        <div class="summary-pill-label">会话</div>
-        <div class="summary-pill-value" id="summary-sessions">--</div>
-        <div class="summary-pill-detail" id="summary-sessions-detail">正在读取会话状态…</div>
-      </div>
-      <div class="summary-pill">
-        <div class="summary-pill-label">任务</div>
-        <div class="summary-pill-value" id="summary-jobs">--</div>
-        <div class="summary-pill-detail" id="summary-jobs-detail">正在读取后台任务…</div>
-      </div>
-    </section>
+      <section class="summary-strip">
+        <div class="summary-pill">
+          <div class="summary-pill-label">服务</div>
+          <div class="summary-pill-value" id="summary-service">--</div>
+          <div class="summary-pill-detail" id="summary-service-detail">正在读取服务信息…</div>
+        </div>
+        <div class="summary-pill">
+          <div class="summary-pill-label">账号</div>
+          <div class="summary-pill-value" id="summary-account">--</div>
+          <div class="summary-pill-detail" id="summary-account-detail">正在读取账号信息…</div>
+        </div>
+        <div class="summary-pill">
+          <div class="summary-pill-label">会话</div>
+          <div class="summary-pill-value" id="summary-sessions">--</div>
+          <div class="summary-pill-detail" id="summary-sessions-detail">正在读取会话状态…</div>
+        </div>
+        <div class="summary-pill">
+          <div class="summary-pill-label">任务</div>
+          <div class="summary-pill-value" id="summary-jobs">--</div>
+          <div class="summary-pill-detail" id="summary-jobs-detail">正在读取后台任务…</div>
+        </div>
+      </section>
 
-    <div class="grid">
+      <div class="grid">
       <section class="card span-12">
         <div class="section-head">
           <div>
@@ -898,6 +937,7 @@ function renderAdminPage(options: {
         </div>
         <div id="logs-panel" class="log-list"></div>
       </section>
+      </div>
     </div>
   </div>
 
