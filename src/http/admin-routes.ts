@@ -473,11 +473,6 @@ function renderAdminPage(options: {
       gap: 12px;
       margin-bottom: 10px;
     }
-    .section-copy {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.35;
-    }
     .hint {
       margin-top: 8px;
       color: var(--muted);
@@ -852,7 +847,7 @@ function renderAdminPage(options: {
       <div class="headerbar">
         <div class="header-main">
           <h1>${escapeHtml(options.serviceName)} Admin</h1>
-          <div class="header-subtitle">live 状态、账号、session、后台任务、登录态切换都在这里。重点是快速扫一眼，不是看说明书。</div>
+          <div class="header-subtitle">live status, auth, sessions, jobs.</div>
         </div>
         <div class="header-meta">
             <div class="badge ${options.tokenConfigured ? "good" : "warn"}">${options.tokenConfigured ? "已启用管理员令牌" : "未启用管理员令牌"}</div>
@@ -887,10 +882,7 @@ function renderAdminPage(options: {
       <div class="grid">
       <section class="card span-12">
         <div class="section-head">
-          <div>
-            <h2>运行概览</h2>
-            <div class="section-copy">固定状态都压在这里。登录文件直接在条目里看状态和替换，不再拆成第二块重复区域。</div>
-          </div>
+          <h2>运行概览</h2>
           <div class="actions">
             <input id="token-input" type="password" placeholder="${options.tokenConfigured ? "管理员令牌" : "当前可留空"}" style="width:220px" />
             <button id="refresh-button" class="secondary">刷新</button>
@@ -916,7 +908,6 @@ function renderAdminPage(options: {
                     <div class="auth-file-title mono">auth.json</div>
                     <div id="auth-file-auth-badge"></div>
                   </div>
-                  <div class="auth-file-copy">切运行账号。支持上传文件或直接粘贴完整 JSON。</div>
                   <div class="auth-file-meta" id="auth-file-auth-meta"></div>
                   <div class="auth-file-path mono" id="auth-file-auth-path"></div>
                 </div>
@@ -931,7 +922,6 @@ function renderAdminPage(options: {
                     <div class="auth-file-title mono">.credentials.json</div>
                     <div id="auth-file-credentials-badge"></div>
                   </div>
-                  <div class="auth-file-copy">MCP OAuth 凭据。只改这一个文件，不会碰 auth.json。</div>
                   <div class="auth-file-meta" id="auth-file-credentials-meta"></div>
                   <div class="auth-file-path mono" id="auth-file-credentials-path"></div>
                 </div>
@@ -946,7 +936,6 @@ function renderAdminPage(options: {
                     <div class="auth-file-title mono">config.toml</div>
                     <div id="auth-file-config-badge"></div>
                   </div>
-                  <div class="auth-file-copy">模型、MCP、运行参数。支持上传文件或直接粘贴文本。</div>
                   <div class="auth-file-meta" id="auth-file-config-meta"></div>
                   <div class="auth-file-path mono" id="auth-file-config-path"></div>
                 </div>
@@ -956,7 +945,7 @@ function renderAdminPage(options: {
                 </div>
               </div>
             </div>
-            <div class="hint">系统会先把被覆盖的旧文件备份到容器数据目录里的 <span class="mono">admin-backups/auth-switches</span>，然后再写入新文件。</div>
+            <div class="hint">替换前会先备份旧文件，然后重启内置 runtime。</div>
             <div class="status-line" id="replace-status"></div>
           </div>
         </div>
@@ -964,10 +953,7 @@ function renderAdminPage(options: {
 
       <section class="card span-12">
         <div class="section-head">
-          <div>
-            <h2>会话状态</h2>
-            <div class="section-copy">这里改成高密度视图：先筛选，再扫摘要行，最后按需展开看消息和任务。</div>
-          </div>
+          <h2>会话状态</h2>
           <div class="session-toolbar">
             <input id="session-search" type="search" placeholder="搜索 session key / channel / workspace / snippet" />
             <select id="session-filter">
@@ -984,10 +970,7 @@ function renderAdminPage(options: {
 
       <section class="card span-12">
         <div class="section-head">
-          <div>
-            <h2>最近日志</h2>
-            <div class="section-copy">这里只看最近的重要日志，用来快速判断断线、恢复、thread 漂移和 job 失败。</div>
-          </div>
+          <h2>最近日志</h2>
         </div>
         <div id="logs-panel" class="log-list"></div>
       </section>
@@ -1163,11 +1146,11 @@ function renderAdminPage(options: {
     function persistToken() {
       localStorage.setItem(tokenKey, tokenInput.value.trim());
       if (tokenConfigured && !tokenInput.value.trim()) {
-        tokenStatus.innerHTML = '<span class="warn">这个服务已开启管理员令牌，不填就无法调用 API。</span>';
+        tokenStatus.innerHTML = '<span class="warn">缺少管理员令牌</span>';
       } else if (!tokenConfigured) {
-        tokenStatus.innerHTML = '<span class="warn">当前没有管理员令牌。只要能访问这个端口的人，都能调用这些管理接口。</span>';
+        tokenStatus.innerHTML = '<span class="warn">管理员接口未设防</span>';
       } else {
-        tokenStatus.innerHTML = '<span class="good">令牌已准备好，可以访问管理接口。</span>';
+        tokenStatus.innerHTML = '<span class="good">管理员令牌已就绪</span>';
       }
     }
 
