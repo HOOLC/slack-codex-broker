@@ -1317,16 +1317,32 @@ function renderAdminPage(options: {
           '</div>' +
           (rateLimits.ok && rateLimitSnapshot
             ? [
+                '<div class="list">' +
+                  [
+                    rateLimitSnapshot.primary
+                      ? '<div class="item">' +
+                          '<div class="item-head">' +
+                            '<div class="item-title">' + esc(formatWindowLabel(rateLimitSnapshot.primary.windowDurationMins)) + '</div>' +
+                            renderBadge(formatRemainingPercent(rateLimitSnapshot.primary), "good") +
+                          '</div>' +
+                          '<div class="meta"><span>' + esc(formatResetTime(rateLimitSnapshot.primary.resetsAt)) + '</span></div>' +
+                        '</div>'
+                      : "",
+                    rateLimitSnapshot.secondary
+                      ? '<div class="item">' +
+                          '<div class="item-head">' +
+                            '<div class="item-title">' + esc(formatWindowLabel(rateLimitSnapshot.secondary.windowDurationMins)) + '</div>' +
+                            renderBadge(formatRemainingPercent(rateLimitSnapshot.secondary), "good") +
+                          '</div>' +
+                          '<div class="meta"><span>' + esc(formatResetTime(rateLimitSnapshot.secondary.resetsAt)) + '</span></div>' +
+                        '</div>'
+                      : ""
+                  ].filter(Boolean).join("") +
+                '</div>' +
                 '<div class="compact-kv">' +
                   [
-                    ["主额度", [rateLimitSnapshot.limitName, rateLimitSnapshot.limitId].filter(Boolean).join(" / ") || "—"],
+                    ["额度桶", [rateLimitSnapshot.limitName, rateLimitSnapshot.limitId].filter(Boolean).join(" / ") || "—"],
                     ["计划", rateLimitSnapshot.planType || "—"],
-                    ["主窗口", rateLimitSnapshot.primary ? formatWindowLabel(rateLimitSnapshot.primary.windowDurationMins) : "—"],
-                    ["主剩余", formatRemainingPercent(rateLimitSnapshot.primary)],
-                    ["主重置", rateLimitSnapshot.primary ? formatResetTime(rateLimitSnapshot.primary.resetsAt) : "—"],
-                    ["副窗口", rateLimitSnapshot.secondary ? formatWindowLabel(rateLimitSnapshot.secondary.windowDurationMins) : "—"],
-                    ["副剩余", formatRemainingPercent(rateLimitSnapshot.secondary)],
-                    ["副重置", rateLimitSnapshot.secondary ? formatResetTime(rateLimitSnapshot.secondary.resetsAt) : "—"],
                     ["credits", formatCreditsSnapshot(rateLimitSnapshot.credits)],
                     ["限额桶", String(rateLimitBuckets.length || 1)]
                   ].map(([k, v]) =>
