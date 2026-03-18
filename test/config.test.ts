@@ -32,6 +32,10 @@ describe("loadConfig", () => {
     expect(config.logRawCodexRpc).toBe(true);
     expect(config.logRawHttpRequests).toBe(true);
     expect(config.brokerAdminToken).toBeUndefined();
+    expect(config.geminiHostHomePath).toBeUndefined();
+    expect(config.geminiHttpProxy).toBeUndefined();
+    expect(config.geminiHttpsProxy).toBeUndefined();
+    expect(config.geminiAllProxy).toBeUndefined();
     expect(config.isolatedMcpServers).toEqual(["linear", "notion"]);
     expect(config.codexDisabledMcpServers).toEqual(["linear", "notion"]);
   });
@@ -54,6 +58,22 @@ describe("loadConfig", () => {
     } as NodeJS.ProcessEnv);
 
     expect(config.codexHostHomePath).toBe("/host-codex-home");
+  });
+
+  it("loads Gemini runtime configuration", () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      GEMINI_HOST_HOME_PATH: "/host-gemini-home",
+      GEMINI_HTTP_PROXY: "http://host.docker.internal:6152",
+      GEMINI_HTTPS_PROXY: "http://host.docker.internal:6152",
+      GEMINI_ALL_PROXY: "socks5://host.docker.internal:6153"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.geminiHostHomePath).toBe("/host-gemini-home");
+    expect(config.geminiHttpProxy).toBe("http://host.docker.internal:6152");
+    expect(config.geminiHttpsProxy).toBe("http://host.docker.internal:6152");
+    expect(config.geminiAllProxy).toBe("socks5://host.docker.internal:6153");
   });
 
   it("parses disabled MCP servers as a csv list and unions isolated MCP servers", () => {

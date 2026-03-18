@@ -34,10 +34,14 @@ export async function startService(): Promise<{
     codexHome: config.codexHome,
     reposRoot: config.reposRoot,
     hostCodexHomePath: config.codexHostHomePath,
+    hostGeminiHomePath: config.geminiHostHomePath,
     codexAppServerPort: config.codexAppServerPort,
     codexAppServerUrl: config.codexAppServerUrl,
     codexAuthJsonPath: config.codexAuthJsonPath,
     codexDisabledMcpServers: config.codexDisabledMcpServers,
+    geminiHttpProxy: config.geminiHttpProxy,
+    geminiHttpsProxy: config.geminiHttpsProxy,
+    geminiAllProxy: config.geminiAllProxy,
     openAiApiKey: config.codexOpenAiApiKey
   });
   const bridge = new SlackCodexBridge({

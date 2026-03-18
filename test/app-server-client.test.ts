@@ -644,6 +644,21 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("/integrations/mcp-call")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("UI/frontend/layout/styling contract")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("BROKER_GEMINI_UI_HELPER")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("you must consult Gemini first")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Keep APIs, data contracts, and non-UI behavior unchanged")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("stop and report that as a blocker for UI work")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("\"server\":\"linear\"")
     );
     expect(threadStartParams?.baseInstructions).toEqual(

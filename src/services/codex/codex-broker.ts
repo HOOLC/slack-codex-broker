@@ -34,10 +34,14 @@ export class CodexBroker {
     readonly codexHome: string;
     readonly reposRoot: string;
     readonly hostCodexHomePath?: string | undefined;
+    readonly hostGeminiHomePath?: string | undefined;
     readonly codexAppServerPort: number;
     readonly codexAppServerUrl?: string | undefined;
     readonly codexAuthJsonPath?: string | undefined;
     readonly codexDisabledMcpServers: string[];
+    readonly geminiHttpProxy?: string | undefined;
+    readonly geminiHttpsProxy?: string | undefined;
+    readonly geminiAllProxy?: string | undefined;
     readonly openAiApiKey?: string | undefined;
   }) {
     this.#serviceName = options.serviceName;
@@ -56,9 +60,13 @@ export class CodexBroker {
     this.#appServerProcess = new AppServerProcess({
       codexHome: options.codexHome,
       hostCodexHomePath: options.hostCodexHomePath,
+      hostGeminiHomePath: options.hostGeminiHomePath,
       port: options.codexAppServerPort,
       authJsonPath: options.codexAuthJsonPath,
       disabledMcpServers: options.codexDisabledMcpServers,
+      geminiHttpProxy: options.geminiHttpProxy,
+      geminiHttpsProxy: options.geminiHttpsProxy,
+      geminiAllProxy: options.geminiAllProxy,
       openAiApiKey: options.openAiApiKey
     });
     this.#client = this.#createClient(this.#appServerProcess.url);

@@ -38,7 +38,7 @@ RUN apt-get update \
   && git config --global --add url."https://github.com/".insteadOf ssh://git@github.com/ \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @openai/codex@0.114.0
+RUN npm install -g @openai/codex@0.114.0 @google/gemini-cli@0.33.0
 
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

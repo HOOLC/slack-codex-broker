@@ -500,6 +500,15 @@ export class AppServerClient extends EventEmitter {
         "- The tool-call endpoint returns JSON with ok/server/name/result.",
         "- If the isolated integration call fails, tell Slack that the specific integration is unavailable right now. Do not assume the whole runtime is broken."
       ].join("\n"),
+      [
+        "UI/frontend/layout/styling contract:",
+        "- For any substantial UI work, frontend layout work, visual refactor, CSS/styling pass, dashboard/admin-page reorganization, component structure rewrite, or design-heavy interaction change, you must consult Gemini first.",
+        "- Use the broker Gemini helper before editing UI files: node \"$BROKER_GEMINI_UI_HELPER\" --cwd /absolute/project/path --include-directory /absolute/project/path --prompt \"describe the UI task, the target files, the constraints, and ask Gemini for a concrete redesign or code-oriented implementation plan\"",
+        "- The helper should use gemini-3-pro-preview for UI work in this runtime.",
+        "- Treat Gemini as the primary UI designer for those tasks. Implement or adapt Gemini's output instead of inventing a fresh UI direction yourself.",
+        "- Keep APIs, data contracts, and non-UI behavior unchanged unless the user explicitly asks for them to change.",
+        "- If the Gemini helper is unavailable, the Gemini CLI is not authenticated, or Gemini fails, stop and report that as a blocker for UI work rather than silently proceeding with your own UI redesign."
+      ].join("\n"),
       "Slack UX preference: do not stay silent for a long stretch if there is a meaningful progress point worth sharing. Use judgment. If you have a concrete update, short plan adjustment, blocker, or partial conclusion that would help the people in the thread, send a brief Slack update. If there is nothing meaningful to say yet, keep working and avoid filler. Do not turn routine polling or watcher noise into Slack chatter.",
       [
         "Turn stopping contract:",

@@ -7,6 +7,7 @@ import type { Readable } from "node:stream";
 import { logger } from "../../logger.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { syncUserCodexHome } from "./codex-home.js";
+import { syncGeminiHome } from "./gemini-home.js";
 
 export class AppServerProcess {
   readonly #codexHome: string;
@@ -15,7 +16,11 @@ export class AppServerProcess {
   readonly #openAiApiKey: string | undefined;
   readonly #authJsonPath: string | undefined;
   readonly #hostCodexHomePath: string | undefined;
+  readonly #hostGeminiHomePath: string | undefined;
   readonly #disabledMcpServers: string[];
+  readonly #geminiHttpProxy: string | undefined;
+  readonly #geminiHttpsProxy: string | undefined;
+  readonly #geminiAllProxy: string | undefined;
   #child: ChildProcessByStdio<null, Readable, Readable> | undefined;
   #homePrepared = false;
 
@@ -25,7 +30,11 @@ export class AppServerProcess {
     readonly openAiApiKey?: string | undefined;
     readonly authJsonPath?: string | undefined;
     readonly hostCodexHomePath?: string | undefined;
+    readonly hostGeminiHomePath?: string | undefined;
     readonly disabledMcpServers?: string[] | undefined;
+    readonly geminiHttpProxy?: string | undefined;
+    readonly geminiHttpsProxy?: string | undefined;
+    readonly geminiAllProxy?: string | undefined;
   }) {
     this.#codexHome = options.codexHome;
     this.#runtimeHome = path.join(path.dirname(options.codexHome), "runtime-home");
@@ -33,7 +42,11 @@ export class AppServerProcess {
     this.#openAiApiKey = options.openAiApiKey;
     this.#authJsonPath = options.authJsonPath;
     this.#hostCodexHomePath = options.hostCodexHomePath;
+    this.#hostGeminiHomePath = options.hostGeminiHomePath;
     this.#disabledMcpServers = options.disabledMcpServers ?? [];
+    this.#geminiHttpProxy = options.geminiHttpProxy;
+    this.#geminiHttpsProxy = options.geminiHttpsProxy;
+    this.#geminiAllProxy = options.geminiAllProxy;
   }
 
   get url(): string {
@@ -53,8 +66,21 @@ export class AppServerProcess {
       ...process.env,
       CODEX_HOME: this.#codexHome,
       HOME: this.#runtimeHome,
-      TEMPAD_LINK_SERVICE_URL: process.env.TEMPAD_LINK_SERVICE_URL || "http://host.docker.internal:4318"
+      TEMPAD_LINK_SERVICE_URL: process.env.TEMPAD_LINK_SERVICE_URL || "http://host.docker.internal:4318",
+      BROKER_GEMINI_UI_HELPER: "/app/dist/src/tools/gemini-ui.js"
     };
+
+    if (this.#geminiHttpProxy) {
+      env.BROKER_GEMINI_HTTP_PROXY = this.#geminiHttpProxy;
+    }
+
+    if (this.#geminiHttpsProxy) {
+      env.BROKER_GEMINI_HTTPS_PROXY = this.#geminiHttpsProxy;
+    }
+
+    if (this.#geminiAllProxy) {
+      env.BROKER_GEMINI_ALL_PROXY = this.#geminiAllProxy;
+    }
 
     if (this.#openAiApiKey) {
       env.OPENAI_API_KEY = this.#openAiApiKey;
@@ -157,8 +183,12 @@ export class AppServerProcess {
       runtimeHomePath: this.#runtimeHome,
       legacyPersonalMemoryPath:
         path.resolve(this.#runtimeHome) === path.resolve(os.homedir())
-          ? undefined
+        ? undefined
           : path.join(os.homedir(), ".codex", "AGENT.md")
+    });
+    await syncGeminiHome({
+      runtimeHomePath: this.#runtimeHome,
+      hostGeminiHomePath: this.#hostGeminiHomePath
     });
     this.#homePrepared = true;
   }
