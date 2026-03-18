@@ -119,7 +119,8 @@ function formatBackgroundJobEventForCodex(message: SlackInputMessage): string {
 
   return [
     "A broker-managed background job reported a new asynchronous event for this session.",
-    "Decide whether it changes the work, requires a reply in Slack, or needs no action.",
+    "Decide whether it materially changes the work, requires a reply in Slack, or needs no action.",
+    "Most watcher events do not need a Slack reply. If this is only routine monitoring noise or an unchanged waiting state, keep waiting silently.",
     "background_job_event_json:",
     "```json",
     JSON.stringify(payload, null, 2),
@@ -145,6 +146,7 @@ function formatUnexpectedTurnStopForCodex(message: SlackInputMessage): string {
     "If the work is actually complete, send a short final Slack update now.",
     "If you are intentionally blocked on user input, approval, credentials, or any other human/external dependency, send a Slack update with kind=block and a concrete blocker.",
     "If you are intentionally waiting on a broker-managed async job that is already running and will wake this session later, send a Slack update with kind=wait and explain what you are waiting for.",
+    "Use kind=wait only when you are newly entering a waiting state or when the waiting situation materially changed. Do not use it for routine watcher ticks.",
     "Otherwise resume the work from the latest state.",
     "unexpected_turn_stop_json:",
     "```json",

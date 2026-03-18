@@ -521,6 +521,12 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("kind=wait")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Do not emit repeated wait updates for routine watcher ticks")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("do not mirror every watcher update back into Slack")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("shared_repos_root: /tmp/repos")
     );
     expect(String(threadStartParams?.baseInstructions)).toContain("node \\\"$BROKER_JOB_HELPER\\\" event");
