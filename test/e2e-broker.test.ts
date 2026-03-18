@@ -444,6 +444,114 @@ describe.sequential("slack-codex-broker e2e", () => {
     await waitForSessionIdle(tempRoot, "C123:444.220");
   }, 60_000);
 
+  it("wakes a turn that ends without an explicit final, block, or wait state", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    let turnCount = 0;
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async (context) => {
+        turnCount += 1;
+        context.complete("");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "666.220",
+      ts: "666.221",
+      text: "<@UBOT> 继续把这个做完"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 2, "unexpected stop wake turn");
+    const wakeText = collectTextInput(mockCodex.turnsStarted[1]!.input);
+    expect(wakeText).toContain("unexpected_turn_stop_json");
+    expect(wakeText).toContain("explicit final, block, or wait state");
+    await waitForSessionIdle(tempRoot, "C123:666.220");
+    expect(turnCount).toBe(2);
+  }, 60_000);
+
+  it("wakes a wait turn when no running async job backs that wait state", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const brokerBaseUrl = `http://127.0.0.1:${brokerPort}`;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    let turnCount = 0;
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async () => {
+        turnCount += 1;
+        if (turnCount === 1) {
+          await postJson(`${brokerBaseUrl}/slack/post-message`, {
+            channel_id: "C123",
+            thread_ts: "777.220",
+            text: "我先等异步结果回来。",
+            kind: "wait",
+            reason: "waiting for async job"
+          });
+        }
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "777.220",
+      ts: "777.221",
+      text: "<@UBOT> 盯一下这个"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 2, "wait-without-job wake turn");
+    const wakeText = collectTextInput(mockCodex.turnsStarted[1]!.input);
+    expect(wakeText).toContain("unexpected_turn_stop_json");
+    expect(wakeText).toContain("there is no running broker-managed async job");
+    await waitForSessionIdle(tempRoot, "C123:777.220");
+    expect(turnCount).toBe(2);
+  }, 60_000);
+
   it("does not recover the broker's own Slack messages as inbound work", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
@@ -494,6 +602,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       30_000
     );
     await waitForSessionIdle(tempRoot, "C123:555.220", 30_000);
+    const turnCountBeforeRestart = mockCodex.turnsStarted.length;
 
     await broker.stop();
     cleanups.pop();
@@ -507,7 +616,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     cleanups.push(() => restarted.stop());
 
     await delay(2_000);
-    expect(mockCodex.turnsStarted).toHaveLength(1);
+    expect(mockCodex.turnsStarted).toHaveLength(turnCountBeforeRestart);
   }, 60_000);
 });
 

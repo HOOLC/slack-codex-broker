@@ -4,7 +4,8 @@ import type {
   ResolvedSlackThreadMessage,
   SlackImageAttachment,
   SlackInputMessage,
-  SlackUserIdentity
+  SlackUserIdentity,
+  UnexpectedTurnStopPayload
 } from "../../types.js";
 
 interface SlackRenderableMessage {
@@ -20,6 +21,7 @@ interface SlackRenderableMessage {
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
+  readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
 }
 
 export function formatSlackMessageForCodex(
@@ -28,6 +30,10 @@ export function formatSlackMessageForCodex(
 ): string {
   if (message.source === "background_job_event" && message.backgroundJob) {
     return formatBackgroundJobEventForCodex(message);
+  }
+
+  if (message.source === "unexpected_turn_stop" && message.unexpectedTurnStop) {
+    return formatUnexpectedTurnStopForCodex(message);
   }
 
   if (message.batchMessages && message.batchMessages.length > 0) {
@@ -121,6 +127,32 @@ function formatBackgroundJobEventForCodex(message: SlackInputMessage): string {
   ].join("\n");
 }
 
+function formatUnexpectedTurnStopForCodex(message: SlackInputMessage): string {
+  const payload = {
+    source: message.source,
+    message_ts: message.messageTs,
+    previous_turn: {
+      turn_id: message.unexpectedTurnStop?.turnId
+    },
+    reason:
+      message.unexpectedTurnStop?.reason ??
+      message.text.trim() ??
+      "The previous run ended without an explicit final/block/wait state."
+  };
+
+  return [
+    "The previous run for this Slack thread appears to have stopped unexpectedly.",
+    "If the work is actually complete, send a short final Slack update now.",
+    "If you are intentionally blocked on user input, approval, credentials, or any other human/external dependency, send a Slack update with kind=block and a concrete blocker.",
+    "If you are intentionally waiting on a broker-managed async job that is already running and will wake this session later, send a Slack update with kind=wait and explain what you are waiting for.",
+    "Otherwise resume the work from the latest state.",
+    "unexpected_turn_stop_json:",
+    "```json",
+    JSON.stringify(payload, null, 2),
+    "```"
+  ].join("\n");
+}
+
 function formatRecoveredSlackBatchForCodex(message: SlackInputMessage): string {
   const batchMessages = message.batchMessages ?? [];
   const payload = {
@@ -167,7 +199,8 @@ function buildSlackMessagePayload(
       height: image.height,
       dimensions: formatImageDimensions(image)
     })),
-    slack_message: message.slackMessage
+    slack_message: message.slackMessage,
+    unexpected_turn_stop: message.unexpectedTurnStop
   };
 }
 

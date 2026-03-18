@@ -1,4 +1,10 @@
-import type { PersistedInboundSource, SlackInboundSource, SlackSessionRecord } from "../../types.js";
+import type {
+  PersistedInboundMessage,
+  PersistedInboundSource,
+  SlackInboundSource,
+  SlackSessionRecord,
+  SlackTurnSignalKind
+} from "../../types.js";
 
 const AUTO_RECOVERY_SESSION_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1_000;
 const DEFAULT_FAILURE_NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1_000;
@@ -174,4 +180,12 @@ export function isSlackInboundSource(
   source: PersistedInboundSource | "recovered_thread_batch"
 ): source is SlackInboundSource {
   return source === "app_mention" || source === "direct_message" || source === "thread_reply";
+}
+
+export function isStopExplainingTurnSignalKind(kind: SlackTurnSignalKind | undefined): boolean {
+  return kind === "final" || kind === "block" || kind === "wait";
+}
+
+export function isUnexpectedTurnStopMessage(message: PersistedInboundMessage): boolean {
+  return message.source === "unexpected_turn_stop";
 }

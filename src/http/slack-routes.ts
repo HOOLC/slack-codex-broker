@@ -187,6 +187,8 @@ async function handleSlackPostMessageRequest(
   const channelId = body.channel_id;
   const rootThreadTs = body.thread_ts;
   const text = body.text?.trim();
+  const kind = body.kind?.trim();
+  const reason = body.reason?.trim() || body.stop_reason?.trim() || undefined;
 
   if (!channelId || !rootThreadTs || !text) {
     respondJson(response, 400, {
@@ -197,11 +199,31 @@ async function handleSlackPostMessageRequest(
     return;
   }
 
+  if (kind && !["progress", "final", "block", "wait"].includes(kind)) {
+    respondJson(response, 400, {
+      ok: false,
+      error: "invalid_kind",
+      allowed: ["progress", "final", "block", "wait"]
+    });
+    return;
+  }
+
+  if ((kind === "block" || kind === "wait") && !reason) {
+    respondJson(response, 400, {
+      ok: false,
+      error: "missing_reason",
+      required: ["reason"]
+    });
+    return;
+  }
+
   try {
     await options.bridge.postSlackMessage({
       channelId,
       rootThreadTs,
-      text
+      text,
+      kind: kind as "progress" | "final" | "block" | "wait" | undefined,
+      reason
     });
     respondJson(response, 200, { ok: true });
   } catch (error) {

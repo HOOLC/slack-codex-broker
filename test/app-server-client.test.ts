@@ -515,7 +515,10 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("BROKER_JOB_HELPER")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
-      expect.stringContaining("Pause/idle rule")
+      expect.stringContaining("Turn stopping contract")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("kind=wait")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("shared_repos_root: /tmp/repos")

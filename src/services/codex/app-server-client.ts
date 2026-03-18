@@ -335,7 +335,8 @@ export class AppServerClient extends EventEmitter {
     const messagePayload = JSON.stringify({
       channel_id: session.channelId,
       thread_ts: session.rootThreadTs,
-      text: "replace with your Slack update"
+      text: "replace with your Slack update",
+      kind: "progress"
     });
     const filePayload = JSON.stringify({
       channel_id: session.channelId,
@@ -378,6 +379,7 @@ export class AppServerClient extends EventEmitter {
       [
         "Slack broker API usage for this session:",
         `- Send text with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-message -H 'content-type: application/json' -d '${messagePayload}'`,
+        "- When sending a terminal Slack state, set kind to final, block, or wait. For block/wait, include a short reason field.",
         `- Upload a local image or file with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/slack/post-file -H 'content-type: application/json' -d '${filePayload}'`,
         `- Read earlier thread context with: curl -sS '${this.options.brokerHttpBaseUrl}/slack/thread-history?channel_id=${encodeURIComponent(session.channelId)}&thread_ts=${encodeURIComponent(session.rootThreadTs)}&before_ts=older-message-ts&limit=20&format=text'`,
         `- Register a broker-managed background job with: curl -sS -X POST ${this.options.brokerHttpBaseUrl}/jobs/register -H 'content-type: application/json' -d '${jobPayload}'`,
@@ -386,7 +388,13 @@ export class AppServerClient extends EventEmitter {
         "- Inside a background job script, prefer `node \"$BROKER_JOB_HELPER\" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads."
       ].join("\n"),
       "Slack UX preference: do not stay silent for a long stretch if there is a meaningful progress point worth sharing. Use judgment. If you have a concrete update, short plan adjustment, blocker, or partial conclusion that would help the people in the thread, send a brief Slack update. If there is nothing meaningful to say yet, keep working and avoid filler.",
-      "Pause/idle rule: if you decide to stop work for now and there is no running broker-managed background job still watching on your behalf, say that explicitly in Slack. Do not imply that you are still continuing work unless you have already started the next concrete command or successfully registered the background job that will keep monitoring.",
+      [
+        "Turn stopping contract:",
+        "- If the work is done, send a Slack update with kind=final.",
+        "- If you are blocked and need user input, approval, credentials, or any other human/external intervention, send a Slack update with kind=block and include a concrete reason.",
+        "- If you are intentionally waiting because a broker-managed async job is already running and will wake this session later, send a Slack update with kind=wait and include what you are waiting for.",
+        "- Do not end a run silently when you intend to stop. If you stop without an explicit final/block/wait explanation, the broker will treat it as an unexpected stop and wake you again."
+      ].join("\n"),
       [
         "Repository workflow contract:",
         `- Keep canonical repository clones under ${this.options.reposRoot}.`,

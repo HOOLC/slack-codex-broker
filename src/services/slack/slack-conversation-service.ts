@@ -10,7 +10,8 @@ import type {
   ResolvedSlackThreadMessage,
   SlackInputMessage,
   SlackSessionRecord,
-  SlackThreadMessage
+  SlackThreadMessage,
+  SlackTurnSignalKind
 } from "../../types.js";
 import { CodexBroker } from "../codex/codex-broker.js";
 import {
@@ -34,6 +35,8 @@ import {
   parseActiveTurnMismatch,
   isMissingActiveTurnSteerError,
   isSlackMessageAfterCursor,
+  isStopExplainingTurnSignalKind,
+  isUnexpectedTurnStopMessage,
   shouldNotifySlackFailure,
   shouldAutoRecoverSession
 } from "./slack-conversation-utils.js";
@@ -269,6 +272,25 @@ export class SlackConversationService {
     });
   }
 
+  async acceptUnexpectedTurnStop(options: {
+    readonly session: SlackSessionRecord;
+    readonly previousTurnId: string;
+    readonly reason: string;
+  }): Promise<void> {
+    await this.acceptInboundMessage(options.session, {
+      source: "unexpected_turn_stop",
+      channelId: options.session.channelId,
+      rootThreadTs: options.session.rootThreadTs,
+      messageTs: `${Date.now()}.${Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0")}`,
+      userId: this.#botUserId || "BROKER",
+      text: options.reason,
+      unexpectedTurnStop: {
+        turnId: options.previousTurnId,
+        reason: options.reason
+      }
+    });
+  }
+
   async recoverMissedThreadMessages(reason: "socket_ready"): Promise<void> {
     if (this.#catchUpPromise) {
       await this.#catchUpPromise;
@@ -293,9 +315,20 @@ export class SlackConversationService {
     readonly channelId: string;
     readonly rootThreadTs: string;
     readonly text: string;
+    readonly kind?: SlackTurnSignalKind | undefined;
+    readonly reason?: string | undefined;
   }): Promise<void> {
-    for (const chunk of chunkSlackMessage(options.text)) {
-      await this.#postBotThreadMessage(options.channelId, options.rootThreadTs, chunk);
+    const chunks = chunkSlackMessage(options.text);
+    for (const [index, chunk] of chunks.entries()) {
+      await this.#postBotThreadMessage(options.channelId, options.rootThreadTs, chunk, {
+        turnSignal:
+          index === 0 && options.kind
+            ? {
+                kind: options.kind,
+                reason: options.reason
+              }
+            : undefined
+      });
     }
   }
 
@@ -353,6 +386,84 @@ export class SlackConversationService {
     });
     await this.#sessions.setLastSlackReplyAt(options.channelId, options.rootThreadTs, new Date().toISOString());
     return uploaded;
+  }
+
+  async #handleCompletedTurnDisposition(
+    session: SlackSessionRecord,
+    turnId: string,
+    dispatchMessages: readonly PersistedInboundMessage[],
+    options: {
+      readonly aborted: boolean;
+    }
+  ): Promise<SlackSessionRecord> {
+    if (options.aborted) {
+      return session;
+    }
+
+    if (dispatchMessages.length > 0 && dispatchMessages.every((message) => isUnexpectedTurnStopMessage(message))) {
+      return session;
+    }
+
+    const signalKind = session.lastTurnSignalTurnId === turnId ? session.lastTurnSignalKind : undefined;
+    if (isStopExplainingTurnSignalKind(signalKind)) {
+      if (signalKind !== "wait" || this.#hasRunningBackgroundJob(session)) {
+        return session;
+      }
+    }
+
+    if (this.#hasPendingUnexpectedStopNudge(session, turnId)) {
+      return session;
+    }
+
+    const reason = signalKind === "wait"
+      ? "The previous run said it was waiting, but there is no running broker-managed async job attached to this session. Either resume the work, declare a block that clearly names the human/external blocker, or register the async job and then declare wait."
+      : "The previous run ended without an explicit final, block, or wait state. Either continue the work, send a final Slack update, declare a block that clearly names the human/external blocker, or declare a wait state backed by a running broker-managed async job.";
+
+    await this.acceptUnexpectedTurnStop({
+      session,
+      previousTurnId: turnId,
+      reason
+    });
+
+    return this.#findSessionByKey(session.key);
+  }
+
+  #hasRunningBackgroundJob(session: SlackSessionRecord): boolean {
+    return this.#sessions.listBackgroundJobs({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs
+    }).some((job) => job.status === "registered" || job.status === "running");
+  }
+
+  #hasPendingUnexpectedStopNudge(session: SlackSessionRecord, turnId: string): boolean {
+    return this.#sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      source: "unexpected_turn_stop",
+      status: ["pending", "inflight", "done"]
+    }).some((message) => message.unexpectedTurnStop?.turnId === turnId);
+  }
+
+  #resolveTurnIdForSignal(session: SlackSessionRecord): string | undefined {
+    if (session.activeTurnId) {
+      return session.activeTurnId;
+    }
+
+    const inflightBatchIds = new Set(
+      this.#sessions.listInboundMessages({
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        status: "inflight"
+      })
+        .map((message) => message.batchId)
+        .filter((batchId): batchId is string => Boolean(batchId))
+    );
+
+    if (inflightBatchIds.size === 1) {
+      return [...inflightBatchIds][0];
+    }
+
+    return undefined;
   }
 
   async stopActiveTurn(session: SlackSessionRecord): Promise<boolean> {
@@ -532,11 +643,30 @@ export class SlackConversationService {
     });
   }
 
-  async #postBotThreadMessage(channelId: string, rootThreadTs: string, text: string): Promise<string | undefined> {
+  async #postBotThreadMessage(
+    channelId: string,
+    rootThreadTs: string,
+    text: string,
+    options?: {
+      readonly turnSignal?: {
+        readonly kind: SlackTurnSignalKind;
+        readonly reason?: string | undefined;
+      } | undefined;
+    }
+  ): Promise<string | undefined> {
     const ts = await this.#slackApi.postThreadMessage(channelId, rootThreadTs, text);
     if (ts) {
       this.#selfMessageFilter.rememberPostedMessageTs(ts);
-      await this.#sessions.setLastSlackReplyAt(channelId, rootThreadTs, new Date().toISOString());
+      const occurredAt = new Date().toISOString();
+      const session = await this.#sessions.setLastSlackReplyAt(channelId, rootThreadTs, occurredAt);
+      if (options?.turnSignal?.kind) {
+        await this.#sessions.recordTurnSignal(channelId, rootThreadTs, {
+          turnId: this.#resolveTurnIdForSignal(session),
+          kind: options.turnSignal.kind,
+          reason: options.turnSignal.reason,
+          occurredAt
+        });
+      }
     }
     return ts;
   }
@@ -887,6 +1017,9 @@ export class SlackConversationService {
           turnId: result.turnId,
           aborted: result.aborted,
           hadFinalMessage: Boolean(result.finalMessage)
+        });
+        session = await this.#handleCompletedTurnDisposition(session, result.turnId, dispatchMessages, {
+          aborted: result.aborted
         });
       } catch (error) {
         if (runtime.generation !== generation) {

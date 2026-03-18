@@ -5,7 +5,8 @@ import type {
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
-  SlackSessionRecord
+  SlackSessionRecord,
+  SlackTurnSignalKind
 } from "../types.js";
 import { StateStore } from "../store/state-store.js";
 import { ensureDir } from "../utils/fs.js";
@@ -157,6 +158,28 @@ export class SessionManager {
     const next: SlackSessionRecord = {
       ...session,
       lastProgressReminderAt
+    };
+    await this.updateSession(next);
+    return next;
+  }
+
+  async recordTurnSignal(
+    channelId: string,
+    rootThreadTs: string,
+    signal: {
+      readonly turnId?: string | undefined;
+      readonly kind: SlackTurnSignalKind;
+      readonly reason?: string | undefined;
+      readonly occurredAt?: string | undefined;
+    }
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    const next: SlackSessionRecord = {
+      ...session,
+      lastTurnSignalTurnId: signal.turnId,
+      lastTurnSignalKind: signal.kind,
+      lastTurnSignalReason: signal.reason?.trim() || undefined,
+      lastTurnSignalAt: signal.occurredAt ?? new Date().toISOString()
     };
     await this.updateSession(next);
     return next;

@@ -365,7 +365,11 @@ export class StateStore {
       lastObservedMessageTs: session.lastObservedMessageTs,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs,
       lastSlackReplyAt: session.lastSlackReplyAt,
-      lastProgressReminderAt: session.lastProgressReminderAt
+      lastProgressReminderAt: session.lastProgressReminderAt,
+      lastTurnSignalTurnId: session.lastTurnSignalTurnId,
+      lastTurnSignalKind: session.lastTurnSignalKind,
+      lastTurnSignalReason: session.lastTurnSignalReason,
+      lastTurnSignalAt: session.lastTurnSignalAt
     };
   }
 
@@ -393,6 +397,7 @@ export class StateStore {
       images: raw.images ?? [],
       slackMessage: raw.slackMessage,
       backgroundJob: raw.backgroundJob,
+      unexpectedTurnStop: raw.unexpectedTurnStop,
       status: raw.status ?? "pending",
       batchId: raw.batchId,
       createdAt: String(raw.createdAt ?? new Date().toISOString()),

@@ -263,6 +263,31 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"summary\": \"CI turned green.\"");
     expect(result).not.toContain("\"sender\":");
   });
+
+  it("renders unexpected stop nudges as structured broker events", () => {
+    const result = formatSlackMessageForCodex(
+      {
+        source: "unexpected_turn_stop",
+        channelId: "C123",
+        rootThreadTs: "111.222",
+        messageTs: "1741940000000.000002",
+        userId: "U_BROKER",
+        text: "The previous run ended without an explicit final, block, or wait state.",
+        unexpectedTurnStop: {
+          turnId: "turn-123",
+          reason: "The previous run ended without an explicit final, block, or wait state."
+        }
+      },
+      null
+    );
+
+    expect(result).toContain("The previous run for this Slack thread appears to have stopped unexpectedly.");
+    expect(result).toContain("unexpected_turn_stop_json:");
+    expect(result).toContain("\"source\": \"unexpected_turn_stop\"");
+    expect(result).toContain("\"turn_id\": \"turn-123\"");
+    expect(result).toContain("kind=block");
+    expect(result).toContain("kind=wait");
+  });
 });
 
 describe("formatSlackHistoryContextForCodex", () => {

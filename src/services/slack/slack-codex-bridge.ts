@@ -130,6 +130,8 @@ export class SlackCodexBridge {
     readonly channelId: string;
     readonly rootThreadTs: string;
     readonly text: string;
+    readonly kind?: "progress" | "final" | "block" | "wait" | undefined;
+    readonly reason?: string | undefined;
   }): Promise<void> {
     await this.#conversations.postSlackMessage(options);
   }

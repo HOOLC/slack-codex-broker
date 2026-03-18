@@ -12,6 +12,10 @@ export interface SlackSessionRecord {
   readonly lastDeliveredMessageTs?: string | undefined;
   readonly lastSlackReplyAt?: string | undefined;
   readonly lastProgressReminderAt?: string | undefined;
+  readonly lastTurnSignalTurnId?: string | undefined;
+  readonly lastTurnSignalKind?: SlackTurnSignalKind | undefined;
+  readonly lastTurnSignalReason?: string | undefined;
+  readonly lastTurnSignalAt?: string | undefined;
 }
 
 export type JsonLike =
@@ -31,8 +35,10 @@ export interface PersistedState {
 
 export type PersistedInboundMessageStatus = "pending" | "inflight" | "done";
 export type SlackInboundSource = "app_mention" | "direct_message" | "thread_reply";
-export type SyntheticInboundSource = "background_job_event";
+export type SyntheticInboundSource = "background_job_event" | "unexpected_turn_stop";
 export type PersistedInboundSource = SlackInboundSource | SyntheticInboundSource;
+
+export type SlackTurnSignalKind = "progress" | "final" | "block" | "wait";
 
 export interface BackgroundJobEventPayload {
   readonly jobId: string;
@@ -41,6 +47,11 @@ export interface BackgroundJobEventPayload {
   readonly summary: string;
   readonly detailsText?: string | undefined;
   readonly detailsJson?: JsonLike | undefined;
+}
+
+export interface UnexpectedTurnStopPayload {
+  readonly turnId: string;
+  readonly reason: string;
 }
 
 export interface PersistedInboundMessage {
@@ -62,6 +73,7 @@ export interface PersistedInboundMessage {
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
+  readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
   readonly status: PersistedInboundMessageStatus;
   readonly batchId?: string | undefined;
   readonly createdAt: string;
@@ -115,6 +127,7 @@ export interface SlackInputMessage {
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
+  readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
   readonly recoveryKind?: "socket_ready_missed_messages" | undefined;
   readonly batchMessages?: readonly SlackBatchInputMessage[] | undefined;
 }
@@ -140,6 +153,7 @@ export interface SlackBatchInputMessage {
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
+  readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
   readonly sender?: SlackUserIdentity | null | undefined;
 }
 

@@ -86,6 +86,7 @@ export class SlackInboundStore {
         images: item.images ?? [],
         slackMessage: item.slackMessage,
         backgroundJob: item.backgroundJob,
+        unexpectedTurnStop: item.unexpectedTurnStop,
         status: "pending",
         createdAt: now,
         updatedAt: now
@@ -123,7 +124,8 @@ export class SlackInboundStore {
       contextText: message.contextText,
       images: message.images,
       slackMessage: message.slackMessage,
-      backgroundJob: message.backgroundJob
+      backgroundJob: message.backgroundJob,
+      unexpectedTurnStop: message.unexpectedTurnStop
     };
   }
 
