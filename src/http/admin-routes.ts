@@ -1211,12 +1211,23 @@ function renderAdminPage(options: {
         return "—";
       }
 
-      const usedPercent = clampPercent(window.usedPercent);
-      const remainingPercent = Math.max(0, 100 - usedPercent);
-      const parts = [String(remainingPercent) + "% left"];
-      parts.push(formatWindowLabel(window.windowDurationMins));
+      const parts = [formatWindowLabel(window.windowDurationMins)];
+      const remaining = formatRemainingPercent(window);
+      if (remaining !== "—") {
+        parts.push(remaining);
+      }
       parts.push(formatResetTime(window.resetsAt));
       return parts.join(" · ");
+    }
+
+    function formatRemainingPercent(window) {
+      if (!window) {
+        return "—";
+      }
+
+      const usedPercent = clampPercent(window.usedPercent);
+      const remainingPercent = Math.max(0, 100 - usedPercent);
+      return String(remainingPercent) + "% left";
     }
 
     function formatCreditsSnapshot(credits) {
@@ -1310,8 +1321,12 @@ function renderAdminPage(options: {
                   [
                     ["主额度", [rateLimitSnapshot.limitName, rateLimitSnapshot.limitId].filter(Boolean).join(" / ") || "—"],
                     ["计划", rateLimitSnapshot.planType || "—"],
-                    ["主窗口", formatRateLimitWindow(rateLimitSnapshot.primary)],
-                    ["副窗口", formatRateLimitWindow(rateLimitSnapshot.secondary)],
+                    ["主窗口", rateLimitSnapshot.primary ? formatWindowLabel(rateLimitSnapshot.primary.windowDurationMins) : "—"],
+                    ["主剩余", formatRemainingPercent(rateLimitSnapshot.primary)],
+                    ["主重置", rateLimitSnapshot.primary ? formatResetTime(rateLimitSnapshot.primary.resetsAt) : "—"],
+                    ["副窗口", rateLimitSnapshot.secondary ? formatWindowLabel(rateLimitSnapshot.secondary.windowDurationMins) : "—"],
+                    ["副剩余", formatRemainingPercent(rateLimitSnapshot.secondary)],
+                    ["副重置", rateLimitSnapshot.secondary ? formatResetTime(rateLimitSnapshot.secondary.resetsAt) : "—"],
                     ["credits", formatCreditsSnapshot(rateLimitSnapshot.credits)],
                     ["限额桶", String(rateLimitBuckets.length || 1)]
                   ].map(([k, v]) =>
