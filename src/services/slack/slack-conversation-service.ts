@@ -179,6 +179,9 @@ export class SlackConversationService {
           ...message,
           text: metadata.text,
           mentionedUserIds: metadata.mentionedUserIds,
+          mentionedUsers: await Promise.all(
+            metadata.mentionedUserIds.map((userId) => this.#slackApi.getUserIdentity(userId))
+          ).then((users) => users.filter((user): user is NonNullable<typeof user> => user !== null)),
           sender: message.senderKind === "user"
             ? await this.#slackApi.getUserIdentity(message.userId)
             : null

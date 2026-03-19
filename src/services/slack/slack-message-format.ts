@@ -18,6 +18,7 @@ interface SlackRenderableMessage {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
   readonly mentionedUserIds?: readonly string[] | undefined;
+  readonly mentionedUsers?: readonly SlackUserIdentity[] | undefined;
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
@@ -79,6 +80,7 @@ export function formatSlackHistoryContextForCodex(
           appId: message.appId,
           senderUsername: message.senderUsername,
           mentionedUserIds: message.mentionedUserIds,
+          mentionedUsers: message.mentionedUsers,
           images: message.images,
           slackMessage: message.slackMessage
         },
@@ -196,7 +198,17 @@ function buildSlackMessagePayload(
     mentioned_user_mentions: message.mentionedUserIds && message.mentionedUserIds.length > 0
       ? message.mentionedUserIds.map((userId) => `<@${userId}>`)
       : undefined,
+    mentioned_users: message.mentionedUsers && message.mentionedUsers.length > 0
+      ? message.mentionedUsers.map((user) => ({
+        user_id: user.userId,
+        mention: user.mention,
+        display_name: user.displayName,
+        real_name: user.realName && user.realName !== user.displayName ? user.realName : undefined,
+        username: user.username && user.username !== user.displayName ? user.username : undefined
+      }))
+      : undefined,
     text: message.text || "[no text body]",
+    text_with_resolved_mentions: resolveMentionText(message.text || "[no text body]", message.mentionedUsers),
     images: (message.images ?? []).map((image) => ({
       file_id: image.fileId,
       name: image.name,
@@ -241,4 +253,20 @@ function formatImageDimensions(image: SlackImageAttachment): string | undefined 
   }
 
   return `${image.width}x${image.height}`;
+}
+
+function resolveMentionText(
+  text: string,
+  mentionedUsers?: readonly SlackUserIdentity[] | undefined
+): string {
+  if (!mentionedUsers || mentionedUsers.length === 0) {
+    return text;
+  }
+
+  let resolved = text;
+  for (const user of mentionedUsers) {
+    const label = user.displayName ?? user.realName ?? user.username ?? user.mention;
+    resolved = resolved.replaceAll(user.mention, `@${label}`);
+  }
+  return resolved;
 }

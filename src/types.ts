@@ -125,6 +125,7 @@ export interface SlackInputMessage {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
   readonly mentionedUserIds?: readonly string[] | undefined;
+  readonly mentionedUsers?: readonly SlackUserIdentity[] | undefined;
   readonly contextText?: string | undefined;
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
@@ -152,6 +153,7 @@ export interface SlackBatchInputMessage {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
   readonly mentionedUserIds?: readonly string[] | undefined;
+  readonly mentionedUsers?: readonly SlackUserIdentity[] | undefined;
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
@@ -189,6 +191,7 @@ export interface SlackThreadMessage {
 
 export interface ResolvedSlackThreadMessage extends SlackThreadMessage {
   readonly sender: SlackUserIdentity | null;
+  readonly mentionedUsers?: readonly SlackUserIdentity[];
 }
 
 export interface CodexTurnResult {

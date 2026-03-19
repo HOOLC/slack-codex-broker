@@ -34,19 +34,20 @@ export class SlackTurnRunner {
   }
 
   async steerActiveTurn(session: SlackSessionRecord, item: SlackInputMessage): Promise<void> {
-    const sender = item.source !== "background_job_event" && item.source !== "recovered_thread_batch" && item.senderKind === "user"
-      ? await this.#slackApi.getUserIdentity(item.userId)
+    const enrichedItem = await this.#enrichMentionedUsers(item);
+    const sender = enrichedItem.source !== "background_job_event" && enrichedItem.source !== "recovered_thread_batch" && enrichedItem.senderKind === "user"
+      ? await this.#slackApi.getUserIdentity(enrichedItem.userId)
       : null;
-    const formattedMessage = formatSlackMessageForCodex(item, sender);
-    const imageItems = await this.#buildImageInputItems(item);
+    const formattedMessage = formatSlackMessageForCodex(enrichedItem, sender);
+    const imageItems = await this.#buildImageInputItems(enrichedItem);
     await this.#codex.steer(
       session,
       [
         createTextInputItem([
-          item.recoveryKind === "socket_ready_missed_messages"
+          enrichedItem.recoveryKind === "socket_ready_missed_messages"
             ? "The broker server restarted or reconnected while the current turn was active."
             : "A newer Slack message arrived while the current turn is still active.",
-          item.recoveryKind === "socket_ready_missed_messages"
+          enrichedItem.recoveryKind === "socket_ready_missed_messages"
             ? "These are Slack thread messages that may have been missed while the broker was offline. Review the batch and decide whether you need to adjust the ongoing work or reply now."
             : "Treat it as the latest instruction and adjust the ongoing work accordingly.",
           "",
@@ -58,11 +59,12 @@ export class SlackTurnRunner {
   }
 
   async buildTurnInput(message: SlackInputMessage): Promise<readonly CodexInputItem[]> {
-    const sender = message.source !== "background_job_event" && message.source !== "recovered_thread_batch" && message.senderKind === "user"
-      ? await this.#slackApi.getUserIdentity(message.userId)
+    const enrichedMessage = await this.#enrichMentionedUsers(message);
+    const sender = enrichedMessage.source !== "background_job_event" && enrichedMessage.source !== "recovered_thread_batch" && enrichedMessage.senderKind === "user"
+      ? await this.#slackApi.getUserIdentity(enrichedMessage.userId)
       : null;
-    const inputText = formatSlackMessageForCodex(message, sender);
-    const imageItems = await this.#buildImageInputItems(message);
+    const inputText = formatSlackMessageForCodex(enrichedMessage, sender);
+    const imageItems = await this.#buildImageInputItems(enrichedMessage);
     return [
       createTextInputItem(inputText),
       ...imageItems
@@ -231,6 +233,25 @@ export class SlackTurnRunner {
       });
       return [];
     });
+  }
+
+  async #enrichMentionedUsers(message: SlackInputMessage): Promise<SlackInputMessage> {
+    if (message.mentionedUsers || !message.mentionedUserIds || message.mentionedUserIds.length === 0) {
+      return message;
+    }
+
+    const mentionedUsers = (
+      await Promise.all(message.mentionedUserIds.map((userId) => this.#slackApi.getUserIdentity(userId)))
+    ).filter((user): user is NonNullable<typeof user> => user !== null);
+
+    if (mentionedUsers.length === 0) {
+      return message;
+    }
+
+    return {
+      ...message,
+      mentionedUsers
+    };
   }
 
   async #recoverTurnResult(

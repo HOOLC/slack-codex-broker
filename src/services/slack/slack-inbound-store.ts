@@ -319,6 +319,11 @@ export class SlackInboundStore {
             appId: "appId" in message ? message.appId : undefined,
             senderUsername: "senderUsername" in message ? message.senderUsername : undefined,
             mentionedUserIds: metadata.mentionedUserIds,
+            mentionedUsers: (
+              await Promise.all(
+                metadata.mentionedUserIds.map((userId) => this.#slackApi.getUserIdentity(userId))
+              )
+            ).filter((user): user is NonNullable<typeof user> => user !== null),
             images,
             slackMessage,
             backgroundJob: "backgroundJob" in message ? message.backgroundJob : undefined,

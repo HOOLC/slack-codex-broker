@@ -18,6 +18,14 @@ describe("formatSlackMessageForCodex", () => {
         text: "Please fix the flaky test.",
         senderKind: "user",
         mentionedUserIds: ["U456"],
+        mentionedUsers: [
+          {
+            userId: "U456",
+            mention: "<@U456>",
+            displayName: "claude",
+            username: "claude"
+          }
+        ],
         images: [
           {
             fileId: "F123",
@@ -64,6 +72,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"U456\"");
     expect(result).toContain("\"mentioned_user_mentions\": [");
     expect(result).toContain("\"<@U456>\"");
+    expect(result).toContain("\"mentioned_users\": [");
     expect(result).toContain("\"images\": [");
     expect(result).toContain("\"title\": \"Screenshot\"");
     expect(result).toContain("\"dimensions\": \"1280x720\"");
@@ -113,6 +122,38 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("Earlier Slack thread context before the current message.");
     expect(result).toContain("Current Slack message requiring a response:");
     expect(result).toContain("\"source\": \"app_mention\"");
+  });
+
+  it("includes resolved mentioned users and readable mention text", () => {
+    const result = formatSlackMessageForCodex(
+      {
+        source: "thread_reply",
+        channelId: "C123",
+        rootThreadTs: "111.222",
+        messageTs: "111.227",
+        userId: "U123",
+        senderKind: "user",
+        text: "<@U456> preview 呢？",
+        mentionedUserIds: ["U456"],
+        mentionedUsers: [
+          {
+            userId: "U456",
+            mention: "<@U456>",
+            displayName: "claude",
+            username: "claude"
+          }
+        ]
+      },
+      {
+        userId: "U123",
+        mention: "<@U123>",
+        displayName: "Alice"
+      }
+    );
+
+    expect(result).toContain("\"mentioned_users\": [");
+    expect(result).toContain("\"display_name\": \"claude\"");
+    expect(result).toContain("\"text_with_resolved_mentions\": \"@claude preview 呢？\"");
   });
 
   it("renders image-only messages without dropping the body block", () => {
@@ -171,6 +212,13 @@ describe("formatSlackMessageForCodex", () => {
             senderKind: "user",
             text: "second missed message",
             mentionedUserIds: ["U789"],
+            mentionedUsers: [
+              {
+                userId: "U789",
+                mention: "<@U789>",
+                displayName: "claude"
+              }
+            ],
             sender: {
               userId: "U456",
               mention: "<@U456>",
@@ -191,6 +239,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("\"text\": \"second missed message\"");
     expect(result).toContain("\"mentioned_user_mentions\": [");
     expect(result).toContain("\"<@U789>\"");
+    expect(result).toContain("\"mentioned_users\": [");
   });
 
   it("renders bot/app card messages with raw Slack payload intact", () => {
