@@ -148,6 +148,57 @@ pnpm ops:ui:real
 `ops:ui:real` starts a local-only admin page on `127.0.0.1` so you can inspect sessions/account state and upload a replacement `auth.json` without using CLI flags directly.
 `ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 
+## Run On a macOS Bare VM
+
+The repository now includes a launchd-based bare-run path that mirrors the current Docker deployment onto a macOS VM under `~/services/slack-codex-broker`.
+
+The deployment flow is intentionally split:
+
+```bash
+pnpm ops:macos:bare:stage
+pnpm ops:macos:bare:install
+pnpm ops:macos:bare:start
+pnpm ops:macos:bare:check
+pnpm ops:macos:bare:status
+```
+
+What it does:
+
+- stages a clean broker runtime into the macOS service root instead of copying the whole live `.data-real-cueboard`
+- preserves the pieces that define broker behavior:
+  - `auth-profiles/`
+  - `codex-home` auth/config/skills/memory
+  - service-local runtime support snapshots under `runtime-support/`
+  - GitHub CLI login state under `runtime-home/.config/gh`
+- resets runtime state to an empty baseline:
+  - no historical Slack sessions
+  - no inbound backlog
+  - no background job history
+  - no historical logs or old workspaces
+  - no copied repo cache; repositories are cloned on the VM when needed
+- dereferences host-specific symlinks such as `memory.md` while building the service-local home snapshots
+- mirrors the broker-managed Codex/Gemini/.agents support files into `~/services/slack-codex-broker/runtime-support/`
+- copies the host `~/.config/gh` snapshot into the service runtime so `gh` works immediately on the VM
+- installs `pnpm` via Corepack if needed
+- installs `@openai/codex@0.114.0` and `@google/gemini-cli@0.33.0` on the target
+- builds the repo on the target and runs the service from `dist/src/index.js`
+- writes a launchd agent at `~/Library/LaunchAgents/com.zzj3720.slack-codex-broker.plist`
+
+The macOS launcher reads an env file from `~/services/slack-codex-broker/config/broker.env`, so the bare-run path stays file-driven instead of embedding a giant plist environment block.
+
+By default, the staging logic uses:
+
+- `codex-home/` from the live broker data root as the source of truth for broker-specific Codex memory/config/skills
+- the current Gemini and `.agents` mirrors when available
+
+You can override the source locations with:
+
+```bash
+pnpm ops:macos:bare:deploy -- --source-data-root /path/to/.data-real-cueboard
+```
+
+or the more specific `--source-codex-home`, `--source-gemini-home`, `--source-agents-home`, and `--source-gh-config-home` flags.
+
 The broker service itself now also exposes an in-container admin page:
 
 ```text
