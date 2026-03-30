@@ -23,6 +23,9 @@ interface FileInfo {
 }
 
 export class AdminService {
+  readonly #dataRoot: string;
+  readonly #backupsRoot: string;
+
   constructor(
     private readonly options: {
       readonly config: AppConfig;
@@ -31,7 +34,10 @@ export class AdminService {
       readonly authProfiles: AuthProfileService;
       readonly startedAt: Date;
     }
-  ) {}
+  ) {
+    this.#dataRoot = path.dirname(this.options.config.stateDir);
+    this.#backupsRoot = path.join(this.#dataRoot, "admin-backups", "auth-switches");
+  }
 
   getAdminUiBootstrap(): {
     readonly tokenConfigured: boolean;
@@ -40,6 +46,71 @@ export class AdminService {
     return {
       tokenConfigured: Boolean(this.options.config.brokerAdminToken),
       serviceName: this.options.config.serviceName
+    };
+  }
+
+  async replaceAuthFiles(options: {
+    readonly authJsonContent?: string | undefined;
+    readonly credentialsJsonContent?: string | undefined;
+    readonly configTomlContent?: string | undefined;
+    readonly allowActive: boolean;
+  }): Promise<Record<string, unknown>> {
+    const activeSessions = this.options.sessions.listSessions().filter((session) => Boolean(session.activeTurnId));
+    if (!options.allowActive && activeSessions.length > 0) {
+      throw new Error(
+        `Refusing auth replacement while active sessions exist (activeCount=${activeSessions.length}). Retry with allow_active=true if you really want to interrupt them.`
+      );
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupDir = path.join(this.#backupsRoot, stamp);
+    const replacements = [
+      options.authJsonContent != null
+        ? {
+            relativePath: "auth.json",
+            content: options.authJsonContent
+          }
+        : null,
+      options.credentialsJsonContent != null
+        ? {
+            relativePath: ".credentials.json",
+            content: options.credentialsJsonContent
+          }
+        : null,
+      options.configTomlContent != null
+        ? {
+            relativePath: "config.toml",
+            content: options.configTomlContent
+          }
+        : null
+    ].filter((entry): entry is { relativePath: string; content: string } => entry != null);
+
+    if (replacements.length === 0) {
+      throw new Error("No auth files were provided to replace.");
+    }
+
+    const backups = [];
+    for (const replacement of replacements) {
+      const targetPath = path.join(this.options.config.codexHome, replacement.relativePath);
+      const backupPath = await this.#backupIfExists(targetPath, backupDir);
+      backups.push({
+        targetPath,
+        backupPath
+      });
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, replacement.content, "utf8");
+    }
+
+    await this.options.codex.restartRuntime("admin auth replacement");
+    const status = await this.getStatus();
+
+    return {
+      ok: true,
+      backups,
+      replaced: replacements.map((entry) => ({
+        targetPath: path.join(this.options.config.codexHome, entry.relativePath)
+      })),
+      status
     };
   }
 
@@ -198,6 +269,23 @@ export class AdminService {
 
       throw error;
     }
+  }
+
+  async #backupIfExists(targetPath: string, backupDir: string): Promise<string | null> {
+    try {
+      await fs.access(targetPath);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    }
+
+    await fs.mkdir(backupDir, { recursive: true });
+    const backupPath = path.join(backupDir, path.basename(targetPath));
+    await fs.copyFile(targetPath, backupPath);
+    return backupPath;
   }
 
   async #readRecentBrokerLogs(limit: number): Promise<readonly unknown[]> {
