@@ -48,6 +48,11 @@ interface CacheEntry {
   readonly snapshot: AuthProfileSnapshot;
 }
 
+interface ParsedAuthJson {
+  readonly normalizedContent: string;
+  readonly parsed: Record<string, unknown>;
+}
+
 export class AuthProfileService {
   readonly #dataRoot: string;
   readonly #managedRoot: string;
@@ -117,18 +122,18 @@ export class AuthProfileService {
   }
 
   async addProfile(options: {
-    readonly name: string;
+    readonly name?: string | undefined;
     readonly authJsonContent: string;
   }): Promise<AuthProfileSummary> {
     await this.#ensureLayout();
-    const profileName = sanitizeProfileName(options.name);
+    const parsedAuthJson = parseAuthJson(options.authJsonContent);
+    const profileName = await this.#resolveProfileName(options.name, parsedAuthJson.parsed);
     const targetPath = this.#profilePath(profileName);
     if (await fileExists(targetPath)) {
       throw new Error(`Auth profile already exists: ${profileName}`);
     }
 
-    const normalizedContent = normalizeAuthJson(options.authJsonContent);
-    await fs.writeFile(targetPath, normalizedContent, { mode: 0o600 });
+    await fs.writeFile(targetPath, parsedAuthJson.normalizedContent, { mode: 0o600 });
     this.#probeCache.delete(profileName);
     const snapshot = await this.#getProfileSnapshot(profileName, targetPath, true);
     const stat = await fs.stat(targetPath);
@@ -355,6 +360,25 @@ export class AuthProfileService {
   #profilePath(profileName: string): string {
     return path.join(this.#profilesRoot, `${profileName}.json`);
   }
+
+  async #resolveProfileName(
+    requestedName: string | undefined,
+    parsedAuthJson: Record<string, unknown>
+  ): Promise<string> {
+    const existingNames = new Set((await this.#listProfileFiles()).map((profile) => profile.name));
+    if (requestedName) {
+      return sanitizeProfileName(requestedName);
+    }
+
+    const suggestedName = deriveProfileName(parsedAuthJson);
+    let candidate = suggestedName;
+    let suffix = 2;
+    while (existingNames.has(candidate)) {
+      candidate = `${suggestedName}-${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  }
 }
 
 function sanitizeProfileName(name: string): string {
@@ -371,9 +395,37 @@ function sanitizeProfileName(name: string): string {
   return normalized;
 }
 
-function normalizeAuthJson(content: string): string {
+function parseAuthJson(content: string): ParsedAuthJson {
   const parsed = JSON.parse(content) as Record<string, unknown>;
-  return `${JSON.stringify(parsed, null, 2)}\n`;
+  return {
+    parsed,
+    normalizedContent: `${JSON.stringify(parsed, null, 2)}\n`
+  };
+}
+
+function deriveProfileName(parsedAuthJson: Record<string, unknown>): string {
+  const tokens = readRecord(parsedAuthJson.tokens);
+  const accountId = readString(tokens?.account_id);
+  const email = readString(parsedAuthJson.email) ?? readString(readRecord(parsedAuthJson.user)?.email);
+  const seed = email ?? accountId ?? "profile";
+  return sanitizeProfileName(seed);
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 async function resolveSymlinkTarget(filePath: string): Promise<string | null> {

@@ -191,7 +191,7 @@ export class AdminService {
   }
 
   async addAuthProfile(options: {
-    readonly name: string;
+    readonly name?: string | undefined;
     readonly authJsonContent: string;
   }): Promise<Record<string, unknown>> {
     const profile = await this.options.authProfiles.addProfile(options);

@@ -91,8 +91,7 @@ describe("AuthProfileService", () => {
     expect(initialStatus.profiles[0]?.name).toBe("primary");
     expect(initialStatus.profiles[0]?.active).toBe(true);
 
-    await profileService.addProfile({
-      name: "backup account",
+    const addedProfile = await profileService.addProfile({
       authJsonContent: JSON.stringify({
         auth_mode: "chatgpt",
         tokens: {
@@ -101,9 +100,21 @@ describe("AuthProfileService", () => {
         }
       })
     });
+    expect(addedProfile.name).toBe("backup-account");
+
+    const duplicateProfile = await profileService.addProfile({
+      authJsonContent: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: "backup-access-2",
+          account_id: "backup-account"
+        }
+      })
+    });
+    expect(duplicateProfile.name).toBe("backup-account-2");
 
     const afterAdd = await profileService.listProfilesStatus();
-    expect(afterAdd.profiles.map((profile) => profile.name)).toEqual(["backup-account", "primary"]);
+    expect(afterAdd.profiles.map((profile) => profile.name).sort()).toEqual(["backup-account", "backup-account-2", "primary"]);
 
     await profileService.activateProfile("backup-account");
     const activeLinkTarget = await fs.readlink(path.join(config.codexHome, "auth.json"));
@@ -116,8 +127,9 @@ describe("AuthProfileService", () => {
     await expect(profileService.deleteProfile("backup-account")).rejects.toThrow("Cannot delete the active auth profile");
     await profileService.activateProfile("primary");
     await profileService.deleteProfile("backup-account");
+    await profileService.deleteProfile("backup-account-2");
 
     const afterDelete = await profileService.listProfilesStatus();
-    expect(afterDelete.profiles.map((profile) => profile.name)).toEqual(["primary"]);
+    expect(afterDelete.profiles.map((profile) => profile.name).sort()).toEqual(["primary"]);
   });
 });

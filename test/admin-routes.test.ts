@@ -116,13 +116,77 @@ describe("admin routes", () => {
 
     expect(html).toContain("open-add-profile-dialog");
     expect(html).toContain("auth-profiles-panel");
-    expect(html).toContain("Account Quota");
     expect(html).toContain("Auth Profiles");
     expect(html).toContain("Runtime Info");
     expect(html).toContain("add-profile-dialog");
     expect(html).toContain("session-search");
     expect(html).toContain("System Logs");
+    expect(html).not.toContain("profile-name-input");
+    expect(html).not.toContain("Account Quota");
+    expect(html).not.toContain("Control");
+    expect(html).not.toContain("ADMIN TOKEN");
     expect(html).not.toContain("/admin/api/runtime-files");
+  });
+
+  it("accepts auth profile creation without an explicit name", async () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv);
+    const calls: Array<Record<string, unknown>> = [];
+    const adminService = {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true, status: { ok: true } };
+      },
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true })
+    };
+
+    const server = http.createServer(
+      createHttpHandler({
+        adminService: adminService as never,
+        bridge: {} as never,
+        isolatedMcp: {} as never,
+        jobManager: {} as never,
+        config
+      })
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start test server");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/auth-profiles`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        auth_json_content: "{\"tokens\":{\"account_id\":\"acc-1\"}}"
+      })
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        name: undefined,
+        authJsonContent: "{\"tokens\":{\"account_id\":\"acc-1\"}}"
+      }
+    ]);
   });
 
   it("emits admin page inline script without syntax errors", async () => {
