@@ -131,7 +131,7 @@ export interface SlackInputMessage {
   readonly slackMessage?: JsonLike | undefined;
   readonly backgroundJob?: BackgroundJobEventPayload | undefined;
   readonly unexpectedTurnStop?: UnexpectedTurnStopPayload | undefined;
-  readonly recoveryKind?: "socket_ready_missed_messages" | undefined;
+  readonly recoveryKind?: "missed_thread_messages" | undefined;
   readonly batchMessages?: readonly SlackBatchInputMessage[] | undefined;
 }
 

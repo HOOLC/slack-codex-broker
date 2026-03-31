@@ -16,7 +16,7 @@ import { MockCodexAppServer } from "./helpers/mock-codex-app-server.js";
 import { MockSlackServer } from "./manual/mock-slack-server.js";
 
 const brokerRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const DEFAULT_E2E_TIMEOUT_MS = process.env.CI ? 30_000 : 15_000;
+const DEFAULT_E2E_TIMEOUT_MS = 30_000;
 
 describe.sequential("slack-codex-broker e2e", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -208,6 +208,74 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(recoveredText).toContain("漏掉的第一条");
     expect(recoveredText).toContain("漏掉的第二条");
     expect(recoveredText).toContain("\"batch_message_count\": 2");
+  }, 90_000);
+
+  it("periodically recovers missed thread replies without requiring a socket reconnect", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const port = await getFreePort();
+    const broker = await startBrokerProcess({
+      port,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
+        SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS: "100"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-periodic-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "333.220",
+      ts: "333.221",
+      text: "<@UBOT> 开个 session"
+    });
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "session bootstrap turn");
+    await waitForSessionIdle(tempRoot, "C123:333.220");
+
+    mockSlack.recordThreadMessage({
+      channel: "C123",
+      threadTs: "333.220",
+      ts: "333.222",
+      text: "漏掉的周期性恢复消息",
+      user: "U234"
+    });
+
+    await waitFor(() => {
+      const deliveredTexts = [
+        ...mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input)),
+        ...mockCodex.steers.map((steer) => collectTextInput(steer.input))
+      ];
+      return deliveredTexts.some((text) => text.includes("漏掉的周期性恢复消息"));
+    }, "periodic recovered thread reply");
+
+    const deliveredTexts = [
+      ...mockCodex.turnsStarted.slice(1).map((turn) => collectTextInput(turn.input)),
+      ...mockCodex.steers.map((steer) => collectTextInput(steer.input))
+    ];
+    const recoveredText = deliveredTexts.find((text) => text.includes("漏掉的周期性恢复消息")) ?? "";
+    expect(recoveredText).toContain("recovered_message_batch_json");
+    expect(recoveredText).toContain("\"recovery_kind\": \"missed_thread_messages\"");
+    expect(recoveredText).toContain("漏掉的周期性恢复消息");
   }, 90_000);
 
   it("recovers persisted pending backlog on startup when a session has no active turn", async () => {

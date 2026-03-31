@@ -11,6 +11,7 @@ import type {
   PersistedBackgroundJob
 } from "../types.js";
 import { ensureDir } from "../utils/fs.js";
+import { resolveRuntimeToolPath } from "../utils/runtime-paths.js";
 import { SessionManager } from "./session-manager.js";
 
 interface RuntimeBackgroundJob {
@@ -277,7 +278,7 @@ export class JobManager {
       BROKER_JOB_ID: job.id,
       BROKER_JOB_TOKEN: job.token,
       BROKER_API_BASE: this.#brokerHttpBaseUrl,
-      BROKER_JOB_HELPER: "/app/dist/src/tools/job-callback.js",
+      BROKER_JOB_HELPER: process.env.BROKER_JOB_HELPER?.trim() || resolveRuntimeToolPath("job-callback.js"),
       SLACK_CHANNEL_ID: job.channelId,
       SLACK_THREAD_TS: job.rootThreadTs,
       SESSION_KEY: job.sessionKey,

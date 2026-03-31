@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { SessionManager } from "../src/services/session-manager.js";
 import { JobManager } from "../src/services/job-manager.js";
 import { StateStore } from "../src/store/state-store.js";
+import { resolveRuntimeToolPath } from "../src/utils/runtime-paths.js";
 
 describe("JobManager", () => {
   it("registers a broker-managed script job and forwards emitted events", async () => {
@@ -166,4 +167,59 @@ describe("JobManager", () => {
 
     await jobs.stop();
   });
+
+  it("injects a runtime-relative helper path into background jobs", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const reposRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-repos-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C123", "444.555");
+    await fs.mkdir(session.workspacePath, { recursive: true });
+
+    const capturePath = path.join(session.workspacePath, "helper-path.txt");
+    const jobs = new JobManager({
+      sessions,
+      jobsRoot,
+      reposRoot,
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      onEvent: async () => {}
+    });
+
+    const job = await jobs.registerJob({
+      channelId: "C123",
+      rootThreadTs: "444.555",
+      kind: "watch_ci",
+      script: `#!/usr/bin/env bash\nprintf '%s' \"$BROKER_JOB_HELPER\" > ${shellQuote(capturePath)}\nsleep 30`
+    });
+
+    const helperPath = await waitForFileContents(capturePath);
+    expect(helperPath).toBe(resolveRuntimeToolPath("job-callback.js"));
+    expect(helperPath.startsWith("/app/")).toBe(false);
+
+    await jobs.cancelJob(job.id, job.token);
+    await jobs.stop();
+  });
 });
+
+async function waitForFileContents(filePath: string): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      return await fs.readFile(filePath, "utf8");
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  throw new Error(`Timed out waiting for ${filePath}`);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}

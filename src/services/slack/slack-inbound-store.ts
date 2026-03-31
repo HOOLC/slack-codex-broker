@@ -295,7 +295,7 @@ export class SlackInboundStore {
   async createRecoveredBatchInput(
     session: SlackSessionRecord,
     messages: readonly PersistedInboundMessage[] | readonly ResolvedSlackThreadMessage[] | readonly SlackThreadMessage[],
-    recoveryKind: "socket_ready_missed_messages"
+    recoveryKind: "missed_thread_messages"
   ): Promise<SlackInputMessage | null> {
     const recoveredMessages = (
       await Promise.all(

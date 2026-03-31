@@ -61,7 +61,7 @@ interface RuntimeSessionState {
 
 interface PendingDispatchRequest {
   readonly kind: "dispatch_pending";
-  readonly recoveryKind?: "socket_ready_missed_messages" | undefined;
+  readonly recoveryKind?: "missed_thread_messages" | undefined;
 }
 
 const AUTO_RESUME_AFTER_FAILURE_MS = 5_000;
@@ -79,6 +79,7 @@ export class SlackConversationService {
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
   #catchUpPromise: Promise<void> | undefined;
+  #lastMissedThreadRecoveryAtMs = 0;
 
   constructor(options: {
     readonly config: AppConfig;
@@ -311,7 +312,7 @@ export class SlackConversationService {
     });
   }
 
-  async recoverMissedThreadMessages(reason: "socket_ready"): Promise<void> {
+  async recoverMissedThreadMessages(reason: "socket_ready" | "periodic"): Promise<void> {
     if (this.#catchUpPromise) {
       await this.#catchUpPromise;
       return;
@@ -605,6 +606,10 @@ export class SlackConversationService {
     }
 
     await this.#recoverDormantPendingSessions();
+
+    if (this.#shouldRunPeriodicMissedThreadRecovery()) {
+      await this.recoverMissedThreadMessages("periodic");
+    }
   }
 
   async #reconcileSingleActiveTurn(session: SlackSessionRecord): Promise<"cleared" | "retained"> {
@@ -618,7 +623,8 @@ export class SlackConversationService {
     return outcome;
   }
 
-  async #runMissedThreadRecovery(reason: "socket_ready"): Promise<void> {
+  async #runMissedThreadRecovery(reason: "socket_ready" | "periodic"): Promise<void> {
+    this.#lastMissedThreadRecoveryAtMs = Date.now();
     const now = Date.now();
     const sessions = this.#sessions
       .listSessions()
@@ -668,7 +674,7 @@ export class SlackConversationService {
         session = await this.#inboundStore.recordInboundMessage(session, input);
       }
 
-      const recovered = await this.#dispatchPendingRecoveryBatch(session, "socket_ready_missed_messages");
+      const recovered = await this.#dispatchPendingRecoveryBatch(session, "missed_thread_messages");
       if (recovered > 0) {
         recoveredBatchCount += 1;
         recoveredMessageCount += recovered;
@@ -805,7 +811,7 @@ export class SlackConversationService {
 
   async #dispatchPendingRecoveryBatch(
     session: SlackSessionRecord,
-    recoveryKind: "socket_ready_missed_messages"
+    recoveryKind: "missed_thread_messages"
   ): Promise<number> {
     let latestSession = this.#findSessionByKey(session.key);
     const pendingMessages = this.#inboundStore.listPendingMessages(latestSession, {
@@ -1294,5 +1300,13 @@ export class SlackConversationService {
         await this.#dispatchPersistedMessage(session, message.messageTs);
       }
     }
+  }
+
+  #shouldRunPeriodicMissedThreadRecovery(): boolean {
+    const intervalMs = Math.max(
+      this.#config.slackMissedThreadRecoveryIntervalMs,
+      this.#config.slackActiveTurnReconcileIntervalMs
+    );
+    return Date.now() - this.#lastMissedThreadRecoveryAtMs >= intervalMs;
   }
 }

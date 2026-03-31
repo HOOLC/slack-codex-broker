@@ -44,11 +44,11 @@ export class SlackTurnRunner {
       session,
       [
         createTextInputItem([
-          enrichedItem.recoveryKind === "socket_ready_missed_messages"
-            ? "The broker server restarted or reconnected while the current turn was active."
+          enrichedItem.recoveryKind === "missed_thread_messages"
+            ? "The broker detected Slack thread messages that were not previously delivered into the active turn."
             : "A newer Slack message arrived while the current turn is still active.",
-          enrichedItem.recoveryKind === "socket_ready_missed_messages"
-            ? "These are Slack thread messages that may have been missed while the broker was offline. Review the batch and decide whether you need to adjust the ongoing work or reply now."
+          enrichedItem.recoveryKind === "missed_thread_messages"
+            ? "Review the recovered batch, merge it into the current context, and decide whether you need to adjust the ongoing work or reply now."
             : "Treat it as the latest instruction and adjust the ongoing work accordingly.",
           "",
           formattedMessage

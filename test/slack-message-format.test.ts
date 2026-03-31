@@ -191,7 +191,7 @@ describe("formatSlackMessageForCodex", () => {
         messageTs: "111.226",
         userId: "U123",
         text: "",
-        recoveryKind: "socket_ready_missed_messages",
+        recoveryKind: "missed_thread_messages",
         batchMessages: [
           {
             source: "thread_reply",
@@ -233,7 +233,7 @@ describe("formatSlackMessageForCodex", () => {
     expect(result).toContain("The broker server restarted or reconnected.");
     expect(result).toContain("recovered_message_batch_json:");
     expect(result).toContain("\"source\": \"recovered_thread_batch\"");
-    expect(result).toContain("\"recovery_kind\": \"socket_ready_missed_messages\"");
+    expect(result).toContain("\"recovery_kind\": \"missed_thread_messages\"");
     expect(result).toContain("\"batch_message_count\": 2");
     expect(result).toContain("\"text\": \"first missed message\"");
     expect(result).toContain("\"text\": \"second missed message\"");

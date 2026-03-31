@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 
 import { logger } from "../../logger.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
+import { resolveRuntimeToolPath } from "../../utils/runtime-paths.js";
 import { syncUserCodexHome } from "./codex-home.js";
 import { syncGeminiHome } from "./gemini-home.js";
 
@@ -73,7 +74,8 @@ export class AppServerProcess {
       CODEX_HOME: this.#codexHome,
       HOME: this.#runtimeHome,
       TEMPAD_LINK_SERVICE_URL: tempadLinkServiceUrl,
-      BROKER_GEMINI_UI_HELPER: "/app/dist/src/tools/gemini-ui.js"
+      BROKER_GEMINI_UI_HELPER:
+        process.env.BROKER_GEMINI_UI_HELPER?.trim() || resolveRuntimeToolPath("gemini-ui.js")
     };
 
     if (this.#geminiHttpProxy) {
@@ -92,6 +94,25 @@ export class AppServerProcess {
       env.OPENAI_API_KEY = this.#openAiApiKey;
     }
 
+    await this.#startProcess(env, true);
+  }
+
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.#child) {
+      return;
+    }
+
+    const child = this.#child;
+    this.#child = undefined;
+    await stopChildProcess(child);
+  }
+
+  async #startProcess(env: NodeJS.ProcessEnv, allowPortRecovery: boolean): Promise<void> {
     this.#child = spawn("codex", ["app-server", "--listen", this.url], {
       detached: true,
       env,
@@ -110,71 +131,26 @@ export class AppServerProcess {
       }
     });
 
-    const waitForListen = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out waiting for codex app-server to start"));
-      }, 15_000);
+    try {
+      await waitForAppServerListen(child);
+    } catch (error) {
+      if (this.#child === child) {
+        this.#child = undefined;
+      }
+      await stopChildProcess(child);
 
-      const onData = (chunk: Buffer): void => {
-        const text = chunk.toString();
-        logger.debug("codex app-server stdout", { text });
-        if (text.includes("listening on:")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      };
+      if (allowPortRecovery && isAddressInUseStartupError(error)) {
+        logger.warn("codex app-server port is occupied; reclaiming stale listener and retrying", {
+          port: this.#port,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        await reclaimPortListeners(this.#port, [child.pid, process.pid]);
+        await this.#startProcess(env, false);
+        return;
+      }
 
-      const onError = (chunk: Buffer): void => {
-        const text = chunk.toString();
-        logger.warn("codex app-server stderr", { text });
-        if (text.includes("listening on:")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      };
-
-      child.stdout.on("data", onData);
-      child.stderr.on("data", onError);
-      child.once("exit", (code) => {
-        clearTimeout(timeout);
-        reject(new Error(`codex app-server exited early with code ${code ?? "null"}`));
-      });
-    });
-
-    await waitForListen;
-  }
-
-  async restart(): Promise<void> {
-    await this.stop();
-    await this.start();
-  }
-
-  async stop(): Promise<void> {
-    if (!this.#child) {
-      return;
+      throw error;
     }
-
-    const child = this.#child;
-    this.#child = undefined;
-
-    if (child.exitCode !== null || child.signalCode !== null) {
-      return;
-    }
-
-    killChildProcessGroup(child, "SIGTERM");
-    const exitedOnSigterm = await waitForChildExit(child, 5_000);
-    if (exitedOnSigterm) {
-      return;
-    }
-
-    logger.warn("codex app-server did not exit after SIGTERM; sending SIGKILL");
-    killChildProcessGroup(child, "SIGKILL");
-    const exitedOnSigkill = await waitForChildExit(child, 2_000);
-    if (exitedOnSigkill) {
-      return;
-    }
-
-    logger.warn("codex app-server did not exit after SIGKILL timeout");
   }
 
   async #prepareCodexHome(): Promise<void> {
@@ -334,6 +310,27 @@ function killChildProcessGroup(
   }
 }
 
+async function stopChildProcess(child: ChildProcessByStdio<null, Readable, Readable>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  killChildProcessGroup(child, "SIGTERM");
+  const exitedOnSigterm = await waitForChildExit(child, 5_000);
+  if (exitedOnSigterm) {
+    return;
+  }
+
+  logger.warn("codex app-server did not exit after SIGTERM; sending SIGKILL");
+  killChildProcessGroup(child, "SIGKILL");
+  const exitedOnSigkill = await waitForChildExit(child, 2_000);
+  if (exitedOnSigkill) {
+    return;
+  }
+
+  logger.warn("codex app-server did not exit after SIGKILL timeout");
+}
+
 async function waitForChildExit(
   child: ChildProcessByStdio<null, Readable, Readable>,
   timeoutMs: number
@@ -360,6 +357,144 @@ async function waitForChildExit(
 
     child.once("exit", onExit);
   });
+}
+
+async function waitForAppServerListen(
+  child: ChildProcessByStdio<null, Readable, Readable>
+): Promise<void> {
+  return await new Promise<void>((resolve, reject) => {
+    let stdoutTail = "";
+    let stderrTail = "";
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(
+        new Error(
+          `Timed out waiting for codex app-server to start${formatStartupDetails(stdoutTail, stderrTail)}`
+        )
+      );
+    }, 15_000);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("exit", onExit);
+    };
+
+    const onStdout = (chunk: Buffer): void => {
+      const text = chunk.toString();
+      stdoutTail = `${stdoutTail}${text}`.slice(-8_000);
+      logger.debug("codex app-server stdout", { text });
+      if (text.includes("listening on:")) {
+        cleanup();
+        resolve();
+      }
+    };
+
+    const onStderr = (chunk: Buffer): void => {
+      const text = chunk.toString();
+      stderrTail = `${stderrTail}${text}`.slice(-8_000);
+      logger.warn("codex app-server stderr", { text });
+      if (text.includes("listening on:")) {
+        cleanup();
+        resolve();
+      }
+    };
+
+    const onExit = (code: number | null) => {
+      cleanup();
+      reject(
+        new Error(
+          `codex app-server exited early with code ${code ?? "null"}${formatStartupDetails(stdoutTail, stderrTail)}`
+        )
+      );
+    };
+
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.once("exit", onExit);
+  });
+}
+
+function formatStartupDetails(stdoutTail: string, stderrTail: string): string {
+  const details = (stderrTail || stdoutTail).trim();
+  return details ? `: ${details}` : "";
+}
+
+function isAddressInUseStartupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /address already in use|EADDRINUSE|os error 48/i.test(message);
+}
+
+async function reclaimPortListeners(port: number, excludedPids: readonly (number | undefined)[]): Promise<void> {
+  const excluded = new Set(excludedPids.filter((pid): pid is number => typeof pid === "number"));
+
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    const pids = (await listListeningPortPids(port)).filter((pid) => !excluded.has(pid));
+    if (pids.length === 0) {
+      return;
+    }
+
+    logger.warn("Killing stale listener on codex app-server port", {
+      port,
+      signal,
+      pids
+    });
+
+    for (const pid of pids) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    await delay(500);
+  }
+}
+
+async function listListeningPortPids(port: number): Promise<number[]> {
+  try {
+    const output = await runCommandCapture("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+    return [...new Set(
+      output
+        .split(/\s+/)
+        .map((value) => Number.parseInt(value, 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )];
+  } catch {
+    return [];
+  }
+}
+
+async function runCommandCapture(command: string, args: string[]): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+
+      reject(new Error(`${command} ${args.join(" ")} failed with code ${code ?? "null"}: ${stderr || stdout}`));
+    });
+  });
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function isHealthyHttpService(baseUrl: string): Promise<boolean> {
