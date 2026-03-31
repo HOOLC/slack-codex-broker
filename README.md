@@ -169,6 +169,11 @@ node scripts/ops/macos-bootstrap.mjs --start-worker
 
 The bootstrap script expects to run inside the VM's long-lived clone and uses that clone as the stable admin/control repo.
 
+Before running it, make sure the Slack app credentials are available through one of these sources:
+
+- the current shell environment, for example `SLACK_APP_TOKEN=... SLACK_BOT_TOKEN=... node scripts/ops/macos-bootstrap.mjs --start-worker`
+- an existing `config/broker.env` in the service root, which the bootstrap script will reuse for the new admin / worker env files
+
 What it prepares:
 
 - `releases/<sha>` worktrees for worker releases

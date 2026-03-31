@@ -41,6 +41,32 @@ const GEMINI_HOME_FILES = [
   "google_accounts.json"
 ];
 
+const BROKER_ENV_PASSTHROUGH_KEYS = [
+  "SLACK_APP_TOKEN",
+  "SLACK_BOT_TOKEN",
+  "SLACK_API_BASE_URL",
+  "SLACK_SOCKET_OPEN_URL",
+  "SLACK_INITIAL_THREAD_HISTORY_COUNT",
+  "SLACK_HISTORY_API_MAX_LIMIT",
+  "SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS",
+  "SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS",
+  "SLACK_PROGRESS_REMINDER_AFTER_MS",
+  "SLACK_PROGRESS_REMINDER_REPEAT_MS",
+  "LOG_LEVEL",
+  "LOG_RAW_SLACK_EVENTS",
+  "LOG_RAW_CODEX_RPC",
+  "LOG_RAW_HTTP_REQUESTS",
+  "ISOLATED_MCP_SERVERS",
+  "CODEX_DISABLED_MCP_SERVERS",
+  "CODEX_APP_SERVER_URL",
+  "OPENAI_API_KEY",
+  "TEMPAD_LINK_SERVICE_URL",
+  "GEMINI_HTTP_PROXY",
+  "GEMINI_HTTPS_PROXY",
+  "GEMINI_ALL_PROXY",
+  "BROKER_ADMIN_TOKEN"
+];
+
 function readDefaultPnpmVersion() {
   try {
     const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -135,6 +161,7 @@ function printHelp() {
       "Notes:",
       "  - preferred flow: git clone on the VM, cd into the repo, then run this script there",
       "  - auth.json is not copied by this script; import auth profiles later through /admin",
+      "  - Slack tokens come from the current shell env or an existing config/broker.env",
       "",
       "Options:",
       `  --service-root <path>                Service root, default ${DEFAULT_SERVICE_ROOT}`,
@@ -154,12 +181,86 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
 }
 
+function parseEnvFile(text) {
+  const env = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1).trim();
+    if (!key) {
+      continue;
+    }
+
+    let value = rawValue;
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        value = value.slice(1, -1);
+      }
+    }
+
+    env[key] = String(value);
+  }
+
+  return env;
+}
+
 async function fileExists(filePath) {
   try {
     await fs.lstat(filePath);
     return true;
   } catch {
     return false;
+  }
+}
+
+async function readExistingBrokerEnv(serviceRoot) {
+  const envFilePath = path.join(serviceRoot, "config", "broker.env");
+  if (!(await fileExists(envFilePath))) {
+    return {};
+  }
+
+  return parseEnvFile(await fs.readFile(envFilePath, "utf8"));
+}
+
+function buildSeedBrokerEnv(existingBrokerEnv) {
+  const merged = {};
+  for (const key of BROKER_ENV_PASSTHROUGH_KEYS) {
+    const fromProcess = process.env[key];
+    if (fromProcess !== undefined && fromProcess !== null && String(fromProcess).length > 0) {
+      merged[key] = String(fromProcess);
+      continue;
+    }
+
+    const fromExisting = existingBrokerEnv[key];
+    if (fromExisting !== undefined && fromExisting !== null && String(fromExisting).length > 0) {
+      merged[key] = String(fromExisting);
+    }
+  }
+
+  return merged;
+}
+
+function assertRequiredBrokerEnv(seedBrokerEnv) {
+  const missing = ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"].filter((key) => !seedBrokerEnv[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required broker environment values: ${missing.join(", ")}. ` +
+      "Provide them in the current shell env or the existing config/broker.env before bootstrap."
+    );
   }
 }
 
@@ -354,8 +455,9 @@ function buildReleaseMetadata(revision) {
   };
 }
 
-function buildAdminEnv(paths, options) {
+function buildAdminEnv(paths, options, seedBrokerEnv) {
   return {
+    ...seedBrokerEnv,
     NODE_ENV: "production",
     PATH: "/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin",
     PORT: "3000",
@@ -387,8 +489,9 @@ function buildAdminEnv(paths, options) {
   };
 }
 
-function buildWorkerEnv(paths, options) {
+function buildWorkerEnv(paths, options, seedBrokerEnv) {
   return {
+    ...seedBrokerEnv,
     NODE_ENV: "production",
     PATH: "/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin",
     PORT: "3001",
@@ -479,7 +582,7 @@ async function ensureInitialWorkerRelease(paths, options) {
   };
 }
 
-async function writeLaunchdFiles(paths, options) {
+async function writeLaunchdFiles(paths, options, seedBrokerEnv) {
   const launcherPath = path.join(paths.repoRoot, "scripts", "ops", "macos-launchd-launcher.mjs");
   const adminPlist = renderPlist({
     label: options.adminLabel,
@@ -506,8 +609,8 @@ async function writeLaunchdFiles(paths, options) {
   await ensureDir(paths.envDir);
   await fs.writeFile(paths.adminPlistPath, adminPlist, "utf8");
   await fs.writeFile(paths.workerPlistPath, workerPlist, "utf8");
-  await fs.writeFile(paths.adminEnvFile, renderEnvFile(buildAdminEnv(paths, options)), "utf8");
-  await fs.writeFile(paths.workerEnvFile, renderEnvFile(buildWorkerEnv(paths, options)), "utf8");
+  await fs.writeFile(paths.adminEnvFile, renderEnvFile(buildAdminEnv(paths, options, seedBrokerEnv)), "utf8");
+  await fs.writeFile(paths.workerEnvFile, renderEnvFile(buildWorkerEnv(paths, options, seedBrokerEnv)), "utf8");
 }
 
 function launchdDomain(label) {
@@ -533,12 +636,15 @@ function kickstart(label) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const paths = buildPaths(options.serviceRoot, options);
+  const existingBrokerEnv = await readExistingBrokerEnv(paths.serviceRoot);
+  const seedBrokerEnv = buildSeedBrokerEnv(existingBrokerEnv);
+  assertRequiredBrokerEnv(seedBrokerEnv);
 
   await prepareSharedHomes(paths);
   await installTooling(options);
   await installRepoAtPath(paths.repoRoot, options);
   const initialRelease = await ensureInitialWorkerRelease(paths, options);
-  await writeLaunchdFiles(paths, options);
+  await writeLaunchdFiles(paths, options, seedBrokerEnv);
 
   bootout(paths.adminPlistPath);
   bootstrap(paths.adminPlistPath);
