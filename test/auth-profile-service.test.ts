@@ -132,4 +132,67 @@ describe("AuthProfileService", () => {
     const afterDelete = await profileService.listProfilesStatus();
     expect(afterDelete.profiles.map((profile) => profile.name).sort()).toEqual(["primary"]);
   });
+
+  it("supports an empty bootstrap and activates the first imported profile", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "auth-profiles-empty-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+
+    await fs.mkdir(config.codexHome, { recursive: true });
+
+    const profileService = new AuthProfileService({
+      config,
+      probeProfile: async (profileName) => ({
+        source: "probe",
+        checkedAt: "2026-03-31T00:00:00.000Z",
+        account: {
+          ok: true,
+          account: {
+            email: `${profileName}@example.com`,
+            type: "chatgpt",
+            planType: "team"
+          },
+          requiresOpenaiAuth: false
+        },
+        rateLimits: {
+          ok: true,
+          rateLimits: {
+            limitId: "codex",
+            limitName: "Codex",
+            primary: null,
+            secondary: null,
+            credits: null,
+            planType: "team"
+          },
+          rateLimitsByLimitId: {}
+        }
+      })
+    });
+
+    const initialStatus = await profileService.listProfilesStatus();
+    expect(initialStatus.activeProfile).toBeNull();
+    expect(initialStatus.profiles).toEqual([]);
+
+    const addedProfile = await profileService.addProfile({
+      authJsonContent: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: "first-access",
+          account_id: "first-account"
+        }
+      })
+    });
+
+    expect(addedProfile.active).toBe(true);
+
+    const afterAdd = await profileService.listProfilesStatus();
+    expect(afterAdd.activeProfile).toBe("first-account");
+    expect(afterAdd.profiles).toHaveLength(1);
+    expect(afterAdd.profiles[0]?.active).toBe(true);
+  });
 });

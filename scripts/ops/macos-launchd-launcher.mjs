@@ -7,7 +7,8 @@ import { pathToFileURL } from "node:url";
 function parseArgs(argv) {
   const options = {
     envFile: undefined,
-    repoRoot: undefined
+    repoRoot: undefined,
+    entryPoint: undefined
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -27,8 +28,12 @@ function parseArgs(argv) {
         break;
       case "--help":
       case "-h":
-        console.log("Usage: node scripts/ops/macos-launchd-launcher.mjs --repo-root <path> --env-file <path>");
+        console.log("Usage: node scripts/ops/macos-launchd-launcher.mjs --repo-root <path> --env-file <path> --entry-point <path>");
         process.exit(0);
+      case "--entry-point":
+        options.entryPoint = argv[index + 1];
+        index += 1;
+        break;
       default:
         throw new Error(`Unknown argument: ${argument}`);
     }
@@ -40,6 +45,10 @@ function parseArgs(argv) {
 
   if (!options.repoRoot) {
     throw new Error("Missing required argument: --repo-root");
+  }
+
+  if (!options.entryPoint) {
+    throw new Error("Missing required argument: --entry-point");
   }
 
   return options;
@@ -92,5 +101,5 @@ for (const [key, value] of Object.entries(env)) {
 
 process.chdir(options.repoRoot);
 
-const entryPoint = path.join(options.repoRoot, "dist", "src", "index.js");
+const entryPoint = path.resolve(options.repoRoot, options.entryPoint);
 await import(pathToFileURL(entryPoint).href);

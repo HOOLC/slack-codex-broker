@@ -148,65 +148,82 @@ pnpm ops:ui:real
 `ops:ui:real` starts a local-only admin page on `127.0.0.1` so you can inspect sessions/account state and upload a replacement `auth.json` without using CLI flags directly.
 `ops:resume:real` manually re-queues a stuck Slack session that still has pending inbound backlog but no active Codex turn. Use it as an operator fallback while debugging a broken thread.
 
-## Run On a macOS Bare VM
+## Run On a macOS VM
 
-The repository now includes a launchd-based bare-run path that mirrors the current Docker deployment onto a macOS VM under `~/services/slack-codex-broker`.
+The preferred macOS deployment model is now GitHub-first:
 
-The deployment flow is intentionally split:
+- clone this repository directly on the VM
+- run the bootstrap script from inside that clone
+- upload `auth.json` later through the admin page
+- do all later deploy / rollback operations from the admin page by Git ref
 
-```bash
-pnpm ops:macos:bare:stage
-pnpm ops:macos:bare:install
-pnpm ops:macos:bare:start
-pnpm ops:macos:bare:check
-pnpm ops:macos:bare:status
-```
+There is no host-side code sync step in the normal path anymore.
 
-What it does:
-
-- stages a clean broker runtime into the macOS service root instead of copying the whole live `.data-real-cueboard`
-- preserves the pieces that define broker behavior:
-  - `auth-profiles/`
-  - `codex-home` auth/config/skills/memory
-  - service-local runtime support snapshots under `runtime-support/`
-  - GitHub CLI login state under `runtime-home/.config/gh`
-- resets runtime state to an empty baseline:
-  - no historical Slack sessions
-  - no inbound backlog
-  - no background job history
-  - no historical logs or old workspaces
-  - no copied repo cache; repositories are cloned on the VM when needed
-- dereferences host-specific symlinks such as `memory.md` while building the service-local home snapshots
-- mirrors the broker-managed Codex/Gemini/.agents support files into `~/services/slack-codex-broker/runtime-support/`
-- copies the host `~/.config/gh` snapshot into the service runtime so `gh` works immediately on the VM
-- installs `pnpm` via Corepack if needed
-- installs `@openai/codex@0.114.0` and `@google/gemini-cli@0.33.0` on the target
-- builds the repo on the target and runs the service from `dist/src/index.js`
-- writes a launchd agent at `~/Library/LaunchAgents/com.zzj3720.slack-codex-broker.plist`
-
-What it does **not** do:
-
-- it does not copy the live `.data` tree verbatim
-- it does not migrate `state/`, `sessions/`, `jobs/`, `logs/`, or `repos/`
-- it only uses `--source-data-root` as a convenient lookup root for `codex-home/` and `auth-profiles/`
-- then rebuilds a fresh runtime data root on the VM from that subset
-
-The macOS launcher reads an env file from `~/services/slack-codex-broker/config/broker.env`, so the bare-run path stays file-driven instead of embedding a giant plist environment block.
-
-By default, the staging logic uses:
-
-- `codex-home/` from the live broker data root as the source of truth for broker-specific Codex memory/config/skills
-- the current Gemini and `.agents` mirrors when available
-
-You can override the source locations with:
+### First bootstrap on the VM
 
 ```bash
-pnpm ops:macos:bare:deploy -- --source-data-root /path/to/.data-real-cueboard
+git clone https://github.com/zzj3720/slack-codex-broker.git ~/services/slack-codex-broker
+cd ~/services/slack-codex-broker
+node scripts/ops/macos-bootstrap.mjs --start-worker
 ```
 
-or the more specific `--source-codex-home`, `--source-gemini-home`, `--source-agents-home`, and `--source-gh-config-home` flags.
+The bootstrap script expects to run inside the VM's long-lived clone and uses that clone as the stable admin/control repo.
 
-The broker service itself now also exposes an in-container admin page:
+What it prepares:
+
+- `releases/<sha>` worktrees for worker releases
+- `current`, `previous`, and `failed` release links
+- shared runtime state under `.data/`
+- support homes under `runtime-support/`
+- launchd agents for:
+  - `com.zzj3720.slack-codex-broker` (admin/control plane)
+  - `com.zzj3720.slack-codex-broker.worker` (Slack/Codex worker)
+
+What it does not do:
+
+- it does not copy `auth.json`; import auth profiles later through `/admin`
+- it does not copy historical sessions, logs, jobs, or repo caches from another machine
+- it does not require `pnpm` to already be installed globally; it uses Corepack and the repo-pinned pnpm version
+
+### Runtime layout on the VM
+
+The fixed clone is both the admin code root and the Git source of truth for worker releases.
+
+- `<service-root>/`:
+  - long-lived git clone
+  - admin launchd working directory
+- `<service-root>/releases/<sha>/`:
+  - worker build for a specific commit
+- `<service-root>/current`:
+  - symlink to the active worker release
+- `<service-root>/previous`:
+  - symlink to the last good worker release
+- `<service-root>/failed`:
+  - symlink to the most recent failed cutover
+- `<service-root>/.data/`:
+  - shared broker state, sessions, jobs, logs, repos, auth profiles, codex home
+
+### Deploy and rollback
+
+The admin service fetches from the VM's local Git clone and deploys a selected ref into a new worker release directory.
+
+- deploy:
+  - `git fetch origin`
+  - resolve commit / branch / tag
+  - create or reuse `releases/<sha>`
+  - build there
+  - switch `current` to the new release
+  - restart only the worker launchd service
+  - run health + Codex-ready checks
+  - auto-rollback on failed cutover
+- rollback:
+  - switch `current` back to `previous`, or to an explicitly selected ref
+  - restart the worker
+  - run the same health checks
+
+Because old releases stay on disk, rollback is a pointer switch instead of a rebuild.
+
+### Admin surface
 
 ```text
 GET /admin
@@ -214,9 +231,19 @@ GET /admin/api/status
 POST /admin/api/auth-profiles
 POST /admin/api/auth-profiles/:name/activate
 DELETE /admin/api/auth-profiles/:name
+POST /admin/api/deploy
+POST /admin/api/rollback
 ```
 
-If `BROKER_ADMIN_TOKEN` is set, `/admin/api/*` requires that token via either the UI token field, `x-admin-token`, or `Authorization: Bearer ...`. If it is unset, the admin API is still enabled, so only expose the broker port in environments you trust.
+Typical first-run flow:
+
+1. Open `/admin`.
+2. Upload one or more `auth.json` files into Auth Profiles.
+3. Activate the profile you want the worker to use.
+4. Later, deploy a commit / branch / tag from the Deploy panel.
+5. Roll back from the same panel when needed.
+
+If `BROKER_ADMIN_TOKEN` is set, `/admin/api/*` requires that token via `x-admin-token` or `Authorization: Bearer ...`. If it is unset, the admin API is still enabled, so only expose the broker port in environments you trust.
 
 The container image:
 

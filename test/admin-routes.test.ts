@@ -25,7 +25,9 @@ describe("admin routes", () => {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true })
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
     };
 
     const server = http.createServer(
@@ -80,7 +82,9 @@ describe("admin routes", () => {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true })
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
     };
 
     const server = http.createServer(
@@ -117,6 +121,8 @@ describe("admin routes", () => {
     expect(html).toContain("open-add-profile-dialog");
     expect(html).toContain("auth-profiles-panel");
     expect(html).toContain("Auth Profiles");
+    expect(html).toContain("Deploy");
+    expect(html).toContain("deploy-release-button");
     expect(html).toContain("Runtime Info");
     expect(html).toContain("add-profile-dialog");
     expect(html).toContain("session-search");
@@ -141,7 +147,9 @@ describe("admin routes", () => {
         return { ok: true, status: { ok: true } };
       },
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true })
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
     };
 
     const server = http.createServer(
@@ -198,7 +206,9 @@ describe("admin routes", () => {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true })
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
     };
 
     const server = http.createServer(
@@ -237,5 +247,127 @@ describe("admin routes", () => {
       throw new Error("missing admin inline script");
     }
     expect(() => new vm.Script(scriptSource)).not.toThrow();
+  });
+
+  it("forwards deploy requests to the admin service", async () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv);
+    const calls: Array<Record<string, unknown>> = [];
+    const adminService = {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true };
+      },
+      rollbackWorker: async () => ({ ok: true })
+    };
+
+    const server = http.createServer(
+      createHttpHandler({
+        adminService: adminService as never,
+        config
+      })
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start test server");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/deploy`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        ref: "deadbeef",
+        allow_active: true
+      })
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        ref: "deadbeef",
+        allowActive: true
+      }
+    ]);
+  });
+
+  it("forwards rollback requests to the admin service", async () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv);
+    const calls: Array<Record<string, unknown>> = [];
+    const adminService = {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true };
+      }
+    };
+
+    const server = http.createServer(
+      createHttpHandler({
+        adminService: adminService as never,
+        config
+      })
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start test server");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/rollback`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        ref: "abc123",
+        allow_active: false
+      })
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        ref: "abc123",
+        allowActive: false
+      }
+    ]);
   });
 });

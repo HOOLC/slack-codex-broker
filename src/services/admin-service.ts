@@ -2,10 +2,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "../config.js";
-import type { SessionManager } from "./session-manager.js";
 import type { PersistedBackgroundJob, PersistedInboundMessage, SlackSessionRecord } from "../types.js";
-import type { CodexBroker } from "./codex/codex-broker.js";
+import type { SessionManager } from "./session-manager.js";
 import type { AuthProfileService } from "./auth-profile-service.js";
+import type { RuntimeControl } from "./runtime-control.js";
+import type {
+  DeployWorkerOptions,
+  RollbackWorkerOptions,
+  WorkerDeploymentService
+} from "./deploy/worker-deployment-service.js";
 import {
   serializeAccountError,
   serializeAccountSummary,
@@ -23,21 +28,16 @@ interface FileInfo {
 }
 
 export class AdminService {
-  readonly #dataRoot: string;
-  readonly #backupsRoot: string;
-
   constructor(
     private readonly options: {
       readonly config: AppConfig;
       readonly sessions: SessionManager;
-      readonly codex: CodexBroker;
+      readonly runtime: RuntimeControl;
       readonly authProfiles: AuthProfileService;
       readonly startedAt: Date;
+      readonly deployment?: WorkerDeploymentService | undefined;
     }
-  ) {
-    this.#dataRoot = path.dirname(this.options.config.stateDir);
-    this.#backupsRoot = path.join(this.#dataRoot, "admin-backups", "auth-switches");
-  }
+  ) {}
 
   getAdminUiBootstrap(): {
     readonly tokenConfigured: boolean;
@@ -46,71 +46,6 @@ export class AdminService {
     return {
       tokenConfigured: Boolean(this.options.config.brokerAdminToken),
       serviceName: this.options.config.serviceName
-    };
-  }
-
-  async replaceAuthFiles(options: {
-    readonly authJsonContent?: string | undefined;
-    readonly credentialsJsonContent?: string | undefined;
-    readonly configTomlContent?: string | undefined;
-    readonly allowActive: boolean;
-  }): Promise<Record<string, unknown>> {
-    const activeSessions = this.options.sessions.listSessions().filter((session) => Boolean(session.activeTurnId));
-    if (!options.allowActive && activeSessions.length > 0) {
-      throw new Error(
-        `Refusing auth replacement while active sessions exist (activeCount=${activeSessions.length}). Retry with allow_active=true if you really want to interrupt them.`
-      );
-    }
-
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backupDir = path.join(this.#backupsRoot, stamp);
-    const replacements = [
-      options.authJsonContent != null
-        ? {
-            relativePath: "auth.json",
-            content: options.authJsonContent
-          }
-        : null,
-      options.credentialsJsonContent != null
-        ? {
-            relativePath: ".credentials.json",
-            content: options.credentialsJsonContent
-          }
-        : null,
-      options.configTomlContent != null
-        ? {
-            relativePath: "config.toml",
-            content: options.configTomlContent
-          }
-        : null
-    ].filter((entry): entry is { relativePath: string; content: string } => entry != null);
-
-    if (replacements.length === 0) {
-      throw new Error("No auth files were provided to replace.");
-    }
-
-    const backups = [];
-    for (const replacement of replacements) {
-      const targetPath = path.join(this.options.config.codexHome, replacement.relativePath);
-      const backupPath = await this.#backupIfExists(targetPath, backupDir);
-      backups.push({
-        targetPath,
-        backupPath
-      });
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, replacement.content, "utf8");
-    }
-
-    await this.options.codex.restartRuntime("admin auth replacement");
-    const status = await this.getStatus();
-
-    return {
-      ok: true,
-      backups,
-      replaced: replacements.map((entry) => ({
-        targetPath: path.join(this.options.config.codexHome, entry.relativePath)
-      })),
-      status
     };
   }
 
@@ -135,9 +70,10 @@ export class AdminService {
         jobs: jobsBySession.get(session.key) ?? []
       })
     );
-    const [account, rateLimits] = await Promise.all([
+    const [account, rateLimits, deployment] = await Promise.all([
       this.#readAccountSummary(),
-      this.#readAccountRateLimits()
+      this.#readAccountRateLimits(),
+      this.options.deployment?.getStatus() ?? Promise.resolve(null)
     ]);
     const authProfiles = await this.options.authProfiles.listProfilesStatus({
       activeSnapshot:
@@ -157,11 +93,13 @@ export class AdminService {
     return {
       service: {
         name: this.options.config.serviceName,
+        mode: this.options.deployment ? "admin" : "combined",
         pid: process.pid,
         uptimeSeconds: Math.round(process.uptime()),
         startedAt: this.options.startedAt.toISOString(),
         port: this.options.config.port,
         brokerHttpBaseUrl: this.options.config.brokerHttpBaseUrl,
+        workerBaseUrl: this.options.config.workerBaseUrl,
         sessionsRoot: this.options.config.sessionsRoot,
         reposRoot: this.options.config.reposRoot,
         codexHome: this.options.config.codexHome,
@@ -175,6 +113,7 @@ export class AdminService {
       authProfiles,
       account,
       rateLimits,
+      deployment,
       state: {
         sessionCount: allSessions.length,
         activeCount: activeSessions.length,
@@ -217,26 +156,57 @@ export class AdminService {
     readonly name: string;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
-    const activeSessions = this.options.sessions.listSessions().filter((session) => Boolean(session.activeTurnId));
-    if (!options.allowActive && activeSessions.length > 0) {
-      throw new Error(
-        `Refusing auth profile switch while active sessions exist (activeCount=${activeSessions.length}). Retry with allow_active=true if you really want to interrupt them.`
-      );
-    }
-
+    this.#assertSafeToInterrupt(options.allowActive, "auth profile switch");
     const activated = await this.options.authProfiles.activateProfile(options.name);
-    await this.options.codex.restartRuntime(`admin auth profile switch: ${activated.name}`);
+    await this.options.runtime.restartRuntime(`admin auth profile switch: ${activated.name}`);
     return {
       ok: true,
       activatedProfile: activated.name,
-      activatedPath: activated.path,
+      status: await this.getStatus()
+    };
+  }
+
+  async deployWorker(options: {
+    readonly ref: string;
+    readonly allowActive: boolean;
+  }): Promise<Record<string, unknown>> {
+    if (!this.options.deployment) {
+      throw new Error("Worker deployment is not configured for this runtime.");
+    }
+
+    this.#assertSafeToInterrupt(options.allowActive, "deploy");
+    const deployment = await this.options.deployment.deploy({
+      ref: options.ref
+    } satisfies DeployWorkerOptions);
+    return {
+      ok: true,
+      deployment,
+      status: await this.getStatus()
+    };
+  }
+
+  async rollbackWorker(options: {
+    readonly ref?: string | undefined;
+    readonly allowActive: boolean;
+  }): Promise<Record<string, unknown>> {
+    if (!this.options.deployment) {
+      throw new Error("Worker deployment is not configured for this runtime.");
+    }
+
+    this.#assertSafeToInterrupt(options.allowActive, "rollback");
+    const deployment = await this.options.deployment.rollback({
+      ref: options.ref
+    } satisfies RollbackWorkerOptions);
+    return {
+      ok: true,
+      deployment,
       status: await this.getStatus()
     };
   }
 
   async #readAccountSummary(): Promise<SerializedAccountStatus> {
     try {
-      return serializeAccountSummary(await this.options.codex.readAccountSummary(false));
+      return serializeAccountSummary(await this.options.runtime.readAccountSummary(false));
     } catch (error) {
       return serializeAccountError(error);
     }
@@ -244,9 +214,22 @@ export class AdminService {
 
   async #readAccountRateLimits(): Promise<SerializedRateLimitsStatus> {
     try {
-      return serializeRateLimits(await this.options.codex.readAccountRateLimits());
+      return serializeRateLimits(await this.options.runtime.readAccountRateLimits());
     } catch (error) {
       return serializeRateLimitsError(error);
+    }
+  }
+
+  #assertSafeToInterrupt(allowActive: boolean, action: string): void {
+    if (allowActive) {
+      return;
+    }
+
+    const activeCount = this.options.sessions.listSessions().filter((session) => Boolean(session.activeTurnId)).length;
+    if (activeCount > 0) {
+      throw new Error(
+        `Refusing ${action} while active sessions exist (activeCount=${activeCount}). Retry with allow_active=true if you really want to interrupt them.`
+      );
     }
   }
 
@@ -269,23 +252,6 @@ export class AdminService {
 
       throw error;
     }
-  }
-
-  async #backupIfExists(targetPath: string, backupDir: string): Promise<string | null> {
-    try {
-      await fs.access(targetPath);
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-        return null;
-      }
-
-      throw error;
-    }
-
-    await fs.mkdir(backupDir, { recursive: true });
-    const backupPath = path.join(backupDir, path.basename(targetPath));
-    await fs.copyFile(targetPath, backupPath);
-    return backupPath;
   }
 
   async #readRecentBrokerLogs(limit: number): Promise<readonly unknown[]> {

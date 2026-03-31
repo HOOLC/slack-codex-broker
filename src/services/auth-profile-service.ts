@@ -135,6 +135,11 @@ export class AuthProfileService {
 
     await fs.writeFile(targetPath, parsedAuthJson.normalizedContent, { mode: 0o600 });
     this.#probeCache.delete(profileName);
+    const activeProfileBeforeAdd = await this.#readActiveProfileName();
+    if (!activeProfileBeforeAdd) {
+      await this.#pointActiveProfile(targetPath);
+      await this.#ensureActiveAuthLink();
+    }
     const snapshot = await this.#getProfileSnapshot(profileName, targetPath, true);
     const stat = await fs.stat(targetPath);
     const activeProfile = await this.#readActiveProfileName();
@@ -197,14 +202,18 @@ export class AuthProfileService {
     let activeProfile = await this.#readActiveProfileName();
     if (!activeProfile) {
       const seededPath = await this.#seedInitialProfile();
-      activeProfile = path.basename(seededPath, ".json");
-      await this.#pointActiveProfile(seededPath);
+      if (seededPath) {
+        activeProfile = path.basename(seededPath, ".json");
+        await this.#pointActiveProfile(seededPath);
+      }
     }
 
-    await this.#ensureActiveAuthLink();
+    if (activeProfile) {
+      await this.#ensureActiveAuthLink();
+    }
   }
 
-  async #seedInitialProfile(): Promise<string> {
+  async #seedInitialProfile(): Promise<string | null> {
     const existingProfiles = await this.#listProfileFiles();
     if (existingProfiles.length > 0) {
       return existingProfiles[0]!.path;
@@ -212,12 +221,15 @@ export class AuthProfileService {
 
     const targetPath = this.#profilePath(DEFAULT_PROFILE_NAME);
     const sourcePath = await this.#resolveBootstrapSourceAuth();
+    if (!sourcePath) {
+      return null;
+    }
     await fs.copyFile(sourcePath, targetPath);
     await fs.chmod(targetPath, 0o600);
     return targetPath;
   }
 
-  async #resolveBootstrapSourceAuth(): Promise<string> {
+  async #resolveBootstrapSourceAuth(): Promise<string | null> {
     const directTarget = await resolveSymlinkTarget(this.#activeAuthPath);
     if (directTarget && path.resolve(directTarget) !== path.resolve(this.#activeProfilePath) && (await fileExists(directTarget))) {
       return directTarget;
@@ -227,7 +239,7 @@ export class AuthProfileService {
       return this.#activeAuthPath;
     }
 
-    throw new Error(`Unable to bootstrap auth profiles: missing ${this.#activeAuthPath}`);
+    return null;
   }
 
   async #ensureActiveAuthLink(): Promise<void> {

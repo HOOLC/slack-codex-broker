@@ -8,6 +8,7 @@ coverage/
 
 .data*/
 .backups/
+.tmp/
 logs/
 *.log
 

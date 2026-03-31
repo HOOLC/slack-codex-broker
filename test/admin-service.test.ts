@@ -52,7 +52,8 @@ describe("AdminService", () => {
           profiles: []
         })
       } as never,
-      codex: {
+      runtime: {
+        restartRuntime: async () => {},
         readAccountSummary: async () => ({
           account: {
             email: "quota@example.com",

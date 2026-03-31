@@ -1,6 +1,7 @@
 import path from "node:path";
 
 export interface AppConfig {
+  readonly serviceRoot?: string | undefined;
   readonly slackAppToken: string;
   readonly slackBotToken: string;
   readonly slackApiBaseUrl: string;
@@ -29,9 +30,21 @@ export interface AppConfig {
   readonly codexOpenAiApiKey?: string | undefined;
   readonly tempadLinkServiceUrl?: string | undefined;
   readonly port: number;
+  readonly workerPort: number;
+  readonly workerBindHost: string;
+  readonly workerBaseUrl: string;
   readonly brokerHttpBaseUrl: string;
   readonly serviceName: string;
   readonly brokerAdminToken?: string | undefined;
+  readonly adminLaunchdLabel?: string | undefined;
+  readonly workerLaunchdLabel?: string | undefined;
+  readonly releaseRepoUrl?: string | undefined;
+  readonly releaseRepoRoot?: string | undefined;
+  readonly releasesRoot?: string | undefined;
+  readonly currentReleasePath?: string | undefined;
+  readonly previousReleasePath?: string | undefined;
+  readonly failedReleasePath?: string | undefined;
+  readonly workerPlistPath?: string | undefined;
   readonly logDir: string;
   readonly logLevel: "debug" | "info" | "warn" | "error";
   readonly logRawSlackEvents: boolean;
@@ -121,6 +134,7 @@ function getLogLevel(env: NodeJS.ProcessEnv, name: string, fallback: AppConfig["
 }
 
 export function loadConfig(env = process.env): AppConfig {
+  const serviceRoot = env.SERVICE_ROOT ? path.resolve(env.SERVICE_ROOT) : undefined;
   const dataRoot = env.DATA_ROOT ? path.resolve(env.DATA_ROOT) : path.resolve(".data");
   const stateDir = env.STATE_DIR ? path.resolve(env.STATE_DIR) : path.join(dataRoot, "state");
   const jobsRoot = env.JOBS_ROOT ? path.resolve(env.JOBS_ROOT) : path.join(dataRoot, "jobs");
@@ -129,6 +143,8 @@ export function loadConfig(env = process.env): AppConfig {
   const codexHome = env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(dataRoot, "codex-home");
   const logDir = env.LOG_DIR ? path.resolve(env.LOG_DIR) : path.join(dataRoot, "logs");
   const port = getNumber(env, "PORT", 3000);
+  const workerPort = getNumber(env, "WORKER_PORT", port);
+  const workerBindHost = env.WORKER_BIND_HOST?.trim() || "127.0.0.1";
 
   const isolatedMcpServers = getCsvList(env, "ISOLATED_MCP_SERVERS");
   const effectiveIsolatedMcpServers =
@@ -140,6 +156,7 @@ export function loadConfig(env = process.env): AppConfig {
   ]);
 
   return {
+    serviceRoot,
     slackAppToken: getRequired(env, "SLACK_APP_TOKEN"),
     slackBotToken: getRequired(env, "SLACK_BOT_TOKEN"),
     slackApiBaseUrl: env.SLACK_API_BASE_URL ?? "https://slack.com/api",
@@ -172,9 +189,21 @@ export function loadConfig(env = process.env): AppConfig {
     codexOpenAiApiKey: getOptional(env, "OPENAI_API_KEY"),
     tempadLinkServiceUrl: getOptional(env, "TEMPAD_LINK_SERVICE_URL"),
     port,
+    workerPort,
+    workerBindHost,
+    workerBaseUrl: env.WORKER_BASE_URL ?? `http://${workerBindHost}:${workerPort}`,
     brokerHttpBaseUrl: env.BROKER_HTTP_BASE_URL ?? `http://127.0.0.1:${port}`,
     serviceName: env.SERVICE_NAME ?? "slack-codex-broker",
     brokerAdminToken: getOptional(env, "BROKER_ADMIN_TOKEN"),
+    adminLaunchdLabel: getOptional(env, "ADMIN_LAUNCHD_LABEL"),
+    workerLaunchdLabel: getOptional(env, "WORKER_LAUNCHD_LABEL"),
+    releaseRepoUrl: getOptional(env, "RELEASE_REPO_URL"),
+    releaseRepoRoot: env.RELEASE_REPO_ROOT ? path.resolve(env.RELEASE_REPO_ROOT) : serviceRoot,
+    releasesRoot: env.RELEASES_ROOT ? path.resolve(env.RELEASES_ROOT) : serviceRoot ? path.join(serviceRoot, "releases") : undefined,
+    currentReleasePath: env.CURRENT_RELEASE_PATH ? path.resolve(env.CURRENT_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current") : undefined,
+    previousReleasePath: env.PREVIOUS_RELEASE_PATH ? path.resolve(env.PREVIOUS_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous") : undefined,
+    failedReleasePath: env.FAILED_RELEASE_PATH ? path.resolve(env.FAILED_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "failed") : undefined,
+    workerPlistPath: env.WORKER_PLIST_PATH ? path.resolve(env.WORKER_PLIST_PATH) : undefined,
     logDir,
     logLevel: getLogLevel(env, "LOG_LEVEL", "info"),
     logRawSlackEvents: getBoolean(env, "LOG_RAW_SLACK_EVENTS", true),

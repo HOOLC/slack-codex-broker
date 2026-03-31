@@ -66,6 +66,46 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/admin/api/deploy") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const ref = readString(body.ref);
+    if (!ref) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["ref"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.deployWorker({
+        ref,
+        allowActive: body.allow_active === true
+      })
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/admin/api/rollback") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.rollbackWorker({
+        ref: readString(body.ref) ?? undefined,
+        allowActive: body.allow_active === true
+      })
+    );
+    return true;
+  }
+
   if (method === "POST" && url.pathname.startsWith("/admin/api/auth-profiles/") && url.pathname.endsWith("/activate")) {
     const profileName = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/".length, -"/activate".length));
     const body = await readAdminBody(request, response);
@@ -451,6 +491,21 @@ function renderAdminPage(options: {
 
         <section>
           <div class="section-head">
+            <div class="section-title">Deploy</div>
+            <button id="deploy-release-button">DEPLOY</button>
+          </div>
+          <div style="padding:12px; display:grid; gap:8px;">
+            <input id="deploy-ref-input" type="text" placeholder="COMMIT / BRANCH / TAG" />
+            <div style="display:flex; gap:8px;">
+              <button id="rollback-release-button" class="secondary" style="flex:1">ROLLBACK</button>
+            </div>
+            <div id="deploy-panel" style="display:grid; gap:8px;"></div>
+            <div id="deploy-status" style="font-size:10px;"></div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head">
             <div class="section-title">Runtime Info</div>
           </div>
           <div id="service-card" style="padding:12px; font-size:11px;"></div>
@@ -473,10 +528,12 @@ function renderAdminPage(options: {
   <script>
     const refreshButton = document.getElementById("refresh-button");
     const replaceStatus = document.getElementById("replace-status");
+    const deployStatus = document.getElementById("deploy-status");
     const lastRefresh = document.getElementById("last-refresh");
     const sessionSearch = document.getElementById("session-search");
     const sessionFilter = document.getElementById("session-filter");
     const addProfileDialog = document.getElementById("add-profile-dialog");
+    const deployRefInput = document.getElementById("deploy-ref-input");
     let latestStatus = null;
 
     function esc(value) {
@@ -571,6 +628,41 @@ function renderAdminPage(options: {
         '<div style="margin-top:8px; color:var(--muted); font-size:10px;">ROOTS:</div>' +
         '<div style="word-break:break-all;">' + esc(s.sessionsRoot) + '</div>' +
         '</div>';
+    }
+
+    function renderReleaseCard(label, release) {
+      if (!release?.targetPath) {
+        return '<div class="summary-detail">' + esc(label + ": none") + "</div>";
+      }
+      const metadata = release.metadata || {};
+      const heading = metadata.shortRevision || metadata.revision || release.targetPath.split("/").pop() || "release";
+      const detail = metadata.builtAt ? new Date(metadata.builtAt).toLocaleString() : release.targetPath;
+      return '<div class="profile-row">' +
+               '<div class="profile-line">' +
+                 '<span class="profile-account">' + esc(label + ": " + heading) + "</span>" +
+                 '<span class="profile-plan">' + esc(metadata.branch || "detached") + "</span>" +
+               "</div>" +
+               '<div class="summary-detail">' + esc(detail) + "</div>" +
+             "</div>";
+    }
+
+    function renderDeployment(data) {
+      const deployment = data.deployment;
+      const panel = document.getElementById("deploy-panel");
+      if (!deployment) {
+        panel.innerHTML = '<div class="summary-detail">WORKER DEPLOYMENT UNAVAILABLE</div>';
+        return;
+      }
+
+      const worker = deployment.worker || {};
+      panel.innerHTML =
+        '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+          renderBadge(worker.launchdLoaded ? "WORKER LOADED" : "WORKER DOWN", worker.launchdLoaded ? "good" : "danger") +
+          renderBadge(worker.healthOk ? "HTTP OK" : "HTTP FAIL", worker.healthOk ? "good" : "danger") +
+          renderBadge(worker.readyOk ? "CODEX READY" : "CODEX FAIL", worker.readyOk ? "good" : "danger") +
+        "</div>" +
+        renderReleaseCard("CURRENT", deployment.currentRelease) +
+        renderReleaseCard("PREVIOUS", deployment.previousRelease);
     }
 
     function renderProfileQuota(rateLimits) {
@@ -747,6 +839,7 @@ function renderAdminPage(options: {
       renderSummary(data);
       renderService(data);
       renderAuthProfiles(data);
+      renderDeployment(data);
       renderSessions(data);
       renderLogs(data);
     }
@@ -824,6 +917,60 @@ function renderAdminPage(options: {
       }
     }
 
+    async function deployRelease() {
+      const ref = deployRefInput.value.trim();
+      if (!ref) {
+        deployStatus.innerHTML = '<span style="color:var(--danger)">REF IS REQUIRED</span>';
+        return;
+      }
+      const activeCount = Number(latestStatus?.state?.activeCount || 0);
+      const allowActive =
+        activeCount > 0 ? window.confirm("ACTIVE SESSIONS EXIST. DEPLOYING WILL INTERRUPT THEM. CONTINUE?") : false;
+      if (activeCount > 0 && !allowActive) {
+        return;
+      }
+      deployStatus.textContent = "DEPLOYING...";
+      try {
+        const response = await fetch("/admin/api/deploy", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            ref,
+            allow_active: allowActive
+          })
+        });
+        const payload = await parseResponse(response);
+        render(payload.status);
+        deployStatus.innerHTML = '<span style="color:var(--good)">DEPLOYED ' + esc(ref) + "</span>";
+      } catch (error) {
+        deployStatus.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+      }
+    }
+
+    async function rollbackRelease() {
+      const activeCount = Number(latestStatus?.state?.activeCount || 0);
+      const allowActive =
+        activeCount > 0 ? window.confirm("ACTIVE SESSIONS EXIST. ROLLBACK WILL INTERRUPT THEM. CONTINUE?") : false;
+      if (activeCount > 0 && !allowActive) {
+        return;
+      }
+      deployStatus.textContent = "ROLLING BACK...";
+      try {
+        const response = await fetch("/admin/api/rollback", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            allow_active: allowActive
+          })
+        });
+        const payload = await parseResponse(response);
+        render(payload.status);
+        deployStatus.innerHTML = '<span style="color:var(--good)">ROLLED BACK</span>';
+      } catch (error) {
+        deployStatus.innerHTML = '<span style="color:var(--danger)">' + esc(error instanceof Error ? error.message : String(error)) + "</span>";
+      }
+    }
+
     async function refresh() {
       refreshButton.disabled = true;
       try {
@@ -842,6 +989,8 @@ function renderAdminPage(options: {
       document.getElementById("add-profile-status").textContent = "";
       addProfileDialog.showModal();
     };
+    document.getElementById("deploy-release-button").onclick = deployRelease;
+    document.getElementById("rollback-release-button").onclick = rollbackRelease;
     document.getElementById("close-add-profile-dialog").onclick = () => addProfileDialog.close();
     document.getElementById("submit-add-profile-dialog").onclick = submitAddProfile;
     addProfileDialog.onclick = (event) => {

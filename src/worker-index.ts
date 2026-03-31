@@ -3,20 +3,16 @@ import http from "node:http";
 import { loadConfig } from "./config.js";
 import { createHttpHandler } from "./http/router.js";
 import { configureLogger, logger } from "./logger.js";
-import { AdminService } from "./services/admin-service.js";
-import { AuthProfileService } from "./services/auth-profile-service.js";
 import { CodexBroker } from "./services/codex/codex-broker.js";
-import { CodexRuntimeControl } from "./services/codex-runtime-control.js";
 import { IsolatedMcpService } from "./services/codex/isolated-mcp-service.js";
 import { JobManager } from "./services/job-manager.js";
 import { SessionManager } from "./services/session-manager.js";
 import { SlackCodexBridge } from "./services/slack/slack-codex-bridge.js";
 import { StateStore } from "./store/state-store.js";
 
-export async function startService(): Promise<{
+export async function startWorkerService(): Promise<{
   readonly stop: () => Promise<void>;
 }> {
-  const startedAt = new Date();
   const config = loadConfig();
   configureLogger({
     logDir: config.logDir,
@@ -25,6 +21,7 @@ export async function startService(): Promise<{
     rawCodexRpc: config.logRawCodexRpc,
     rawHttpRequests: config.logRawHttpRequests
   });
+
   const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
   const sessionManager = new SessionManager({
     stateStore,
@@ -65,19 +62,8 @@ export async function startService(): Promise<{
       await bridge.acceptBackgroundJobEvent(event);
     }
   });
-  const authProfiles = new AuthProfileService({
-    config
-  });
-  const adminService = new AdminService({
-    config,
-    sessions: sessionManager,
-    runtime: new CodexRuntimeControl(codexBroker),
-    authProfiles,
-    startedAt
-  });
   const server = http.createServer(
     createHttpHandler({
-      adminService,
       bridge,
       isolatedMcp,
       jobManager,
@@ -89,7 +75,7 @@ export async function startService(): Promise<{
     await bridge.start();
     await jobManager.start();
     await new Promise<void>((resolve, reject) => {
-      server.listen(config.port, () => resolve());
+      server.listen(config.port, config.workerBindHost, () => resolve());
       server.once("error", reject);
     });
   } catch (error) {
@@ -103,8 +89,9 @@ export async function startService(): Promise<{
     throw error;
   }
 
-  logger.info("Service booted", {
+  logger.info("Worker service booted", {
     port: config.port,
+    workerBindHost: config.workerBindHost,
     sessionsRoot: config.sessionsRoot,
     reposRoot: config.reposRoot
   });
@@ -119,7 +106,6 @@ export async function startService(): Promise<{
             reject(error);
             return;
           }
-
           resolve();
         });
       });
@@ -127,8 +113,8 @@ export async function startService(): Promise<{
   };
 }
 
-startService().catch((error: unknown) => {
-  logger.error("Fatal startup error", {
+startWorkerService().catch((error: unknown) => {
+  logger.error("Fatal worker startup error", {
     error: error instanceof Error ? error.message : String(error)
   });
   process.exit(1);
