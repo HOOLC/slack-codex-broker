@@ -50,6 +50,7 @@ export class AdminService {
   }
 
   async getStatus(): Promise<Record<string, unknown>> {
+    await this.#refreshSessions();
     const allSessions = this.options.sessions
       .listSessions()
       .sort((left, right) => compareSessions(left, right));
@@ -156,7 +157,7 @@ export class AdminService {
     readonly name: string;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
-    this.#assertSafeToInterrupt(options.allowActive, "auth profile switch");
+    await this.#assertSafeToInterrupt(options.allowActive, "auth profile switch");
     const activated = await this.options.authProfiles.activateProfile(options.name);
     await this.options.runtime.restartRuntime(`admin auth profile switch: ${activated.name}`);
     return {
@@ -174,7 +175,7 @@ export class AdminService {
       throw new Error("Worker deployment is not configured for this runtime.");
     }
 
-    this.#assertSafeToInterrupt(options.allowActive, "deploy");
+    await this.#assertSafeToInterrupt(options.allowActive, "deploy");
     const deployment = await this.options.deployment.deploy({
       ref: options.ref
     } satisfies DeployWorkerOptions);
@@ -193,7 +194,7 @@ export class AdminService {
       throw new Error("Worker deployment is not configured for this runtime.");
     }
 
-    this.#assertSafeToInterrupt(options.allowActive, "rollback");
+    await this.#assertSafeToInterrupt(options.allowActive, "rollback");
     const deployment = await this.options.deployment.rollback({
       ref: options.ref
     } satisfies RollbackWorkerOptions);
@@ -220,16 +221,24 @@ export class AdminService {
     }
   }
 
-  #assertSafeToInterrupt(allowActive: boolean, action: string): void {
+  async #assertSafeToInterrupt(allowActive: boolean, action: string): Promise<void> {
     if (allowActive) {
       return;
     }
 
+    await this.#refreshSessions();
     const activeCount = this.options.sessions.listSessions().filter((session) => Boolean(session.activeTurnId)).length;
     if (activeCount > 0) {
       throw new Error(
         `Refusing ${action} while active sessions exist (activeCount=${activeCount}). Retry with allow_active=true if you really want to interrupt them.`
       );
+    }
+  }
+
+  async #refreshSessions(): Promise<void> {
+    const load = (this.options.sessions as { readonly load?: (() => Promise<void>) | undefined }).load;
+    if (typeof load === "function") {
+      await load.call(this.options.sessions);
     }
   }
 
