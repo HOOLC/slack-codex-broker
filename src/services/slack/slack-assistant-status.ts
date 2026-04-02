@@ -77,6 +77,7 @@ export class SlackAssistantStatusController {
   }
 
   clear(): void {
+    this.#resetToolTracking();
     this.#scheduleStatus("");
   }
 
@@ -131,6 +132,7 @@ export class SlackAssistantStatusController {
     }
 
     this.#stopped = true;
+    this.#resetToolTracking();
     this.#pendingStatus = undefined;
     if (this.#timer) {
       clearTimeout(this.#timer);
@@ -165,6 +167,11 @@ export class SlackAssistantStatusController {
     }
 
     return "";
+  }
+
+  #resetToolTracking(): void {
+    this.#activeToolCalls.clear();
+    this.#activeToolOrder.length = 0;
   }
 
   #scheduleStatus(status: string): void {
