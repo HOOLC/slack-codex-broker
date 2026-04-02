@@ -12,6 +12,7 @@ Current Slack thread coordinates:
 
 Slack broker API usage for this session:
 - Send text with: {{post_message_command}}
+- Write normal Markdown in the `text` field. Do not handcraft Slack `mrkdwn`; the broker converts markdownish output to `mrkdwn` before posting.
 - When sending a terminal Slack state, set kind to final, block, or wait. For block/wait, include a short reason field.
 - Record a silent final state without posting another Slack message with: {{post_state_final_command}}
 - Record a silent wait state without posting to Slack with: {{post_state_wait_command}}

@@ -1085,6 +1085,129 @@ describe.sequential("slack-codex-broker e2e", () => {
     await delay(2_000);
     expect(mockCodex.turnsStarted).toHaveLength(turnCountBeforeRestart);
   }, 60_000);
+
+  it("converts markdownish Slack posts to mrkdwn before delivery", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const brokerBaseUrl = `http://127.0.0.1:${brokerPort}`;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-format-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "777.220",
+      ts: "777.221",
+      text: "<@UBOT> 开个 session"
+    });
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "format session bootstrap turn");
+    await waitForSessionIdle(tempRoot, "C123:777.220");
+
+    await postJson(`${brokerBaseUrl}/slack/post-message`, {
+      channel_id: "C123",
+      thread_ts: "777.220",
+      text: "## Summary\n- **done**\n- [docs](https://example.com)\n- `https://linear.app/settings/api`"
+    });
+
+    await waitFor(
+      () => mockSlack.postedMessages.some((message) => message.threadTs === "777.220" && message.text.includes("*Summary*")),
+      "converted slack markdown post"
+    );
+
+    const posted = mockSlack.postedMessages.find((message) => message.threadTs === "777.220" && message.text.includes("*Summary*"));
+    expect(posted?.text).toBe(
+      "*Summary*\n• *done*\n• <https://example.com|docs>\n• `https://linear.\u200Bapp/settings/api`"
+    );
+  }, 60_000);
+
+  it("chunks long Slack posts after markdownish conversion", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const brokerBaseUrl = `http://127.0.0.1:${brokerPort}`;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-long-format-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "888.220",
+      ts: "888.221",
+      text: "<@UBOT> 开个 session"
+    });
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "long format session bootstrap turn");
+    await waitForSessionIdle(tempRoot, "C123:888.220");
+
+    const markdownUnit = "1. **item**\n";
+    const mrkdwnUnit = "1. *item*\n";
+    const markdown = markdownUnit.repeat(400).trimEnd();
+
+    await postJson(`${brokerBaseUrl}/slack/post-message`, {
+      channel_id: "C123",
+      thread_ts: "888.220",
+      text: markdown
+    });
+
+    await waitFor(
+      () =>
+        mockSlack.postedMessages.filter(
+          (message) => message.threadTs === "888.220" && message.text.startsWith("1. *item*")
+        ).length >= 2,
+      "multi-chunk converted slack post"
+    );
+
+    const posted = mockSlack.postedMessages.filter(
+      (message) => message.threadTs === "888.220" && message.text.startsWith("1. *item*")
+    );
+    expect(posted).toHaveLength(2);
+    expect(posted[0]?.text).toBe(mrkdwnUnit.repeat(350));
+    expect(posted[1]?.text).toBe(mrkdwnUnit.repeat(49) + "1. *item*");
+    expect(posted[0]?.text).not.toContain("**");
+    expect(posted[1]?.text).not.toContain("**");
+  }, 60_000);
 });
 
 async function startBrokerProcess(options: {
