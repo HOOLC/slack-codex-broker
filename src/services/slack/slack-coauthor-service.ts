@@ -401,6 +401,7 @@ export class SlackCoauthorService {
           return {
             type: "input",
             block_id: authorBlockId(userId),
+            optional: true,
             label: {
               type: "plain_text",
               text: `${describeSlackUser(identity, userId)} GitHub author`

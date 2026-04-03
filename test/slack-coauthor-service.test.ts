@@ -156,6 +156,13 @@ describe("SlackCoauthorService", () => {
     expect(modalView).toMatchObject({
       callback_id: "coauthor_confirm"
     });
+    expect((modalView.blocks as Array<Record<string, unknown>>).filter((block) => String(block.block_id || "").startsWith("author__"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          optional: true
+        })
+      ])
+    );
 
     await service.handleInteractivePayload({
       type: "view_submission",
