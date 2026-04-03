@@ -535,8 +535,10 @@ function renderAdminPage(options: {
     const addProfileDialog = document.getElementById("add-profile-dialog");
     const deployRefInput = document.getElementById("deploy-ref-input");
     const uiStateStorageKey = "admin-ui-state:" + window.location.pathname;
+    const deferredUiStatePersistMs = 150;
     let latestStatus = null;
     let uiState = loadUiState();
+    let uiStatePersistTimer = null;
 
     function esc(value) {
       return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -578,14 +580,35 @@ function renderAdminPage(options: {
       }
     }
 
+    function cancelScheduledUiStatePersistence() {
+      if (uiStatePersistTimer == null) {
+        return;
+      }
+      window.clearTimeout(uiStatePersistTimer);
+      uiStatePersistTimer = null;
+    }
+
     function persistUiState() {
+      cancelScheduledUiStatePersistence();
       try {
         window.localStorage.setItem(uiStateStorageKey, JSON.stringify(uiState));
       } catch {}
     }
 
-    function updateUiState(patch) {
+    function scheduleUiStatePersistence() {
+      cancelScheduledUiStatePersistence();
+      uiStatePersistTimer = window.setTimeout(() => {
+        uiStatePersistTimer = null;
+        persistUiState();
+      }, deferredUiStatePersistMs);
+    }
+
+    function updateUiState(patch, options) {
       uiState = normalizeUiState(Object.assign({}, uiState, patch || {}));
+      if (options?.deferPersist) {
+        scheduleUiStatePersistence();
+        return;
+      }
       persistUiState();
     }
 
@@ -602,6 +625,17 @@ function renderAdminPage(options: {
       }
       updateUiState({
         expandedSessionKeys: [...next]
+      });
+    }
+
+    function pruneExpandedSessionKeys(sessionKeys) {
+      const allowedKeys = new Set((sessionKeys || []).map((sessionKey) => String(sessionKey)));
+      const expandedSessionKeys = uiState.expandedSessionKeys.filter((sessionKey) => allowedKeys.has(sessionKey));
+      if (expandedSessionKeys.length === uiState.expandedSessionKeys.length) {
+        return;
+      }
+      updateUiState({
+        expandedSessionKeys
       });
     }
 
@@ -833,6 +867,7 @@ function renderAdminPage(options: {
     function renderSessions(data) {
       const panel = document.getElementById("sessions-panel");
       const list = data.state?.sessions || [];
+      pruneExpandedSessionKeys(list.map((session) => session.key));
       const query = (sessionSearch.value || "").toLowerCase();
       const mode = sessionFilter.value;
       
@@ -1063,8 +1098,11 @@ function renderAdminPage(options: {
 
     refreshButton.onclick = refresh;
     sessionSearch.oninput = () => {
-      updateUiState({ sessionSearch: sessionSearch.value });
+      updateUiState({ sessionSearch: sessionSearch.value }, { deferPersist: true });
       if (latestStatus) renderSessions(latestStatus);
+    };
+    sessionSearch.onblur = () => {
+      persistUiState();
     };
     sessionFilter.onchange = () => {
       updateUiState({ sessionFilter: sessionFilter.value });
