@@ -144,6 +144,68 @@ describe("AppServerClient disconnect handling", () => {
     await expect(started.completion).rejects.toThrow(/closed/i);
   });
 
+  it("buffers turn events that arrive before startTurn finishes registering the turn", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-1"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "item/agentMessage/delta",
+          params: {
+            turnId: "turn-1",
+            delta: "done"
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-1"
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      finalMessage: "done",
+      aborted: false
+    });
+  });
+
   it("can recover a completed turn result from thread/read", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {
