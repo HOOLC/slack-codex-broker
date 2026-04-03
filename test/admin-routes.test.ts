@@ -15,21 +15,8 @@ describe("admin routes", () => {
     }
   });
 
-  it("requires the configured admin token for admin api requests", async () => {
-    const config = loadConfig({
-      SLACK_APP_TOKEN: "xapp-test",
-      SLACK_BOT_TOKEN: "xoxb-test",
-      BROKER_ADMIN_TOKEN: "secret-token"
-    } as NodeJS.ProcessEnv);
-    const adminService = {
-      getStatus: async () => ({ ok: true, status: "admin-ok" }),
-      addAuthProfile: async () => ({ ok: true }),
-      deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
-      deployWorker: async () => ({ ok: true }),
-      rollbackWorker: async () => ({ ok: true })
-    };
-
+  async function startAdminServer(configEnv: NodeJS.ProcessEnv, adminService: Record<string, unknown>): Promise<string> {
+    const config = loadConfig(configEnv);
     const server = http.createServer(
       createHttpHandler({
         adminService: adminService as never,
@@ -56,7 +43,22 @@ describe("admin routes", () => {
     if (!address || typeof address === "string") {
       throw new Error("failed to start test server");
     }
-    const baseUrl = `http://127.0.0.1:${address.port}`;
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  it("requires the configured admin token for admin api requests", async () => {
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      BROKER_ADMIN_TOKEN: "secret-token"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
+    });
 
     const unauthorized = await fetch(`${baseUrl}/admin/api/status`);
     expect(unauthorized.status).toBe(401);
@@ -74,47 +76,19 @@ describe("admin routes", () => {
   });
 
   it("renders auth profile management and session console sections in the admin page", async () => {
-    const config = loadConfig({
+    const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
-    } as NodeJS.ProcessEnv);
-    const adminService = {
+    } as NodeJS.ProcessEnv, {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
       deployWorker: async () => ({ ok: true }),
       rollbackWorker: async () => ({ ok: true })
-    };
-
-    const server = http.createServer(
-      createHttpHandler({
-        adminService: adminService as never,
-        bridge: {} as never,
-        isolatedMcp: {} as never,
-        jobManager: {} as never,
-        config
-      })
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    cleanups.push(async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
     });
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to start test server");
-    }
-
-    const page = await fetch(`http://127.0.0.1:${address.port}/admin`);
+    const page = await fetch(`${baseUrl}/admin`);
     expect(page.status).toBe(200);
     const html = await page.text();
 
@@ -134,13 +108,39 @@ describe("admin routes", () => {
     expect(html).not.toContain("/admin/api/runtime-files");
   });
 
-  it("accepts auth profile creation without an explicit name", async () => {
-    const config = loadConfig({
+  it("persists session ui state in the admin page script", async () => {
+    const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
-    } as NodeJS.ProcessEnv);
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
+    });
+
+    const page = await fetch(`${baseUrl}/admin`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+
+    expect(html).toContain("admin-ui-state:");
+    expect(html).toContain("expandedSessionKeys");
+    expect(html).toContain('data-session-key="');
+    expect(html).toContain("scheduleUiStatePersistence");
+    expect(html).toContain("pruneExpandedSessionKeys");
+    expect(html).toContain("window.localStorage.getItem");
+    expect(html).toContain('row.addEventListener("toggle"');
+    expect(html).toContain("sessionSearch.onblur");
+  });
+
+  it("accepts auth profile creation without an explicit name", async () => {
     const calls: Array<Record<string, unknown>> = [];
-    const adminService = {
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async (payload: Record<string, unknown>) => {
         calls.push(payload);
@@ -150,36 +150,9 @@ describe("admin routes", () => {
       activateAuthProfile: async () => ({ ok: true }),
       deployWorker: async () => ({ ok: true }),
       rollbackWorker: async () => ({ ok: true })
-    };
-
-    const server = http.createServer(
-      createHttpHandler({
-        adminService: adminService as never,
-        bridge: {} as never,
-        isolatedMcp: {} as never,
-        jobManager: {} as never,
-        config
-      })
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    cleanups.push(async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
     });
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to start test server");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/auth-profiles`, {
+    const response = await fetch(`${baseUrl}/admin/api/auth-profiles`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -198,47 +171,19 @@ describe("admin routes", () => {
   });
 
   it("emits admin page inline script without syntax errors", async () => {
-    const config = loadConfig({
+    const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
-    } as NodeJS.ProcessEnv);
-    const adminService = {
+    } as NodeJS.ProcessEnv, {
       getStatus: async () => ({ ok: true, status: "admin-ok" }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
       activateAuthProfile: async () => ({ ok: true }),
       deployWorker: async () => ({ ok: true }),
       rollbackWorker: async () => ({ ok: true })
-    };
-
-    const server = http.createServer(
-      createHttpHandler({
-        adminService: adminService as never,
-        bridge: {} as never,
-        isolatedMcp: {} as never,
-        jobManager: {} as never,
-        config
-      })
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    cleanups.push(async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
     });
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to start test server");
-    }
-
-    const page = await fetch(`http://127.0.0.1:${address.port}/admin`);
+    const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
     const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
     expect(scriptMatch?.[1]).toBeTruthy();
@@ -250,12 +195,11 @@ describe("admin routes", () => {
   });
 
   it("forwards deploy requests to the admin service", async () => {
-    const config = loadConfig({
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
-    } as NodeJS.ProcessEnv);
-    const calls: Array<Record<string, unknown>> = [];
-    const adminService = {
+    } as NodeJS.ProcessEnv, {
       getStatus: async () => ({ ok: true }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
@@ -265,33 +209,9 @@ describe("admin routes", () => {
         return { ok: true };
       },
       rollbackWorker: async () => ({ ok: true })
-    };
-
-    const server = http.createServer(
-      createHttpHandler({
-        adminService: adminService as never,
-        config
-      })
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    cleanups.push(async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
     });
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to start test server");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/deploy`, {
+    const response = await fetch(`${baseUrl}/admin/api/deploy`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -311,12 +231,11 @@ describe("admin routes", () => {
   });
 
   it("forwards rollback requests to the admin service", async () => {
-    const config = loadConfig({
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
-    } as NodeJS.ProcessEnv);
-    const calls: Array<Record<string, unknown>> = [];
-    const adminService = {
+    } as NodeJS.ProcessEnv, {
       getStatus: async () => ({ ok: true }),
       addAuthProfile: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
@@ -326,33 +245,9 @@ describe("admin routes", () => {
         calls.push(payload);
         return { ok: true };
       }
-    };
-
-    const server = http.createServer(
-      createHttpHandler({
-        adminService: adminService as never,
-        config
-      })
-    );
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    cleanups.push(async () => {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
     });
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("failed to start test server");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/admin/api/rollback`, {
+    const response = await fetch(`${baseUrl}/admin/api/rollback`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
