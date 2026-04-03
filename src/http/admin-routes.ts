@@ -600,10 +600,109 @@ function renderAdminPage(options: {
     const addProfileDialog = document.getElementById("add-profile-dialog");
     const githubAuthorDialog = document.getElementById("github-author-dialog");
     const deployRefInput = document.getElementById("deploy-ref-input");
+    const uiStateStorageKey = "admin-ui-state:" + window.location.pathname;
+    const deferredUiStatePersistMs = 150;
     let latestStatus = null;
+    let uiState = loadUiState();
+    let uiStatePersistTimer = null;
 
     function esc(value) {
       return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+    }
+
+    function defaultUiState() {
+      return {
+        sessionSearch: "",
+        sessionFilter: "all",
+        expandedSessionKeys: []
+      };
+    }
+
+    function normalizeUiState(value) {
+      const next = value && typeof value === "object" ? value : {};
+      const sessionFilterValue = ["all", "active", "inbound", "jobs", "issues"].includes(String(next.sessionFilter || ""))
+        ? String(next.sessionFilter)
+        : "all";
+      const sessionSearchValue = typeof next.sessionSearch === "string" ? next.sessionSearch : "";
+      const expandedSessionKeys = Array.isArray(next.expandedSessionKeys)
+        ? [...new Set(next.expandedSessionKeys.map((item) => String(item)).filter(Boolean))]
+        : [];
+      return {
+        sessionSearch: sessionSearchValue,
+        sessionFilter: sessionFilterValue,
+        expandedSessionKeys
+      };
+    }
+
+    function loadUiState() {
+      try {
+        const raw = window.localStorage.getItem(uiStateStorageKey);
+        if (!raw) {
+          return defaultUiState();
+        }
+        return normalizeUiState(JSON.parse(raw));
+      } catch {
+        return defaultUiState();
+      }
+    }
+
+    function cancelScheduledUiStatePersistence() {
+      if (uiStatePersistTimer == null) {
+        return;
+      }
+      window.clearTimeout(uiStatePersistTimer);
+      uiStatePersistTimer = null;
+    }
+
+    function persistUiState() {
+      cancelScheduledUiStatePersistence();
+      try {
+        window.localStorage.setItem(uiStateStorageKey, JSON.stringify(uiState));
+      } catch {}
+    }
+
+    function scheduleUiStatePersistence() {
+      cancelScheduledUiStatePersistence();
+      uiStatePersistTimer = window.setTimeout(() => {
+        uiStatePersistTimer = null;
+        persistUiState();
+      }, deferredUiStatePersistMs);
+    }
+
+    function updateUiState(patch, options) {
+      uiState = normalizeUiState(Object.assign({}, uiState, patch || {}));
+      if (options?.deferPersist) {
+        scheduleUiStatePersistence();
+        return;
+      }
+      persistUiState();
+    }
+
+    function isSessionExpanded(sessionKey) {
+      return uiState.expandedSessionKeys.includes(String(sessionKey));
+    }
+
+    function updateSessionExpansion(sessionKey, expanded) {
+      const next = new Set(uiState.expandedSessionKeys);
+      if (expanded) {
+        next.add(String(sessionKey));
+      } else {
+        next.delete(String(sessionKey));
+      }
+      updateUiState({
+        expandedSessionKeys: [...next]
+      });
+    }
+
+    function pruneExpandedSessionKeys(sessionKeys) {
+      const allowedKeys = new Set((sessionKeys || []).map((sessionKey) => String(sessionKey)));
+      const expandedSessionKeys = uiState.expandedSessionKeys.filter((sessionKey) => allowedKeys.has(sessionKey));
+      if (expandedSessionKeys.length === uiState.expandedSessionKeys.length) {
+        return;
+      }
+      updateUiState({
+        expandedSessionKeys
+      });
     }
 
     function fmtTime(value) {
@@ -903,6 +1002,7 @@ function renderAdminPage(options: {
     function renderSessions(data) {
       const panel = document.getElementById("sessions-panel");
       const list = data.state?.sessions || [];
+      pruneExpandedSessionKeys(list.map((session) => session.key));
       const query = (sessionSearch.value || "").toLowerCase();
       const mode = sessionFilter.value;
       
@@ -923,7 +1023,8 @@ function renderAdminPage(options: {
       panel.innerHTML = filtered.map(s => {
         const lead = summarizeSessionLead(s);
         const isActive = !!s.activeTurnId;
-        return '<details class="session-row">' +
+        const expanded = isSessionExpanded(s.key);
+        return '<details class="session-row" data-session-key="' + esc(s.key) + '"' + (expanded ? " open" : "") + ">" +
           '<summary class="session-summary">' +
             '<div class="session-key">' + esc(s.key) + '<div style="font-size:10px; font-weight:normal; color:var(--muted)">' + esc(s.channelId) + '</div></div>' +
             '<div>' + renderBadge(isActive ? "ACTIVE" : "IDLE", isActive ? "good" : "warn") + '<div style="font-size:10px; color:var(--muted)">UP: ' + fmtTime(s.updatedAt) + '</div></div>' +
@@ -940,6 +1041,16 @@ function renderAdminPage(options: {
           '</div>' +
         '</details>';
       }).join("");
+
+      panel.querySelectorAll(".session-row").forEach((row) => {
+        row.addEventListener("toggle", () => {
+          const sessionKey = row.getAttribute("data-session-key");
+          if (!sessionKey) {
+            return;
+          }
+          updateSessionExpansion(sessionKey, row.open);
+        });
+      });
     }
 
     function renderInboundTable(items) {
@@ -1166,9 +1277,21 @@ function renderAdminPage(options: {
       }
     }
 
+    sessionSearch.value = uiState.sessionSearch;
+    sessionFilter.value = uiState.sessionFilter;
+
     refreshButton.onclick = refresh;
-    sessionSearch.oninput = () => { if (latestStatus) renderSessions(latestStatus); };
-    sessionFilter.onchange = () => { if (latestStatus) renderSessions(latestStatus); };
+    sessionSearch.oninput = () => {
+      updateUiState({ sessionSearch: sessionSearch.value }, { deferPersist: true });
+      if (latestStatus) renderSessions(latestStatus);
+    };
+    sessionSearch.onblur = () => {
+      persistUiState();
+    };
+    sessionFilter.onchange = () => {
+      updateUiState({ sessionFilter: sessionFilter.value });
+      if (latestStatus) renderSessions(latestStatus);
+    };
     githubAuthorSearch.oninput = () => { if (latestStatus) renderGitHubAuthors(latestStatus); };
     document.getElementById("open-add-profile-dialog").onclick = () => {
       document.getElementById("add-profile-status").textContent = "";
