@@ -134,6 +134,58 @@ describe("admin routes", () => {
     expect(html).not.toContain("/admin/api/runtime-files");
   });
 
+  it("persists session ui state in the admin page script", async () => {
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv);
+    const adminService = {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployWorker: async () => ({ ok: true }),
+      rollbackWorker: async () => ({ ok: true })
+    };
+
+    const server = http.createServer(
+      createHttpHandler({
+        adminService: adminService as never,
+        bridge: {} as never,
+        isolatedMcp: {} as never,
+        jobManager: {} as never,
+        config
+      })
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start test server");
+    }
+
+    const page = await fetch(`http://127.0.0.1:${address.port}/admin`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+
+    expect(html).toContain("admin-ui-state:");
+    expect(html).toContain("expandedSessionKeys");
+    expect(html).toContain('data-session-key="');
+    expect(html).toContain("window.localStorage.getItem");
+    expect(html).toContain('row.addEventListener("toggle"');
+  });
+
   it("accepts auth profile creation without an explicit name", async () => {
     const config = loadConfig({
       SLACK_APP_TOKEN: "xapp-test",
