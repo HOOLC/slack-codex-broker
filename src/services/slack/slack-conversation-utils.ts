@@ -180,6 +180,27 @@ export function parseActiveTurnMismatch(error: unknown): {
   };
 }
 
+export function shouldResetConflictingActiveTurnMismatch(
+  inflightBatchIds: readonly (string | undefined)[],
+  actualTurnId: string
+): boolean {
+  const distinct = new Set(
+    inflightBatchIds
+      .map((batchId) => batchId?.trim())
+      .filter((batchId): batchId is string => Boolean(batchId))
+  );
+
+  if (distinct.size === 0) {
+    return false;
+  }
+
+  if (distinct.size === 1) {
+    return !distinct.has(actualTurnId);
+  }
+
+  return true;
+}
+
 export function isSlackInboundSource(
   source: PersistedInboundSource | "recovered_thread_batch"
 ): source is SlackInboundSource {

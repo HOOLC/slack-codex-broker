@@ -6,6 +6,7 @@ import {
   isMissingCodexThreadError,
   isMissingActiveTurnSteerError,
   parseActiveTurnMismatch,
+  shouldResetConflictingActiveTurnMismatch,
   shouldAutoRecoverSession,
   shouldPostSlackRunFailure,
   shouldNotifySlackFailure
@@ -37,6 +38,22 @@ describe("slack conversation utils", () => {
 
   it("returns null for unrelated errors", () => {
     expect(parseActiveTurnMismatch(new Error("socket hang up"))).toBeNull();
+  });
+
+  it("does not reset active-turn mismatch when there are no inflight batches", () => {
+    expect(shouldResetConflictingActiveTurnMismatch([], "turn-new")).toBe(false);
+  });
+
+  it("does not reset active-turn mismatch when the only inflight batch matches the actual turn", () => {
+    expect(shouldResetConflictingActiveTurnMismatch(["turn-new"], "turn-new")).toBe(false);
+  });
+
+  it("resets active-turn mismatch when the only inflight batch conflicts with the actual turn", () => {
+    expect(shouldResetConflictingActiveTurnMismatch(["turn-old"], "turn-new")).toBe(true);
+  });
+
+  it("resets active-turn mismatch when multiple inflight batches exist", () => {
+    expect(shouldResetConflictingActiveTurnMismatch(["turn-old", "turn-new"], "turn-new")).toBe(true);
   });
 
   it("formats recoverable websocket failures for Slack users", () => {

@@ -38,6 +38,7 @@ import {
   isSlackMessageAfterCursor,
   isStopExplainingTurnSignalKind,
   isUnexpectedTurnStopMessage,
+  shouldResetConflictingActiveTurnMismatch,
   shouldPostSlackRunFailure,
   shouldNotifySlackFailure,
   shouldAutoRecoverSession
@@ -1013,6 +1014,33 @@ export class SlackConversationService {
   ): Promise<SlackSessionRecord> {
     const mismatch = parseActiveTurnMismatch(error);
     if (mismatch && mismatch.actualTurnId !== session.activeTurnId) {
+      const inflightBatchIds = this.#sessions.listInboundMessages({
+        channelId: session.channelId,
+        rootThreadTs: session.rootThreadTs,
+        status: "inflight"
+      }).map((message) => message.batchId);
+
+      if (shouldResetConflictingActiveTurnMismatch(inflightBatchIds, mismatch.actualTurnId)) {
+        logger.warn("Detected conflicting inflight Slack batches during active-turn resync; resetting broker runtime state", {
+          sessionKey: session.key,
+          previousTurnId: session.activeTurnId,
+          actualTurnId: mismatch.actualTurnId,
+          inflightBatchIds: [...new Set(inflightBatchIds.filter((batchId): batchId is string => Boolean(batchId)))],
+          messageTs: options?.messageTs ?? null
+        });
+        await this.#sessions.resetInflightMessages(
+          session.channelId,
+          session.rootThreadTs
+        );
+        const latestSession = await this.#sessions.setActiveTurnId(
+          session.channelId,
+          session.rootThreadTs,
+          undefined
+        );
+        this.#resetRuntimeProcessing(session.key);
+        return latestSession;
+      }
+
       logger.warn("Synchronizing broker active turn id to Codex-reported active turn", {
         sessionKey: session.key,
         previousTurnId: session.activeTurnId,
