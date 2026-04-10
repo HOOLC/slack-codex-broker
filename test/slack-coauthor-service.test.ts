@@ -389,4 +389,69 @@ describe("SlackCoauthorService", () => {
     expect(resolved.status).toBe("noop");
     expect(resolved.message).toContain("skipped for this commit");
   });
+
+  it("validates configure-session mapping targets before writing any mappings", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-state-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-coauthor-sessions-"));
+    tempDirs.push(stateDir, sessionsRoot);
+
+    const sessions = new SessionManager({
+      stateStore: new StateStore(stateDir, sessionsRoot),
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C777", "222.333");
+    const mappings = new GitHubAuthorMappingService({ stateDir });
+    await mappings.load();
+
+    const service = new SlackCoauthorService({
+      sessions,
+      mappings,
+      slackApi: {
+        getUserIdentity: vi.fn(async (userId: string) => ({
+          userId,
+          mention: `<@${userId}>`,
+          realName: userId === "U1" ? "Alice Example" : "Bob Example"
+        })),
+        postEphemeral: vi.fn(),
+        openView: vi.fn()
+      } as never
+    });
+
+    await service.noteIncomingSlackInput(session, {
+      source: "thread_reply",
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      messageTs: "222.334",
+      userId: "U1",
+      senderKind: "user",
+      text: "first contributor"
+    });
+    await service.noteIncomingSlackInput(session, {
+      source: "thread_reply",
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      messageTs: "222.335",
+      userId: "U2",
+      senderKind: "user",
+      text: "second contributor"
+    });
+
+    await expect(service.configureSessionCoauthors({
+      cwd: session.workspacePath,
+      mappings: [
+        {
+          slackUser: "Alice Example",
+          githubAuthor: "Alice Example <alice@example.com>"
+        },
+        {
+          slackUser: "Unknown Person",
+          githubAuthor: "Unknown Person <unknown@example.com>"
+        }
+      ]
+    })).rejects.toThrow("Unable to resolve co-author mapping target: Unknown Person");
+
+    expect(mappings.getMapping("U1")).toBeUndefined();
+    expect(mappings.getMapping("U2")).toBeUndefined();
+  });
 });

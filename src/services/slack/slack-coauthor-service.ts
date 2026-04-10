@@ -146,26 +146,22 @@ export class SlackCoauthorService {
     }
 
     let status = await this.#buildCommitCoauthorStatus(session);
+    const requestedMappings = this.#resolveRequestedMappings(status, options.mappings);
+    const selectedUserIds = this.#resolveRequestedUserIds(status, {
+      coauthors: options.coauthors,
+      userIds: options.userIds
+    });
 
-    for (const entry of options.mappings ?? []) {
-      const slackUserId = entry.slackUserId?.trim() || this.#resolveUserReference(status, entry.slackUser);
-      if (!slackUserId) {
-        throw new Error(`Unable to resolve co-author mapping target: ${entry.slackUser ?? entry.slackUserId ?? "unknown"}`);
-      }
-
-      const slackIdentity = await this.#slackApi.getUserIdentity(slackUserId);
+    for (const entry of requestedMappings) {
+      const slackIdentity = await this.#slackApi.getUserIdentity(entry.slackUserId);
       await this.#mappings.upsertManualMapping({
-        slackUserId,
+        slackUserId: entry.slackUserId,
         githubAuthor: entry.githubAuthor,
         slackIdentity: slackIdentity ?? undefined
       });
     }
 
     status = await this.#buildCommitCoauthorStatus(session);
-    const selectedUserIds = this.#resolveRequestedUserIds(status, {
-      coauthors: options.coauthors,
-      userIds: options.userIds
-    });
 
     if (selectedUserIds !== undefined || options.ignoreMissing !== undefined) {
       session = await this.#sessions.confirmCoAuthors(session.channelId, session.rootThreadTs, {
@@ -658,6 +654,42 @@ export class SlackCoauthorService {
       missingSelectedUserIds,
       candidates
     };
+  }
+
+  #resolveRequestedMappings(
+    status: CommitCoauthorStatus,
+    mappings: ReadonlyArray<{
+      readonly slackUserId?: string | undefined;
+      readonly slackUser?: string | undefined;
+      readonly githubAuthor: string;
+    }> | undefined
+  ): Array<{
+    readonly slackUserId: string;
+    readonly githubAuthor: string;
+  }> {
+    return (mappings ?? []).map((entry) => {
+      const directUserId = entry.slackUserId?.trim();
+      if (directUserId) {
+        if (!status.candidates.some((candidate) => candidate.userId === directUserId)) {
+          throw new Error(`Unknown co-author candidate: ${entry.slackUserId}`);
+        }
+
+        return {
+          slackUserId: directUserId,
+          githubAuthor: entry.githubAuthor
+        };
+      }
+
+      const slackUserId = this.#resolveUserReference(status, entry.slackUser);
+      if (!slackUserId) {
+        throw new Error(`Unable to resolve co-author mapping target: ${entry.slackUser ?? entry.slackUserId ?? "unknown"}`);
+      }
+
+      return {
+        slackUserId,
+        githubAuthor: entry.githubAuthor
+      };
+    });
   }
 
   #resolveRequestedUserIds(

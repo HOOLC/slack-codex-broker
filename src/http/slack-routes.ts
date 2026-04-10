@@ -615,7 +615,7 @@ function normalizeStringArray(value: unknown): string[] | undefined {
   const normalized = value
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
     .filter(Boolean);
-  return normalized.length > 0 ? normalized : [];
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeMappings(value: unknown):
