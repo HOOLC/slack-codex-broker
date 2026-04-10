@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config.js";
 import { SlackConversationService } from "../src/services/slack/slack-conversation-service.js";
-import type { SlackSessionRecord } from "../src/types.js";
+import type { PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
 
 const TEST_SESSION: SlackSessionRecord = {
   key: "C123:111.222",
@@ -142,6 +142,106 @@ describe("SlackConversationService", () => {
       })
     );
     expect(setLastSlackReplyAt).toHaveBeenCalledTimes(1);
+
+    await service.stop();
+  });
+
+  it("clears the active turn when a silent stop state is recorded", async () => {
+    const codex = new EventEmitter();
+    const recordTurnSignal = vi.fn(async () => TEST_SESSION);
+    const setActiveTurnId = vi.fn(async () => ({
+      ...TEST_SESSION,
+      activeTurnId: undefined
+    }));
+    const listInboundMessages = vi.fn((): PersistedInboundMessage[] => []);
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        getSession: vi.fn(() => TEST_SESSION),
+        recordTurnSignal,
+        setActiveTurnId,
+        listInboundMessages,
+        updateInboundMessagesForBatch: vi.fn(async () => []),
+        setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
+      } as never,
+      codex: codex as never,
+      slackApi: {
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    await service.postSlackState({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      kind: "wait",
+      reason: "waiting on async job"
+    });
+
+    expect(recordTurnSignal).toHaveBeenCalledWith("C123", "111.222", expect.objectContaining({
+      turnId: "turn-1",
+      kind: "wait",
+      reason: "waiting on async job"
+    }));
+    expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
+    expect(listInboundMessages).toHaveBeenCalledWith(expect.objectContaining({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      status: "inflight",
+      batchId: "turn-1"
+    }));
+
+    await service.stop();
+  });
+
+  it("clears the active turn when posting a visible final Slack message", async () => {
+    const codex = new EventEmitter();
+    const recordTurnSignal = vi.fn(async () => TEST_SESSION);
+    const setActiveTurnId = vi.fn(async () => ({
+      ...TEST_SESSION,
+      activeTurnId: undefined
+    }));
+    const postThreadMessage = vi.fn(async () => "333.444");
+    const setLastSlackReplyAt = vi.fn(async () => TEST_SESSION);
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        recordTurnSignal,
+        setActiveTurnId,
+        setLastSlackReplyAt,
+        listInboundMessages: vi.fn((): PersistedInboundMessage[] => []),
+        updateInboundMessagesForBatch: vi.fn(async () => []),
+        setLastDeliveredMessageTs: vi.fn(async () => TEST_SESSION)
+      } as never,
+      codex: codex as never,
+      slackApi: {
+        postThreadMessage,
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {
+        rememberPostedMessageTs: vi.fn()
+      } as never
+    });
+
+    await service.postSlackMessage({
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      text: "done",
+      kind: "final"
+    });
+
+    expect(postThreadMessage).toHaveBeenCalledTimes(1);
+    expect(recordTurnSignal).toHaveBeenCalledWith("C123", "111.222", expect.objectContaining({
+      turnId: "turn-1",
+      kind: "final"
+    }));
+    expect(setActiveTurnId).toHaveBeenCalledWith("C123", "111.222", undefined);
 
     await service.stop();
   });

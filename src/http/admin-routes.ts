@@ -777,7 +777,10 @@ function renderAdminPage(options: {
       document.getElementById("summary-account-detail").textContent = a.ok ? (a.account?.email || "NO EMAIL") : (a.error || "ERR");
       
       document.getElementById("summary-sessions").textContent = (st.activeCount || 0) + "/" + (st.sessionCount || 0);
-      document.getElementById("summary-sessions-detail").textContent = "INBOUND: " + (st.openInboundCount || 0);
+      document.getElementById("summary-sessions-detail").textContent =
+        "OPEN: " + (st.openInboundCount || 0) +
+        " (H:" + (st.openHumanInboundCount || 0) +
+        " S:" + (st.openSystemInboundCount || 0) + ")";
       
       document.getElementById("summary-jobs").textContent = st.runningBackgroundJobCount || 0;
       document.getElementById("summary-jobs-detail").textContent = "FAILED: " + (st.failedBackgroundJobCount || 0);
@@ -1028,7 +1031,10 @@ function renderAdminPage(options: {
           '<summary class="session-summary">' +
             '<div class="session-key">' + esc(s.key) + '<div style="font-size:10px; font-weight:normal; color:var(--muted)">' + esc(s.channelId) + '</div></div>' +
             '<div>' + renderBadge(isActive ? "ACTIVE" : "IDLE", isActive ? "good" : "warn") + '<div style="font-size:10px; color:var(--muted)">UP: ' + fmtTime(s.updatedAt) + '</div></div>' +
-            '<div>MSG: ' + (s.openInboundCount || 0) + ' / JOB: ' + (s.runningBackgroundJobCount || 0) + '</div>' +
+            '<div>OPEN: ' + (s.openInboundCount || 0) +
+              ' (H:' + (s.openHumanInboundCount || 0) +
+              ' S:' + (s.openSystemInboundCount || 0) +
+              ') / JOB: ' + (s.runningBackgroundJobCount || 0) + '</div>' +
             '<div style="font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="' + esc(lead) + '">' + esc(lead) + '</div>' +
             '<div><span style="color:var(--accent); font-size:10px;">EXPAND</span></div>' +
           '</summary>' +

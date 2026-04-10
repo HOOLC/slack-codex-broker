@@ -232,8 +232,17 @@ export class MockCodexAppServer {
         const expectedTurnId = String(params.expectedTurnId ?? "");
         const thread = this.#requireThread(threadId);
 
-        if (!thread.activeTurnId || thread.activeTurnId !== expectedTurnId) {
+        if (!thread.activeTurnId) {
           this.#error(socket, message.id, "no active turn to steer");
+          return;
+        }
+
+        if (thread.activeTurnId !== expectedTurnId) {
+          this.#error(
+            socket,
+            message.id,
+            `expected active turn id \`${expectedTurnId}\` but found \`${thread.activeTurnId}\``
+          );
           return;
         }
 

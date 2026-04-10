@@ -107,6 +107,10 @@ describe("admin routes", () => {
     expect(html).toContain("add-profile-dialog");
     expect(html).toContain("session-search");
     expect(html).toContain("System Logs");
+    expect(html).toContain("OPEN: ");
+    expect(html).toContain("(H:");
+    expect(html).toContain(" S:");
+    expect(html).not.toContain("MSG: ");
     expect(html).not.toContain("profile-name-input");
     expect(html).not.toContain("Account Quota");
     expect(html).not.toContain("Control");

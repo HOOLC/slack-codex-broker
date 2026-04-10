@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CodexInputItem } from "../src/services/codex/app-server-client.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
-import type { PersistedInboundMessage } from "../src/types.js";
+import type { PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
 import { MockCodexAppServer } from "./helpers/mock-codex-app-server.js";
 import { MockSlackServer } from "./manual/mock-slack-server.js";
 
@@ -386,6 +386,133 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(recoveredText).toContain("漏掉的第一条");
     expect(recoveredText).toContain("漏掉的第二条");
     expect(recoveredText).toContain("\"batch_message_count\": 2");
+  }, 90_000);
+
+  it("starts a fresh turn instead of resyncing back to an older active turn after a steer mismatch reset", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    let turnStartCount = 0;
+    let releaseFirstTurn: (() => void) | undefined;
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve;
+    });
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnStart: async (context) => {
+        turnStartCount += 1;
+        if (turnStartCount === 1) {
+          await firstTurnGate;
+          return;
+        }
+        if (turnStartCount >= 2) {
+          context.complete("RECOVERED_AFTER_MISMATCH");
+        }
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+    cleanups.push(async () => {
+      releaseFirstTurn?.();
+    });
+
+    const port = await getFreePort();
+    const sessionKey = "C123:223.220";
+    const broker = await startBrokerProcess({
+      port,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
+        SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS: "100"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-steer-mismatch-session", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "223.220",
+      ts: "223.221",
+      text: "<@UBOT> keep this turn running"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "initial active turn");
+    await waitForSessionActive(tempRoot, sessionKey);
+    await broker.stop();
+    cleanups.pop();
+
+    const writerStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const writerSessions = new SessionManager({
+      stateStore: writerStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await writerSessions.load();
+    const existingSession = writerSessions.getSession("C123", "223.220");
+    expect(existingSession?.activeTurnId).toBeTruthy();
+
+    const fakeTurnId = "turn-fake-new";
+    await writerSessions.setActiveTurnId("C123", "223.220", fakeTurnId);
+    const inflightMessages = writerSessions.listInboundMessages({
+      channelId: "C123",
+      rootThreadTs: "223.220",
+      status: "inflight"
+    });
+    expect(inflightMessages.length).toBeGreaterThan(0);
+    await writerSessions.updateInboundMessagesForBatch(
+      "C123",
+      "223.220",
+      inflightMessages.map((message) => message.messageTs),
+      {
+        status: "inflight",
+        batchId: fakeTurnId
+      }
+    );
+
+    mockSlack.recordThreadMessage({
+      channel: "C123",
+      threadTs: "223.220",
+      ts: "223.222",
+      text: "MISSED_AFTER_MISMATCH",
+      user: "U234"
+    });
+
+    const restarted = await startBrokerProcess({
+      port,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
+        SLACK_MISSED_THREAD_RECOVERY_INTERVAL_MS: "100"
+      }
+    });
+    cleanups.push(() => restarted.stop());
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 2, "replacement turn after steer mismatch");
+    await waitForSessionIdle(tempRoot, sessionKey);
+
+    const recoveredTurnText = collectTextInput(mockCodex.turnsStarted[1]!.input);
+    expect(recoveredTurnText).toContain("recovered_message_batch_json");
+    expect(recoveredTurnText).toContain("MISSED_AFTER_MISMATCH");
+
+    const finalSession = await readSessionRecord(tempRoot, sessionKey);
+    expect(finalSession.activeTurnId).toBeUndefined();
+    expect(finalSession.lastDeliveredMessageTs).toBe("223.222");
+
+    const finalInbound = await readInboundMessages(tempRoot, sessionKey);
+    expect(finalInbound.filter((message) => message.status !== "done")).toHaveLength(0);
   }, 90_000);
 
   it("periodically recovers missed thread replies without requiring a socket reconnect", async () => {
@@ -1314,20 +1441,11 @@ async function waitForSessionIdle(
   sessionKey: string,
   timeoutMs = DEFAULT_E2E_TIMEOUT_MS
 ): Promise<void> {
-  const sessionFile = path.join(
-    tempRoot,
-    "state",
-    "sessions",
-    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
-  );
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     try {
-      const raw = await fs.readFile(sessionFile, "utf8");
-      const session = JSON.parse(raw) as {
-        readonly activeTurnId?: string | undefined;
-      };
+      const session = await readSessionRecord(tempRoot, sessionKey);
       if (!session.activeTurnId) {
         return;
       }
@@ -1339,6 +1457,51 @@ async function waitForSessionIdle(
   }
 
   throw new Error(`Timed out waiting for session idle: ${sessionKey}`);
+}
+
+async function waitForSessionActive(
+  tempRoot: string,
+  sessionKey: string,
+  timeoutMs = DEFAULT_E2E_TIMEOUT_MS
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const session = await readSessionRecord(tempRoot, sessionKey);
+      if (session.activeTurnId) {
+        return;
+      }
+    } catch {
+      // session file may not exist yet
+    }
+
+    await delay(100);
+  }
+
+  throw new Error(`Timed out waiting for session active: ${sessionKey}`);
+}
+
+async function readSessionRecord(tempRoot: string, sessionKey: string): Promise<SlackSessionRecord> {
+  const sessionFile = path.join(
+    tempRoot,
+    "state",
+    "sessions",
+    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
+  );
+  const raw = await fs.readFile(sessionFile, "utf8");
+  return JSON.parse(raw) as SlackSessionRecord;
+}
+
+async function readInboundMessages(tempRoot: string, sessionKey: string): Promise<PersistedInboundMessage[]> {
+  const inboundFile = path.join(
+    tempRoot,
+    "state",
+    "inbound-messages",
+    `${Buffer.from(sessionKey, "utf8").toString("base64url")}.json`
+  );
+  const raw = await fs.readFile(inboundFile, "utf8");
+  return JSON.parse(raw) as PersistedInboundMessage[];
 }
 
 async function delay(timeoutMs: number): Promise<void> {

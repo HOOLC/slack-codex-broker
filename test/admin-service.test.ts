@@ -250,7 +250,119 @@ describe("AdminService", () => {
       state: {
         sessionCount: 1,
         activeCount: 1,
-        openInboundCount: 1
+        openInboundCount: 1,
+        openHumanInboundCount: 1,
+        openSystemInboundCount: 0
+      }
+    });
+  });
+
+  it("splits open inbound counts into human and system messages", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-open-inbound-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+
+    await fs.mkdir(config.codexHome, { recursive: true });
+    await fs.mkdir(config.logDir, { recursive: true });
+    await fs.writeFile(path.join(config.logDir, "broker.jsonl"), "", "utf8");
+
+    const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: config.sessionsRoot
+    });
+    await sessions.load();
+    await sessions.ensureSession("C123", "111.222");
+    await sessions.upsertInboundMessage({
+      key: "C123:111.222:111.223",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.223",
+      source: "thread_reply",
+      userId: "U123",
+      text: "follow up",
+      status: "pending",
+      createdAt: "2026-03-19T00:00:00.000Z",
+      updatedAt: "2026-03-19T00:00:00.000Z"
+    });
+    await sessions.upsertInboundMessage({
+      key: "C123:111.222:111.224",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.224",
+      source: "background_job_event",
+      userId: "U0ALY77RMJL",
+      text: "job update",
+      status: "pending",
+      createdAt: "2026-03-19T00:00:01.000Z",
+      updatedAt: "2026-03-19T00:00:01.000Z"
+    });
+
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          activeProfile: null,
+          activeAuthPath: path.join(config.codexHome, "auth.json"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: {
+        load: async () => {},
+        listMappings: () => []
+      } as never,
+      runtime: {
+        restartRuntime: async () => {},
+        readAccountSummary: async () => ({
+          account: {
+            email: "quota@example.com",
+            type: "chatgpt",
+            planType: "team"
+          },
+          requiresOpenaiAuth: false
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: {
+            limitId: "codex",
+            limitName: "Codex",
+            primary: {
+              usedPercent: 42,
+              windowDurationMins: 300,
+              resetsAt: 1_735_692_000
+            },
+            secondary: null,
+            credits: null,
+            planType: "team"
+          },
+          rateLimitsByLimitId: {}
+        })
+      } as never
+    });
+
+    const status = await service.getStatus();
+    expect(status).toMatchObject({
+      state: {
+        openInboundCount: 2,
+        openHumanInboundCount: 1,
+        openSystemInboundCount: 1,
+        sessions: [
+          {
+            openInboundCount: 2,
+            openHumanInboundCount: 1,
+            openSystemInboundCount: 1
+          }
+        ]
       }
     });
   });

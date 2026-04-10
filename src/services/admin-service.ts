@@ -93,6 +93,8 @@ export class AdminService {
     const backgroundJobCount = backgroundJobs.length;
     const runningBackgroundJobCount = backgroundJobs.filter((job) => job.status === "running").length;
     const failedBackgroundJobCount = backgroundJobs.filter((job) => job.status === "failed").length;
+    const openHumanInboundCount = openInbound.filter(isHumanInboundMessage).length;
+    const openSystemInboundCount = openInbound.length - openHumanInboundCount;
 
     return {
       service: {
@@ -127,6 +129,8 @@ export class AdminService {
         activeCount: activeSessions.length,
         activeSessions,
         openInboundCount: openInbound.length,
+        openHumanInboundCount,
+        openSystemInboundCount,
         openInbound: openInbound.slice(0, 25).map((message) => this.#summarizeInbound(message)),
         backgroundJobCount,
         runningBackgroundJobCount,
@@ -360,6 +364,8 @@ export class AdminService {
   ): Record<string, unknown> {
     const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
     const failedBackgroundJobCount = related.jobs.filter((job) => job.status === "failed").length;
+    const openHumanInboundCount = related.inbound.filter(isHumanInboundMessage).length;
+    const openSystemInboundCount = related.inbound.length - openHumanInboundCount;
     return {
       key: session.key,
       channelId: session.channelId,
@@ -372,6 +378,8 @@ export class AdminService {
       lastObservedMessageTs: session.lastObservedMessageTs ?? null,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs ?? null,
       openInboundCount: related.inbound.length,
+      openHumanInboundCount,
+      openSystemInboundCount,
       openInbound: related.inbound.slice(0, 5).map((message) => this.#summarizeInbound(message)),
       backgroundJobCount: related.jobs.length,
       runningBackgroundJobCount,
@@ -401,4 +409,12 @@ function groupBySession<T extends { readonly sessionKey: string }>(items: readon
     groups.set(item.sessionKey, [item]);
   }
   return groups;
+}
+
+function isHumanInboundMessage(message: PersistedInboundMessage): boolean {
+  return (
+    message.source === "app_mention" ||
+    message.source === "direct_message" ||
+    message.source === "thread_reply"
+  );
 }

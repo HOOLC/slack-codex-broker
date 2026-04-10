@@ -393,13 +393,11 @@ export class SlackConversationService {
       throw new Error(`Unknown session for Slack state update: ${options.channelId}:${options.rootThreadTs}`);
     }
 
-    await this.#sessions.recordTurnSignal(options.channelId, options.rootThreadTs, {
-      turnId: this.#resolveTurnIdForSignal(session),
+    await this.#recordStopSignal(session, {
       kind: options.kind,
       reason: options.reason,
       occurredAt: new Date().toISOString()
     });
-    this.#clearAssistantStatus(options.channelId, options.rootThreadTs);
   }
 
   async postSlackFile(options: {
@@ -746,8 +744,7 @@ export class SlackConversationService {
       const occurredAt = new Date().toISOString();
       const session = await this.#sessions.setLastSlackReplyAt(channelId, rootThreadTs, occurredAt);
       if (options?.turnSignal?.kind) {
-        await this.#sessions.recordTurnSignal(channelId, rootThreadTs, {
-          turnId: this.#resolveTurnIdForSignal(session),
+        await this.#recordStopSignal(session, {
           kind: options.turnSignal.kind,
           reason: options.turnSignal.reason,
           occurredAt
@@ -755,6 +752,35 @@ export class SlackConversationService {
       }
     }
     return ts;
+  }
+
+  async #recordStopSignal(
+    session: SlackSessionRecord,
+    signal: {
+      readonly kind: SlackTurnSignalKind;
+      readonly reason?: string | undefined;
+      readonly occurredAt: string;
+    }
+  ): Promise<SlackSessionRecord> {
+    const turnId = this.#resolveTurnIdForSignal(session);
+    let latestSession = await this.#sessions.recordTurnSignal(session.channelId, session.rootThreadTs, {
+      turnId,
+      kind: signal.kind,
+      reason: signal.reason,
+      occurredAt: signal.occurredAt
+    });
+
+    if (turnId) {
+      latestSession = await this.#inboundStore.markTurnBatchDone(latestSession, turnId);
+    }
+
+    if (session.activeTurnId) {
+      latestSession = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+      this.#resetRuntimeProcessing(session.key);
+    }
+
+    this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
+    return latestSession;
   }
 
   async #maybeRemindSilentActiveTurn(session: SlackSessionRecord): Promise<void> {
@@ -963,6 +989,9 @@ export class SlackConversationService {
           latestSession = syncedSession;
           continue;
         }
+        if (!syncedSession.activeTurnId && latestSession.activeTurnId) {
+          return null;
+        }
         throw error;
       }
     }
@@ -997,6 +1026,9 @@ export class SlackConversationService {
         if (syncedSession.activeTurnId && syncedSession.activeTurnId !== latestSession.activeTurnId) {
           latestSession = syncedSession;
           continue;
+        }
+        if (!syncedSession.activeTurnId && latestSession.activeTurnId) {
+          return null;
         }
         throw error;
       }
