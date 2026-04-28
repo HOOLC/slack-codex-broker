@@ -144,6 +144,66 @@ describe("AppServerClient disconnect handling", () => {
     await expect(started.completion).rejects.toThrow(/closed/i);
   });
 
+  it("responds to app-server ChatGPT auth token refresh requests", async () => {
+    let resolveRefreshResponse!: (value: Record<string, unknown>) => void;
+    const refreshResponse = new Promise<Record<string, unknown>>((resolve) => {
+      resolveRefreshResponse = resolve;
+    });
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        socket.send(JSON.stringify({
+          id: "server-refresh-1",
+          method: "account/chatgptAuthTokens/refresh",
+          params: {
+            reason: "unauthorized",
+            previousAccountId: "account-1"
+          }
+        }));
+        return;
+      }
+
+      if (message.id === "server-refresh-1") {
+        resolveRefreshResponse(message as Record<string, unknown>);
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos",
+      chatGptAuthTokensProvider: {
+        refresh: async (context) => {
+          expect(context).toEqual({
+            reason: "unauthorized",
+            previousAccountId: "account-1"
+          });
+          return {
+            accessToken: "new-access",
+            chatgptAccountId: "account-1",
+            chatgptPlanType: "pro"
+          };
+        }
+      }
+    });
+
+    await client.connect();
+
+    await expect(refreshResponse).resolves.toMatchObject({
+      id: "server-refresh-1",
+      result: {
+        accessToken: "new-access",
+        chatgptAccountId: "account-1",
+        chatgptPlanType: "pro"
+      }
+    });
+  });
+
   it("buffers turn events that arrive before startTurn finishes registering the turn", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {

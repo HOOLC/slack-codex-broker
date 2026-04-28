@@ -48,6 +48,21 @@ interface ActiveTurn {
   reject: (error: Error) => void;
 }
 
+export interface ChatGptAuthTokenSet {
+  readonly accessToken: string;
+  readonly chatgptAccountId: string;
+  readonly chatgptPlanType: string | null;
+}
+
+export interface ChatGptAuthTokensRefreshContext {
+  readonly reason: "unauthorized";
+  readonly previousAccountId: string | null;
+}
+
+export interface ChatGptAuthTokensProvider {
+  readonly refresh: (context: ChatGptAuthTokensRefreshContext) => Promise<ChatGptAuthTokenSet>;
+}
+
 interface BufferedTurnEvents {
   text: string;
   terminalState: "completed" | "aborted" | null;
@@ -147,6 +162,7 @@ export class AppServerClient extends EventEmitter {
       readonly openAiApiKey?: string | undefined;
       readonly personalMemoryFilePath?: string | undefined;
       readonly heartbeatIntervalMs?: number | undefined;
+      readonly chatGptAuthTokensProvider?: ChatGptAuthTokensProvider | undefined;
     }
   ) {
     super();
@@ -237,6 +253,15 @@ export class AppServerClient extends EventEmitter {
     await this.request("account/login/start", {
       type: "apiKey",
       apiKey: this.options.openAiApiKey
+    });
+  }
+
+  async loginWithChatGptAuthTokens(tokens: ChatGptAuthTokenSet): Promise<void> {
+    await this.request("account/login/start", {
+      type: "chatgptAuthTokens",
+      accessToken: tokens.accessToken,
+      chatgptAccountId: tokens.chatgptAccountId,
+      chatgptPlanType: tokens.chatgptPlanType
     });
   }
 
@@ -566,6 +591,10 @@ export class AppServerClient extends EventEmitter {
 
     if (message.id) {
       const pending = this.#pendingRequests.get(message.id);
+      if (!pending && message.method) {
+        void this.#handleServerRequest(message.id, message.method, message.params ?? {});
+        return;
+      }
       if (!pending) {
         return;
       }
@@ -589,6 +618,69 @@ export class AppServerClient extends EventEmitter {
 
     this.emit("notification", message.method, message.params);
     this.#handleTurnEvent(message.method, message.params ?? {});
+  }
+
+  async #handleServerRequest(
+    requestId: string,
+    method: string,
+    params: Record<string, any>
+  ): Promise<void> {
+    try {
+      if (method !== "account/chatgptAuthTokens/refresh") {
+        await this.#sendRpcError(requestId, `Unsupported app-server request: ${method}`);
+        return;
+      }
+
+      if (!this.options.chatGptAuthTokensProvider) {
+        await this.#sendRpcError(requestId, "ChatGPT auth token provider is not configured");
+        return;
+      }
+
+      const refreshed = await this.options.chatGptAuthTokensProvider.refresh({
+        reason: params.reason === "unauthorized" ? "unauthorized" : "unauthorized",
+        previousAccountId: typeof params.previousAccountId === "string" ? params.previousAccountId : null
+      });
+      await this.#sendRpcResult(requestId, {
+        accessToken: refreshed.accessToken,
+        chatgptAccountId: refreshed.chatgptAccountId,
+        chatgptPlanType: refreshed.chatgptPlanType
+      });
+    } catch (error) {
+      await this.#sendRpcError(requestId, error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async #sendRpcResult(requestId: string, result: JsonValue): Promise<void> {
+    await this.#sendRawRpc({
+      id: requestId,
+      result
+    });
+  }
+
+  async #sendRpcError(requestId: string, message: string): Promise<void> {
+    await this.#sendRawRpc({
+      id: requestId,
+      error: {
+        code: -32000,
+        message
+      }
+    });
+  }
+
+  async #sendRawRpc(payload: JsonValue): Promise<void> {
+    if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Codex app-server websocket is not connected");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      this.#socket?.send(JSON.stringify(payload), (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   #handleTurnEvent(method: string, params: Record<string, any>): void {
