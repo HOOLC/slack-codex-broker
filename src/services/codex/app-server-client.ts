@@ -136,6 +136,7 @@ export class AppServerClient extends EventEmitter {
   readonly #pendingRequests = new Map<string, PendingRequest>();
   readonly #activeTurns = new Map<string, ActiveTurn>();
   readonly #bufferedTurnEvents = new Map<string, BufferedTurnEvents>();
+  #pendingAnonymousTokenUsage: CodexTurnTokenUsage | undefined;
   #connected = false;
   #disconnectHandled = false;
   #slackBotIdentity: SlackUserIdentity | null = null;
@@ -372,6 +373,7 @@ export class AppServerClient extends EventEmitter {
         reject
       });
     });
+    this.#applyPendingAnonymousTurnUsage(result.turn.id);
     this.#applyBufferedTurnEvents(result.turn.id);
     // A websocket disconnect can reject the turn before the caller gets to `await completion`.
     // Keep a no-op rejection handler attached so Node does not treat that window as unhandled.
@@ -638,6 +640,35 @@ export class AppServerClient extends EventEmitter {
       return;
     }
 
+    if (method === "codex/event/token_count") {
+      const usage = normalizeCodexTurnUsageFromTokenCountEvent(params);
+      if (!usage) {
+        return;
+      }
+
+      const turnId = readCodexEventTurnId(params);
+      if (turnId) {
+        this.#applyTurnUsage(turnId, usage);
+        return;
+      }
+
+      if (this.#activeTurns.size === 0) {
+        this.#pendingAnonymousTokenUsage = addCodexTurnUsage(this.#pendingAnonymousTokenUsage, usage);
+        return;
+      }
+      if (this.#activeTurns.size > 1) {
+        return;
+      }
+
+      const turn = this.#activeTurns.values().next().value;
+      if (!turn) {
+        this.#pendingAnonymousTokenUsage = addCodexTurnUsage(this.#pendingAnonymousTokenUsage, usage);
+        return;
+      }
+      this.#applyTurnUsage(turn.turnId, usage);
+      return;
+    }
+
     if (method === "turn/completed") {
       const turnId = (params.turn?.id ?? params.turnId) as string | undefined;
       if (!turnId) {
@@ -683,6 +714,7 @@ export class AppServerClient extends EventEmitter {
     this.#connected = false;
     this.#clearHeartbeat();
     this.#socket = undefined;
+    this.#pendingAnonymousTokenUsage = undefined;
 
     for (const [requestId, pending] of this.#pendingRequests) {
       this.#pendingRequests.delete(requestId);
@@ -772,6 +804,32 @@ export class AppServerClient extends EventEmitter {
       buffered.usage = usage;
     }
     this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #applyTurnUsage(turnId: string, usage: CodexTurnTokenUsage): void {
+    const turn = this.#activeTurns.get(turnId);
+    if (turn) {
+      turn.usage = addCodexTurnUsage(turn.usage, usage);
+      return;
+    }
+
+    const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
+      text: "",
+      terminalState: null,
+      generatedImages: []
+    };
+    buffered.usage = addCodexTurnUsage(buffered.usage, usage);
+    this.#bufferedTurnEvents.set(turnId, buffered);
+  }
+
+  #applyPendingAnonymousTurnUsage(turnId: string): void {
+    if (!this.#pendingAnonymousTokenUsage) {
+      return;
+    }
+
+    const usage = this.#pendingAnonymousTokenUsage;
+    this.#pendingAnonymousTokenUsage = undefined;
+    this.#applyTurnUsage(turnId, usage);
   }
 
   #bufferGeneratedImage(turnId: string, image: GeneratedImageArtifact): void {
@@ -880,6 +938,58 @@ function normalizeCodexTurnUsageFromTurnEvent(params: Record<string, any>): Code
   );
 }
 
+function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>): CodexTurnTokenUsage | undefined {
+  const event =
+    isRecord(params.msg) ? params.msg :
+      isRecord(params.payload) ? params.payload :
+        params;
+  const info = isRecord(event.info) ? event.info : isRecord(params.info) ? params.info : undefined;
+
+  return (
+    normalizeCodexTurnTokenUsage(info?.last_token_usage) ??
+    normalizeCodexTurnTokenUsage(info?.lastTokenUsage) ??
+    normalizeCodexTurnTokenUsage(event.last_token_usage) ??
+    normalizeCodexTurnTokenUsage(event.lastTokenUsage) ??
+    normalizeCodexTurnTokenUsage(params.last_token_usage) ??
+    normalizeCodexTurnTokenUsage(params.lastTokenUsage) ??
+    normalizeCodexTurnTokenUsage(event.usage) ??
+    normalizeCodexTurnTokenUsage(params.usage)
+  );
+}
+
+function readCodexEventTurnId(params: Record<string, any>): string | undefined {
+  const event =
+    isRecord(params.msg) ? params.msg :
+      isRecord(params.payload) ? params.payload :
+        params;
+
+  return normalizeOptionalString(params.turnId) ??
+    normalizeOptionalString(params.turn_id) ??
+    normalizeOptionalString(event.turnId) ??
+    normalizeOptionalString(event.turn_id);
+}
+
+function addCodexTurnUsage(
+  current: CodexTurnTokenUsage | undefined,
+  next: CodexTurnTokenUsage
+): CodexTurnTokenUsage {
+  if (!current) {
+    return next;
+  }
+
+  return {
+    source: current.source === "exact" || next.source === "exact" ? "exact" : next.source,
+    inputTokens: current.inputTokens + next.inputTokens,
+    cachedInputTokens: current.cachedInputTokens + next.cachedInputTokens,
+    outputTokens: current.outputTokens + next.outputTokens,
+    reasoningTokens: current.reasoningTokens + next.reasoningTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
+    model: next.model ?? current.model,
+    effort: next.effort ?? current.effort,
+    rawUsage: next.rawUsage ?? current.rawUsage
+  };
+}
+
 function normalizeCodexTurnUsageFromThreadTurn(turn: {
   readonly usage?: unknown;
   readonly token_usage?: unknown;
@@ -925,13 +1035,19 @@ function normalizeCodexTurnTokenUsage(value: unknown): CodexTurnTokenUsage | und
   const reasoningTokenValue =
     readTokenNumber(value, [
       "reasoning_tokens",
-      "reasoningTokens"
+      "reasoningTokens",
+      "reasoning_output_tokens",
+      "reasoningOutputTokens"
     ]) ??
     readNestedTokenNumber(value, [
       ["output_token_details", "reasoning_tokens"],
+      ["output_token_details", "reasoning_output_tokens"],
       ["outputTokenDetails", "reasoningTokens"],
+      ["outputTokenDetails", "reasoningOutputTokens"],
       ["output_tokens_details", "reasoning_tokens"],
-      ["outputTokensDetails", "reasoningTokens"]
+      ["output_tokens_details", "reasoning_output_tokens"],
+      ["outputTokensDetails", "reasoningTokens"],
+      ["outputTokensDetails", "reasoningOutputTokens"]
     ]);
   const totalTokenValue = readTokenNumber(value, [
     "total_tokens",
