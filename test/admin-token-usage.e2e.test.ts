@@ -226,11 +226,26 @@ describe("admin token usage e2e", () => {
         totals: {
           totalTokens: 1_725
         }
+      },
+      state: {
+        sessions: [
+          {
+            key: "C123:111.222",
+            usage: {
+              totalTokens: 1_725,
+              turnCount: 1,
+              exactTurns: 1,
+              missingTurns: 0
+            }
+          }
+        ]
       }
     });
 
     const page = await fetch(`${baseUrl}/admin`);
-    expect(await page.text()).toContain("消耗监控");
+    const html = await page.text();
+    expect(html).toContain("消耗监控");
+    expect(html).toContain("Token 消耗");
   });
 });
 

@@ -48,6 +48,7 @@ interface SessionSnapshot {
   readonly backgroundJobs: readonly PersistedBackgroundJob[];
   readonly openInboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>;
   readonly jobsBySession: ReadonlyMap<string, readonly PersistedBackgroundJob[]>;
+  readonly usageBySession: ReadonlyMap<string, SessionUsageSummary>;
 }
 
 interface RuntimeStatus {
@@ -94,6 +95,26 @@ interface CodexUsageTotals {
   readonly totalTokens: number;
 }
 
+interface SessionUsageSummary {
+  readonly sessionKey: string;
+  readonly channelId: string;
+  readonly rootThreadTs: string;
+  readonly turnCount: number;
+  readonly exactTurns: number;
+  readonly estimatedTurns: number;
+  readonly missingTurns: number;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly totalTokens: number;
+  readonly updatedAt: string;
+  readonly lastTurnAt: string | null;
+  readonly model: string | null;
+  readonly effort: string | null;
+}
+type MutableSessionUsageSummary = { -readonly [Key in keyof SessionUsageSummary]: SessionUsageSummary[Key] };
+
 export class AdminService {
   constructor(
     private readonly options: {
@@ -124,7 +145,8 @@ export class AdminService {
     const sessionSummaries = snapshot.allSessions.slice(0, 50).map((session) =>
       this.#summarizeSession(session, {
         inbound: snapshot.openInboundBySession.get(session.key) ?? [],
-        jobs: snapshot.jobsBySession.get(session.key) ?? []
+        jobs: snapshot.jobsBySession.get(session.key) ?? [],
+        usage: snapshot.usageBySession.get(session.key)
       })
     );
     const stateCounts = this.#summarizeStateCounts(snapshot);
@@ -188,7 +210,8 @@ export class AdminService {
       sessions: snapshot.allSessions.slice(0, 100).map((session) =>
         this.#summarizeSession(session, {
           inbound: snapshot.openInboundBySession.get(session.key) ?? [],
-          jobs: snapshot.jobsBySession.get(session.key) ?? []
+          jobs: snapshot.jobsBySession.get(session.key) ?? [],
+          usage: snapshot.usageBySession.get(session.key)
         })
       )
     };
@@ -267,7 +290,8 @@ export class AdminService {
       ok: true,
       session: this.#summarizeSession(session, {
         inbound: openInbound,
-        jobs
+        jobs,
+        usage: summarizeUsageBySessionMap(this.#listCodexTurnUsage(1000)).get(session.key)
       }),
       events: events.sort(compareTimelineEvents)
     };
@@ -503,6 +527,7 @@ export class AdminService {
     const backgroundJobs = this.options.sessions
       .listBackgroundJobs()
       .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+    const usageBySession = summarizeUsageBySessionMap(this.#listCodexTurnUsage(1000));
 
     return {
       allSessions,
@@ -510,7 +535,8 @@ export class AdminService {
       openInbound,
       backgroundJobs,
       openInboundBySession: groupBySession(openInbound),
-      jobsBySession: groupBySession(backgroundJobs)
+      jobsBySession: groupBySession(backgroundJobs),
+      usageBySession
     };
   }
 
@@ -545,7 +571,7 @@ export class AdminService {
         .sort(compareUsageRecordsDescending)
         .slice(0, 25)
         .map(summarizeUsageRecord),
-      bySession: summarizeUsageBySession(records)
+      bySession: summarizeUsageBySession(records, 25)
     };
   }
 
@@ -854,6 +880,7 @@ export class AdminService {
     related: {
       readonly inbound: readonly PersistedInboundMessage[];
       readonly jobs: readonly PersistedBackgroundJob[];
+      readonly usage?: SessionUsageSummary | undefined;
     }
   ): Record<string, unknown> {
     const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
@@ -882,7 +909,8 @@ export class AdminService {
       backgroundJobCount: related.jobs.length,
       runningBackgroundJobCount,
       failedBackgroundJobCount,
-      backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job))
+      backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job)),
+      usage: related.usage ?? emptySessionUsageSummary(session)
     };
   }
 }
@@ -955,25 +983,15 @@ function summarizeUsageRecord(record: PersistedCodexTurnUsage): Record<string, u
   };
 }
 
-function summarizeUsageBySession(records: readonly PersistedCodexTurnUsage[]): readonly Record<string, unknown>[] {
-  const groups = new Map<string, {
-    sessionKey: string;
-    channelId: string;
-    rootThreadTs: string;
-    turnCount: number;
-    exactTurns: number;
-    estimatedTurns: number;
-    missingTurns: number;
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    reasoningTokens: number;
-    totalTokens: number;
-    updatedAt: string;
-    lastTurnAt: string | null;
-    model: string | null;
-    effort: string | null;
-  }>();
+function summarizeUsageBySessionMap(records: readonly PersistedCodexTurnUsage[]): ReadonlyMap<string, SessionUsageSummary> {
+  return new Map(summarizeUsageBySession(records).map((entry) => [entry.sessionKey, entry]));
+}
+
+function summarizeUsageBySession(
+  records: readonly PersistedCodexTurnUsage[],
+  limit?: number
+): readonly SessionUsageSummary[] {
+  const groups = new Map<string, MutableSessionUsageSummary>();
 
   for (const record of records) {
     const existing = groups.get(record.sessionKey) ?? {
@@ -1012,9 +1030,30 @@ function summarizeUsageBySession(records: readonly PersistedCodexTurnUsage[]): r
     groups.set(record.sessionKey, existing);
   }
 
-  return [...groups.values()]
-    .sort((left, right) => right.totalTokens - left.totalTokens || right.turnCount - left.turnCount)
-    .slice(0, 25);
+  const sorted = [...groups.values()]
+    .sort((left, right) => right.totalTokens - left.totalTokens || right.turnCount - left.turnCount);
+  return limit === undefined ? sorted : sorted.slice(0, limit);
+}
+
+function emptySessionUsageSummary(session: SlackSessionRecord): SessionUsageSummary {
+  return {
+    sessionKey: session.key,
+    channelId: session.channelId,
+    rootThreadTs: session.rootThreadTs,
+    turnCount: 0,
+    exactTurns: 0,
+    estimatedTurns: 0,
+    missingTurns: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+    updatedAt: session.updatedAt,
+    lastTurnAt: null,
+    model: null,
+    effort: null
+  };
 }
 
 function compareUsageRecordsDescending(left: PersistedCodexTurnUsage, right: PersistedCodexTurnUsage): number {
