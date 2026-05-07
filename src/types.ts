@@ -163,6 +163,43 @@ export interface PersistedAdminAuditEvent {
   readonly createdAt: string;
 }
 
+export type CodexTurnUsageSource = "exact" | "estimated" | "missing";
+export type PersistedCodexTurnStatus = "completed" | "interrupted" | "failed";
+
+export interface CodexTurnTokenUsage {
+  readonly source: CodexTurnUsageSource;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly totalTokens: number;
+  readonly model?: string | undefined;
+  readonly effort?: string | undefined;
+  readonly rawUsage?: JsonLike | undefined;
+}
+
+export interface PersistedCodexTurnUsage {
+  readonly turnId: string;
+  readonly sessionKey: string;
+  readonly channelId: string;
+  readonly rootThreadTs: string;
+  readonly codexThreadId?: string | undefined;
+  readonly status: PersistedCodexTurnStatus;
+  readonly source: CodexTurnUsageSource;
+  readonly model?: string | undefined;
+  readonly effort?: string | undefined;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly totalTokens: number;
+  readonly rawUsage?: JsonLike | undefined;
+  readonly startedAt?: string | undefined;
+  readonly completedAt?: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SlackInputMessage {
   readonly channelId: string;
   readonly channelType?: string | undefined;
@@ -262,6 +299,7 @@ export interface CodexTurnResult {
   readonly finalMessage: string;
   readonly aborted: boolean;
   readonly generatedImages?: readonly GeneratedImageArtifact[] | undefined;
+  readonly usage?: CodexTurnTokenUsage | undefined;
 }
 
 export interface GeneratedImageArtifact {

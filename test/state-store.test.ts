@@ -129,6 +129,61 @@ describe("StateStore", () => {
     store.close();
   });
 
+  it("persists Codex turn token usage and cascades it with the owning session", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-usage-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z"
+    });
+
+    await store.upsertCodexTurnUsage({
+      turnId: "turn-1",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      codexThreadId: "thread-1",
+      status: "completed",
+      source: "exact",
+      model: "gpt-5.5",
+      effort: "xhigh",
+      inputTokens: 1200,
+      cachedInputTokens: 300,
+      outputTokens: 450,
+      reasoningTokens: 75,
+      totalTokens: 1725,
+      rawUsage: {
+        total_tokens: 1725
+      },
+      startedAt: "2026-03-15T00:00:01.000Z",
+      completedAt: "2026-03-15T00:00:09.000Z",
+      createdAt: "2026-03-15T00:00:01.000Z",
+      updatedAt: "2026-03-15T00:00:09.000Z"
+    });
+
+    expect(store.listCodexTurnUsage()).toEqual([
+      expect.objectContaining({
+        turnId: "turn-1",
+        sessionKey: "C123:111.222",
+        source: "exact",
+        totalTokens: 1725,
+        rawUsage: {
+          total_tokens: 1725
+        }
+      })
+    ]);
+
+    await store.deleteSession("C123:111.222");
+    expect(store.listCodexTurnUsage()).toHaveLength(0);
+    store.close();
+  });
+
   it("records explicit schema migrations and does not treat ad hoc DDL as the migration state", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-migrations-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -148,8 +203,12 @@ describe("StateStore", () => {
           name: "initial_sqlite_state"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 2,
           name: "admin_operations"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "codex_turn_usage"
         }
       ]);
     } finally {

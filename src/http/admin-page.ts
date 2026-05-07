@@ -100,7 +100,7 @@ export function renderAdminPage(options: {
 
     .command-grid {
       display: grid;
-      grid-template-columns: minmax(360px, 1fr) minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+      grid-template-columns: repeat(4, minmax(260px, 1fr));
       gap: 12px;
       margin: 16px 0;
     }
@@ -228,6 +228,22 @@ export function renderAdminPage(options: {
       color: var(--muted);
       font-size: 11px;
     }
+    .usage-list {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .usage-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 24px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      padding-top: 7px;
+    }
     .badge {
       display: inline-flex;
       align-items: center;
@@ -247,7 +263,7 @@ export function renderAdminPage(options: {
 
     .workspace {
       display: grid;
-      grid-template-columns: minmax(620px, 1fr) 420px;
+      grid-template-columns: minmax(820px, 1fr) 360px;
       gap: 16px;
       align-items: start;
     }
@@ -279,7 +295,7 @@ export function renderAdminPage(options: {
     .session-table-header,
     .session-summary {
       display: grid;
-      grid-template-columns: minmax(180px, 1.2fr) 120px minmax(150px, 0.8fr) minmax(220px, 1fr) 76px;
+      grid-template-columns: minmax(220px, 1.35fr) 108px minmax(140px, 0.72fr) minmax(145px, 0.72fr) minmax(220px, 1fr) 72px;
       gap: 12px;
       align-items: center;
     }
@@ -315,6 +331,20 @@ export function renderAdminPage(options: {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .session-token-value {
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .session-token-detail {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .session-body {
       padding: 14px 12px 16px;
       border-top: 1px solid var(--line);
@@ -322,7 +352,7 @@ export function renderAdminPage(options: {
     }
     .session-inspector {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
       margin-top: 12px;
     }
@@ -525,6 +555,38 @@ export function renderAdminPage(options: {
 
       <section class="panel">
         <div class="panel-head">
+          <div class="panel-title">消耗监控</div>
+          <span id="usage-badge" class="badge info">同步中</span>
+        </div>
+        <div class="panel-body">
+          <div class="metric-grid">
+            <div class="metric">
+              <div class="metric-label">总 token</div>
+              <div class="metric-value" id="usage-total">--</div>
+              <div class="metric-detail" id="usage-total-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">24 小时</div>
+              <div class="metric-value good" id="usage-day">--</div>
+              <div class="metric-detail" id="usage-day-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">1 小时</div>
+              <div class="metric-value" id="usage-hour">--</div>
+              <div class="metric-detail" id="usage-hour-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">缺失用量</div>
+              <div class="metric-value warn" id="usage-missing">--</div>
+              <div class="metric-detail" id="usage-missing-detail">...</div>
+            </div>
+          </div>
+          <div id="usage-list" class="usage-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
           <div class="panel-title">发布风险门禁</div>
           <span id="risk-badge" class="badge info">检查中</span>
         </div>
@@ -560,12 +622,14 @@ export function renderAdminPage(options: {
               <option value="inbound">有待处理消息</option>
               <option value="jobs">有运行任务</option>
               <option value="issues">有问题</option>
+              <option value="usage">有消耗记录</option>
             </select>
           </div>
           <div class="session-table-header">
             <div>会话 / 频道</div>
             <div>状态 / Slack</div>
             <div>消息 / 任务</div>
+            <div>Token 消耗</div>
             <div>当前线索</div>
             <div>操作</div>
           </div>
@@ -676,7 +740,7 @@ export function renderAdminPage(options: {
     }
     function normalizeUiState(value) {
       const next = value && typeof value === "object" ? value : {};
-      const sessionFilterValue = ["all", "active", "inbound", "jobs", "issues"].includes(String(next.sessionFilter || "")) ? String(next.sessionFilter) : "all";
+      const sessionFilterValue = ["all", "active", "inbound", "jobs", "issues", "usage"].includes(String(next.sessionFilter || "")) ? String(next.sessionFilter) : "all";
       const sessionSearchValue = typeof next.sessionSearch === "string" ? next.sessionSearch : "";
       const expandedSessionKeys = Array.isArray(next.expandedSessionKeys) ? [...new Set(next.expandedSessionKeys.map((item) => String(item)).filter(Boolean))] : [];
       return { sessionSearch: sessionSearchValue, sessionFilter: sessionFilterValue, expandedSessionKeys };
@@ -759,6 +823,12 @@ export function renderAdminPage(options: {
       const rel = formatRelativeDuration(delta);
       return delta > 0 ? rel + "后" : rel + "前";
     }
+    function fmtTokens(value) {
+      const n = Math.max(0, Number(value || 0));
+      if (n >= 1000000) return (n / 1000000).toFixed(2).replace(/\\.00$/, "") + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1).replace(/\\.0$/, "") + "K";
+      return String(Math.round(n));
+    }
     function clampPercent(value) {
       return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
     }
@@ -796,6 +866,9 @@ export function renderAdminPage(options: {
         session: "会话",
         admin: "管理",
         audit: "审计",
+        exact: "精确",
+        estimated: "估算",
+        missing: "缺失",
         unknown: "未知",
         combined: "合并模式"
       };
@@ -847,6 +920,41 @@ export function renderAdminPage(options: {
       document.getElementById("session-open-count").textContent = st.openInboundCount || 0;
       document.getElementById("session-human-count").textContent = st.openHumanInboundCount || 0;
       document.getElementById("session-system-count").textContent = st.openSystemInboundCount || 0;
+    }
+
+    function renderUsage(data) {
+      const usage = data.usage || {};
+      const totals = usage.totals || {};
+      const windows = usage.windows || {};
+      const lastDay = windows.lastDay || {};
+      const lastHour = windows.lastHour || {};
+      const recentTurns = usage.recentTurns || [];
+      const bySession = usage.bySession || [];
+      const totalTurns = Number(totals.totalTurns || 0);
+      const exactTurns = Number(totals.exactTurns || 0);
+      const missingTurns = Number(totals.missingTurns || 0);
+      const badge = document.getElementById("usage-badge");
+      badge.textContent = totalTurns ? ("精确 " + exactTurns + "/" + totalTurns) : "暂无数据";
+      badge.className = "badge " + (!totalTurns || missingTurns ? "warn" : "good");
+      document.getElementById("usage-total").textContent = fmtTokens(totals.totalTokens);
+      document.getElementById("usage-total-detail").textContent = "输入 " + fmtTokens(totals.inputTokens) + " · 输出 " + fmtTokens(totals.outputTokens);
+      document.getElementById("usage-day").textContent = fmtTokens(lastDay.totalTokens);
+      document.getElementById("usage-day-detail").textContent = "回合 " + (lastDay.totalTurns || 0) + " · 推理 " + fmtTokens(lastDay.reasoningTokens);
+      document.getElementById("usage-hour").textContent = fmtTokens(lastHour.totalTokens);
+      document.getElementById("usage-hour-detail").textContent = "回合 " + (lastHour.totalTurns || 0) + " · 缓存 " + fmtTokens(lastHour.cachedInputTokens);
+      document.getElementById("usage-missing").textContent = missingTurns;
+      document.getElementById("usage-missing-detail").textContent = "估算 " + (totals.estimatedTurns || 0) + " · 精确 " + exactTurns;
+
+      const list = document.getElementById("usage-list");
+      if (!totalTurns) {
+        list.innerHTML = '<div class="summary-detail">还没有完成的 Codex 回合用量记录</div>';
+        return;
+      }
+      const leader = bySession[0];
+      const latest = recentTurns[0];
+      list.innerHTML =
+        '<div class="usage-row"><span>' + esc(leader ? ("最高会话：" + leader.sessionKey) : "最高会话：--") + '</span><strong>' + esc(fmtTokens(leader?.totalTokens || 0)) + '</strong></div>' +
+        '<div class="usage-row"><span>' + esc(latest ? ("最近回合：" + latest.sessionKey + " · " + statusLabel(latest.source)) : "最近回合：--") + '</span><strong>' + esc(fmtTokens(latest?.totalTokens || 0)) + '</strong></div>';
     }
 
     function renderRiskPanel(data) {
@@ -1053,6 +1161,7 @@ export function renderAdminPage(options: {
         if (mode === "inbound" && !s.openInboundCount) return false;
         if (mode === "jobs" && !s.runningBackgroundJobCount) return false;
         if (mode === "issues" && !s.failedBackgroundJobCount) return false;
+        if (mode === "usage" && !s.usage?.turnCount) return false;
         if (!query) return true;
         return [s.key, s.channelId, s.workspacePath].some((v) => String(v || "").toLowerCase().includes(query));
       });
@@ -1064,11 +1173,13 @@ export function renderAdminPage(options: {
         const isActive = !!s.activeTurnId;
         const lead = summarizeSessionLead(s);
         const expanded = isSessionExpanded(s.key);
+        const usage = s.usage || {};
         return '<details class="session-row" data-session-key="' + esc(s.key) + '"' + (expanded ? " open" : "") + '>' +
           '<summary class="session-summary">' +
             '<div><div class="session-key">' + esc(s.key) + '</div><div class="session-channel">' + esc(s.channelId) + ' · ' + esc(s.workspacePath || "") + '</div></div>' +
             '<div>' + renderBadge(isActive ? "active" : "idle", isActive ? "good" : "warn") + '<div class="summary-detail">更新：' + esc(fmtTime(s.updatedAt)) + '</div></div>' +
             '<div><strong>待处理：' + (s.openInboundCount || 0) + '（人：' + (s.openHumanInboundCount || 0) + ' 系统：' + (s.openSystemInboundCount || 0) + '）</strong><div class="summary-detail">任务：' + (s.runningBackgroundJobCount || 0) + '</div></div>' +
+            '<div><div class="session-token-value">' + esc(fmtTokens(usage.totalTokens)) + '</div><div class="session-token-detail">回合 ' + esc(usage.turnCount || 0) + ' · 缺失 ' + esc(usage.missingTurns || 0) + '</div></div>' +
             '<div class="summary-detail" title="' + esc(lead) + '">' + esc(lead) + '</div>' +
             '<div>' + renderBadge("inspect", "info") + '</div>' +
           '</summary>' +
@@ -1076,6 +1187,7 @@ export function renderAdminPage(options: {
             '<div class="summary-detail">工作目录：' + esc(s.workspacePath) + '</div>' +
             '<div class="session-inspector">' +
               '<div class="mini-panel"><div class="mini-title">时间线</div><div class="mini-body"><div class="timeline" data-session-timeline="' + esc(s.key) + '">' + renderTimelinePlaceholder(s) + '</div></div></div>' +
+              '<div class="mini-panel"><div class="mini-title">Token 消耗</div><div class="mini-body">' + renderSessionUsage(usage) + '</div></div>' +
               '<div class="mini-panel"><div class="mini-title">消息 / 任务</div><div class="mini-body">' + renderInboundTable(s.openInbound) + renderJobsTable(s.backgroundJobs) + '</div></div>' +
             '</div>' +
           '</div>' +
@@ -1103,6 +1215,18 @@ export function renderAdminPage(options: {
           '<strong>' + esc(event.summary || event.type) + '</strong>' +
         '</div>'
       ).join("");
+    }
+    function renderSessionUsage(usage) {
+      const exact = Number(usage?.exactTurns || 0);
+      const total = Number(usage?.turnCount || 0);
+      if (!total) return '<div class="summary-detail">这个会话还没有用量记录</div>';
+      return '<div class="quota-grid">' +
+        '<div class="quota-line"><span>总量</span><strong>' + esc(fmtTokens(usage.totalTokens)) + '</strong><span>' + esc(total + " 回合") + '</span></div>' +
+        '<div class="quota-line"><span>输入</span><strong>' + esc(fmtTokens(usage.inputTokens)) + '</strong><span>缓存 ' + esc(fmtTokens(usage.cachedInputTokens)) + '</span></div>' +
+        '<div class="quota-line"><span>输出</span><strong>' + esc(fmtTokens(usage.outputTokens)) + '</strong><span>推理 ' + esc(fmtTokens(usage.reasoningTokens)) + '</span></div>' +
+        '<div class="quota-line"><span>精确</span><strong>' + esc(exact + "/" + total) + '</strong><span>缺失 ' + esc(usage.missingTurns || 0) + '</span></div>' +
+        '<div class="summary-detail">最近：' + esc(fmtDateTime(usage.lastTurnAt)) + '</div>' +
+      '</div>';
     }
     async function loadSessionTimeline(sessionKey, row) {
       if (!sessionKey) return;
@@ -1151,6 +1275,7 @@ export function renderAdminPage(options: {
     function render(data) {
       latestStatus = data;
       renderSummary(data);
+      renderUsage(data);
       renderRiskPanel(data);
       renderOperations(data);
       renderService(data);

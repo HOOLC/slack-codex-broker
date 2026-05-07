@@ -6,6 +6,7 @@ import type {
   PersistedAdminOperation,
   JsonLike,
   PersistedBackgroundJob,
+  PersistedCodexTurnUsage,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
@@ -15,7 +16,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 2;
+export const CURRENT_STATE_SCHEMA_VERSION = 3;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -166,6 +167,39 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_admin_operations_updated ON admin_operations(updated_at);
         CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_events(sequence);
         CREATE INDEX IF NOT EXISTS idx_admin_audit_operation ON admin_audit_events(operation_id, sequence);
+      `);
+    }
+  },
+  {
+    version: 3,
+    name: "codex_turn_usage",
+    up(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS codex_turn_usage (
+          turn_id TEXT PRIMARY KEY,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          channel_id TEXT NOT NULL,
+          root_thread_ts TEXT NOT NULL,
+          codex_thread_id TEXT,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL,
+          model TEXT,
+          effort TEXT,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+          total_tokens INTEGER NOT NULL DEFAULT 0,
+          raw_usage TEXT,
+          started_at TEXT,
+          completed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_session ON codex_turn_usage(session_key, completed_at);
+        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_completed ON codex_turn_usage(completed_at);
+        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_total ON codex_turn_usage(total_tokens);
       `);
     }
   }
@@ -568,6 +602,24 @@ export class StateStore {
     });
   }
 
+  listCodexTurnUsage(limit = 1000): PersistedCodexTurnUsage[] {
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM codex_turn_usage
+        ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, updated_at DESC
+        LIMIT ?
+      `)
+      .all(limit)
+      .map((row) => this.#rowToCodexTurnUsage(row as SqlRow));
+  }
+
+  async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
+    const normalized = this.#normalizeCodexTurnUsage(record);
+    this.#transaction(() => {
+      this.#upsertCodexTurnUsage(normalized);
+    });
+  }
+
   #openDatabase(): void {
     if (this.#database) {
       return;
@@ -818,6 +870,56 @@ export class StateStore {
     );
   }
 
+  #upsertCodexTurnUsage(record: PersistedCodexTurnUsage): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO codex_turn_usage (
+        turn_id, session_key, channel_id, root_thread_ts, codex_thread_id,
+        status, source, model, effort, input_tokens, cached_input_tokens,
+        output_tokens, reasoning_tokens, total_tokens, raw_usage,
+        started_at, completed_at, created_at, updated_at
+      ) VALUES (${placeholders(19)})
+      ON CONFLICT(turn_id) DO UPDATE SET
+        session_key = excluded.session_key,
+        channel_id = excluded.channel_id,
+        root_thread_ts = excluded.root_thread_ts,
+        codex_thread_id = excluded.codex_thread_id,
+        status = excluded.status,
+        source = excluded.source,
+        model = excluded.model,
+        effort = excluded.effort,
+        input_tokens = excluded.input_tokens,
+        cached_input_tokens = excluded.cached_input_tokens,
+        output_tokens = excluded.output_tokens,
+        reasoning_tokens = excluded.reasoning_tokens,
+        total_tokens = excluded.total_tokens,
+        raw_usage = excluded.raw_usage,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `).run(
+      record.turnId,
+      record.sessionKey,
+      record.channelId,
+      record.rootThreadTs,
+      record.codexThreadId ?? null,
+      record.status,
+      record.source,
+      record.model ?? null,
+      record.effort ?? null,
+      record.inputTokens,
+      record.cachedInputTokens,
+      record.outputTokens,
+      record.reasoningTokens,
+      record.totalTokens,
+      jsonOrNull(record.rawUsage),
+      record.startedAt ?? null,
+      record.completedAt ?? null,
+      record.createdAt,
+      record.updatedAt
+    );
+  }
+
   #markProcessedEvent(eventId: string): void {
     this.#databaseRequired()
       .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
@@ -962,6 +1064,30 @@ export class StateStore {
       detail: readJsonColumn<JsonLike | undefined>(row, "detail", undefined),
       actor: optionalStringColumn(row, "actor"),
       createdAt: stringColumn(row, "created_at")
+    });
+  }
+
+  #rowToCodexTurnUsage(row: SqlRow): PersistedCodexTurnUsage {
+    return this.#normalizeCodexTurnUsage({
+      turnId: stringColumn(row, "turn_id"),
+      sessionKey: stringColumn(row, "session_key"),
+      channelId: stringColumn(row, "channel_id"),
+      rootThreadTs: stringColumn(row, "root_thread_ts"),
+      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
+      status: stringColumn(row, "status") as PersistedCodexTurnUsage["status"],
+      source: stringColumn(row, "source") as PersistedCodexTurnUsage["source"],
+      model: optionalStringColumn(row, "model"),
+      effort: optionalStringColumn(row, "effort"),
+      inputTokens: optionalNumberColumn(row, "input_tokens") ?? 0,
+      cachedInputTokens: optionalNumberColumn(row, "cached_input_tokens") ?? 0,
+      outputTokens: optionalNumberColumn(row, "output_tokens") ?? 0,
+      reasoningTokens: optionalNumberColumn(row, "reasoning_tokens") ?? 0,
+      totalTokens: optionalNumberColumn(row, "total_tokens") ?? 0,
+      rawUsage: readJsonColumn<JsonLike | undefined>(row, "raw_usage", undefined),
+      startedAt: optionalStringColumn(row, "started_at"),
+      completedAt: optionalStringColumn(row, "completed_at"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at")
     });
   }
 
@@ -1113,6 +1239,35 @@ export class StateStore {
     };
   }
 
+  #normalizeCodexTurnUsage(raw: Partial<PersistedCodexTurnUsage>): PersistedCodexTurnUsage {
+    if (!raw.turnId || !raw.sessionKey || !raw.channelId || !raw.rootThreadTs || !raw.status || !raw.source) {
+      throw new Error(`Invalid Codex turn usage: ${raw.turnId ?? "unknown"}`);
+    }
+
+    const now = new Date().toISOString();
+    return {
+      turnId: String(raw.turnId),
+      sessionKey: String(raw.sessionKey),
+      channelId: String(raw.channelId),
+      rootThreadTs: String(raw.rootThreadTs),
+      codexThreadId: typeof raw.codexThreadId === "string" ? raw.codexThreadId : undefined,
+      status: raw.status,
+      source: raw.source,
+      model: typeof raw.model === "string" ? raw.model : undefined,
+      effort: typeof raw.effort === "string" ? raw.effort : undefined,
+      inputTokens: normalizeTokenCount(raw.inputTokens),
+      cachedInputTokens: normalizeTokenCount(raw.cachedInputTokens),
+      outputTokens: normalizeTokenCount(raw.outputTokens),
+      reasoningTokens: normalizeTokenCount(raw.reasoningTokens),
+      totalTokens: normalizeTokenCount(raw.totalTokens),
+      rawUsage: raw.rawUsage,
+      startedAt: typeof raw.startedAt === "string" ? raw.startedAt : undefined,
+      completedAt: typeof raw.completedAt === "string" ? raw.completedAt : undefined,
+      createdAt: String(raw.createdAt ?? now),
+      updatedAt: String(raw.updatedAt ?? raw.createdAt ?? now)
+    };
+  }
+
   #databaseRequired(): DatabaseSync {
     if (!this.#database) {
       throw new Error("StateStore has not been loaded");
@@ -1238,4 +1393,9 @@ function normalizeFiniteNumber(value: unknown): number | undefined {
   }
 
   return undefined;
+}
+
+function normalizeTokenCount(value: unknown): number {
+  const parsed = normalizeFiniteNumber(value) ?? 0;
+  return Math.max(0, Math.trunc(parsed));
 }

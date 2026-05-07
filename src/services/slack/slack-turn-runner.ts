@@ -3,6 +3,8 @@ import { CodexBroker } from "../codex/codex-broker.js";
 import { logger } from "../../logger.js";
 import type {
   CodexTurnResult,
+  PersistedCodexTurnStatus,
+  PersistedCodexTurnUsage,
   SlackInputMessage,
   SlackSessionRecord
 } from "../../types.js";
@@ -110,6 +112,7 @@ export class SlackTurnRunner {
           aborted: result.aborted,
           attempt: attempt + 1
         });
+        await this.#persistTurnUsage(session, result);
         session = await this.#inboundStore.markTurnBatchDone(session, startedTurn.turnId);
         session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
         return {
@@ -126,6 +129,7 @@ export class SlackTurnRunner {
             turnId: startedTurn.turnId,
             recoveredStatus: recovered.aborted ? "interrupted" : "completed"
           });
+          await this.#persistTurnUsage(session, recovered);
           session = await this.#inboundStore.markTurnBatchDone(session, startedTurn.turnId);
           session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
           return {
@@ -134,10 +138,15 @@ export class SlackTurnRunner {
           };
         }
 
+        const shouldStop = attempt === 1 || !isRecoverableCodexTurnFailure(error);
+        if (shouldStop) {
+          await this.#persistMissingTurnUsage(session, startedTurn.turnId, "failed");
+        }
+
         await this.#inboundStore.resetTurnBatchToPending(session, startedTurn.turnId);
         session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
 
-        if (attempt === 1 || !isRecoverableCodexTurnFailure(error)) {
+        if (shouldStop) {
           throw error;
         }
 
@@ -273,7 +282,8 @@ export class SlackTurnRunner {
           turnId,
           finalMessage: snapshot.finalMessage,
           aborted: false,
-          generatedImages: snapshot.generatedImages
+          generatedImages: snapshot.generatedImages,
+          usage: snapshot.usage
         };
       }
 
@@ -283,7 +293,8 @@ export class SlackTurnRunner {
           turnId,
           finalMessage: snapshot.finalMessage,
           aborted: true,
-          generatedImages: snapshot.generatedImages
+          generatedImages: snapshot.generatedImages,
+          usage: snapshot.usage
         };
       }
 
@@ -300,6 +311,68 @@ export class SlackTurnRunner {
       });
       return null;
     }
+  }
+
+  async #persistTurnUsage(session: SlackSessionRecord, result: CodexTurnResult): Promise<void> {
+    const status: PersistedCodexTurnStatus = result.aborted ? "interrupted" : "completed";
+    const usage = result.usage;
+    await this.#upsertTurnUsage({
+      turnId: result.turnId,
+      sessionKey: session.key,
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      codexThreadId: result.threadId || session.codexThreadId,
+      status,
+      source: usage?.source ?? "missing",
+      model: usage?.model,
+      effort: usage?.effort,
+      inputTokens: usage?.inputTokens ?? 0,
+      cachedInputTokens: usage?.cachedInputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+      reasoningTokens: usage?.reasoningTokens ?? 0,
+      totalTokens: usage?.totalTokens ?? 0,
+      rawUsage: usage?.rawUsage,
+      startedAt: session.activeTurnId === result.turnId ? session.activeTurnStartedAt : undefined
+    });
+  }
+
+  async #persistMissingTurnUsage(
+    session: SlackSessionRecord,
+    turnId: string,
+    status: PersistedCodexTurnStatus
+  ): Promise<void> {
+    await this.#upsertTurnUsage({
+      turnId,
+      sessionKey: session.key,
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      codexThreadId: session.codexThreadId,
+      status,
+      source: "missing",
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+      startedAt: session.activeTurnId === turnId ? session.activeTurnStartedAt : undefined
+    });
+  }
+
+  async #upsertTurnUsage(record: Omit<PersistedCodexTurnUsage, "createdAt" | "updatedAt" | "completedAt">): Promise<void> {
+    const upsert = (this.#sessions as unknown as {
+      readonly upsertCodexTurnUsage?: ((usage: PersistedCodexTurnUsage) => Promise<void>) | undefined;
+    }).upsertCodexTurnUsage;
+    if (typeof upsert !== "function") {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    await upsert.call(this.#sessions, {
+      ...record,
+      completedAt: now,
+      createdAt: record.startedAt ?? now,
+      updatedAt: now
+    });
   }
 }
 

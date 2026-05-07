@@ -5,8 +5,10 @@ import WebSocket from "ws";
 
 import { logger } from "../../logger.js";
 import type {
+  CodexTurnTokenUsage,
   CodexTurnResult,
   GeneratedImageArtifact,
+  JsonLike,
   SlackUserIdentity
 } from "../../types.js";
 import { buildSlackThreadBaseInstructions } from "./slack-thread-base-instructions.js";
@@ -44,6 +46,7 @@ interface ActiveTurn {
   readonly turnId: string;
   text: string;
   generatedImages: GeneratedImageArtifact[];
+  usage?: CodexTurnTokenUsage | undefined;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
 }
@@ -52,6 +55,7 @@ interface BufferedTurnEvents {
   text: string;
   terminalState: "completed" | "aborted" | null;
   generatedImages: GeneratedImageArtifact[];
+  usage?: CodexTurnTokenUsage | undefined;
 }
 
 export interface StartedTurn {
@@ -83,6 +87,7 @@ export interface ReadTurnResult {
   readonly finalMessage: string;
   readonly errorMessage?: string | undefined;
   readonly generatedImages: readonly GeneratedImageArtifact[];
+  readonly usage?: CodexTurnTokenUsage | undefined;
 }
 
 export interface ReadTurnResultOptions {
@@ -453,6 +458,9 @@ export class AppServerClient extends EventEmitter {
         turns?: Array<{
           id?: string;
           status?: string;
+          usage?: unknown;
+          token_usage?: unknown;
+          tokenUsage?: unknown;
           error?: {
             message?: string;
             additionalDetails?: string | null;
@@ -487,8 +495,9 @@ export class AppServerClient extends EventEmitter {
       .map((item, index) => normalizeGeneratedImageArtifact(item, index))
       .filter((item): item is GeneratedImageArtifact => item !== null);
     const status = normalizeTurnStatus(turn.status);
+    const usage = normalizeCodexTurnUsageFromThreadTurn(turn);
 
-    const normalizedResult = {
+    const normalizedResult: ReadTurnResult = {
       status,
       finalMessage: String(lastAgentMessage?.text ?? "").trim(),
       generatedImages,
@@ -497,12 +506,13 @@ export class AppServerClient extends EventEmitter {
         turn.error?.message ??
         undefined
     };
+    const resultWithUsage = usage ? { ...normalizedResult, usage } : normalizedResult;
 
     if (options?.syncActiveTurn) {
-      this.#syncActiveTurn(turnId, normalizedResult);
+      this.#syncActiveTurn(turnId, resultWithUsage);
     }
 
-    return normalizedResult;
+    return resultWithUsage;
   }
 
   async request(method: string, params?: JsonValue): Promise<JsonValue> {
@@ -629,17 +639,21 @@ export class AppServerClient extends EventEmitter {
     }
 
     if (method === "turn/completed") {
-      const turnId = params.turn?.id as string | undefined;
+      const turnId = (params.turn?.id ?? params.turnId) as string | undefined;
       if (!turnId) {
         return;
       }
+      const usage = normalizeCodexTurnUsageFromTurnEvent(params);
 
       const turn = this.#activeTurns.get(turnId);
       if (!turn) {
-        this.#bufferTurnTerminalState(turnId, "completed");
+        this.#bufferTurnTerminalState(turnId, "completed", usage);
         return;
       }
 
+      if (usage) {
+        turn.usage = usage;
+      }
       this.#resolveActiveTurn(turn, false);
       return;
     }
@@ -698,24 +712,24 @@ export class AppServerClient extends EventEmitter {
     this.#bufferedTurnEvents.delete(turnId);
 
     if (result.status === "completed") {
-      turn.resolve({
+      turn.resolve(withOptionalUsage({
         threadId: turn.threadId,
         turnId,
         finalMessage: result.finalMessage,
         aborted: false,
         generatedImages: result.generatedImages
-      });
+      }, result.usage));
       return;
     }
 
     if (result.status === "interrupted") {
-      turn.resolve({
+      turn.resolve(withOptionalUsage({
         threadId: turn.threadId,
         turnId,
         finalMessage: result.finalMessage,
         aborted: true,
         generatedImages: result.generatedImages
-      });
+      }, result.usage));
       return;
     }
 
@@ -743,13 +757,20 @@ export class AppServerClient extends EventEmitter {
     this.#bufferedTurnEvents.set(turnId, buffered);
   }
 
-  #bufferTurnTerminalState(turnId: string, terminalState: "completed" | "aborted"): void {
+  #bufferTurnTerminalState(
+    turnId: string,
+    terminalState: "completed" | "aborted",
+    usage?: CodexTurnTokenUsage | undefined
+  ): void {
     const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
       text: "",
       terminalState: null,
       generatedImages: []
     };
     buffered.terminalState = terminalState;
+    if (usage) {
+      buffered.usage = usage;
+    }
     this.#bufferedTurnEvents.set(turnId, buffered);
   }
 
@@ -781,6 +802,9 @@ export class AppServerClient extends EventEmitter {
     for (const image of buffered.generatedImages) {
       upsertGeneratedImage(turn.generatedImages, image);
     }
+    if (buffered.usage) {
+      turn.usage = buffered.usage;
+    }
 
     if (buffered.terminalState === "completed") {
       this.#resolveActiveTurn(turn, false);
@@ -795,13 +819,13 @@ export class AppServerClient extends EventEmitter {
   #resolveActiveTurn(turn: ActiveTurn, aborted: boolean): void {
     this.#activeTurns.delete(turn.turnId);
     this.#bufferedTurnEvents.delete(turn.turnId);
-    turn.resolve({
+    turn.resolve(withOptionalUsage({
       threadId: turn.threadId,
       turnId: turn.turnId,
       finalMessage: turn.text.trim(),
       aborted,
       generatedImages: [...turn.generatedImages]
-    });
+    }, turn.usage));
   }
 
   #startHeartbeat(socket: WebSocket, intervalMs = 30_000): void {
@@ -835,6 +859,179 @@ export class AppServerClient extends EventEmitter {
     clearInterval(this.#heartbeatTimer);
     this.#heartbeatTimer = undefined;
   }
+}
+
+function withOptionalUsage(
+  result: Omit<CodexTurnResult, "usage">,
+  usage: CodexTurnTokenUsage | undefined
+): CodexTurnResult {
+  return usage ? { ...result, usage } : result;
+}
+
+function normalizeCodexTurnUsageFromTurnEvent(params: Record<string, any>): CodexTurnTokenUsage | undefined {
+  const turn = isRecord(params.turn) ? params.turn : {};
+  return (
+    normalizeCodexTurnTokenUsage(turn.usage) ??
+    normalizeCodexTurnTokenUsage(turn.token_usage) ??
+    normalizeCodexTurnTokenUsage(turn.tokenUsage) ??
+    normalizeCodexTurnTokenUsage(params.usage) ??
+    normalizeCodexTurnTokenUsage(params.token_usage) ??
+    normalizeCodexTurnTokenUsage(params.tokenUsage)
+  );
+}
+
+function normalizeCodexTurnUsageFromThreadTurn(turn: {
+  readonly usage?: unknown;
+  readonly token_usage?: unknown;
+  readonly tokenUsage?: unknown;
+}): CodexTurnTokenUsage | undefined {
+  return (
+    normalizeCodexTurnTokenUsage(turn.usage) ??
+    normalizeCodexTurnTokenUsage(turn.token_usage) ??
+    normalizeCodexTurnTokenUsage(turn.tokenUsage)
+  );
+}
+
+function normalizeCodexTurnTokenUsage(value: unknown): CodexTurnTokenUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const inputTokenValue = readTokenNumber(value, [
+    "input_tokens",
+    "inputTokens",
+    "prompt_tokens",
+    "promptTokens"
+  ]);
+  const cachedTokenValue =
+    readTokenNumber(value, [
+      "cached_input_tokens",
+      "cachedInputTokens",
+      "cached_tokens",
+      "cachedTokens"
+    ]) ??
+    readNestedTokenNumber(value, [
+      ["input_token_details", "cached_tokens"],
+      ["inputTokenDetails", "cachedTokens"],
+      ["input_tokens_details", "cached_tokens"],
+      ["inputTokensDetails", "cachedTokens"]
+    ]);
+  const outputTokenValue = readTokenNumber(value, [
+    "output_tokens",
+    "outputTokens",
+    "completion_tokens",
+    "completionTokens"
+  ]);
+  const reasoningTokenValue =
+    readTokenNumber(value, [
+      "reasoning_tokens",
+      "reasoningTokens"
+    ]) ??
+    readNestedTokenNumber(value, [
+      ["output_token_details", "reasoning_tokens"],
+      ["outputTokenDetails", "reasoningTokens"],
+      ["output_tokens_details", "reasoning_tokens"],
+      ["outputTokensDetails", "reasoningTokens"]
+    ]);
+  const totalTokenValue = readTokenNumber(value, [
+    "total_tokens",
+    "totalTokens"
+  ]);
+
+  if (
+    inputTokenValue === undefined &&
+    cachedTokenValue === undefined &&
+    outputTokenValue === undefined &&
+    reasoningTokenValue === undefined &&
+    totalTokenValue === undefined
+  ) {
+    return undefined;
+  }
+
+  const computedTotal = (inputTokenValue ?? 0) + (outputTokenValue ?? 0) + (reasoningTokenValue ?? 0);
+  const totalTokens = totalTokenValue ?? (computedTotal > 0 ? computedTotal : cachedTokenValue ?? 0);
+
+  return {
+    source: "exact",
+    inputTokens: inputTokenValue ?? 0,
+    cachedInputTokens: cachedTokenValue ?? 0,
+    outputTokens: outputTokenValue ?? 0,
+    reasoningTokens: reasoningTokenValue ?? 0,
+    totalTokens,
+    model: normalizeOptionalString(value.model) ?? normalizeOptionalString(value.modelName),
+    effort:
+      normalizeOptionalString(value.effort) ??
+      normalizeOptionalString(value.reasoning_effort) ??
+      normalizeOptionalString(value.reasoningEffort),
+    rawUsage: toJsonLike(value)
+  };
+}
+
+function readTokenNumber(record: Record<string, unknown>, keys: readonly string[]): number | undefined {
+  for (const key of keys) {
+    const normalized = normalizeTokenNumber(record[key]);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function readNestedTokenNumber(
+  record: Record<string, unknown>,
+  paths: readonly (readonly [string, string])[]
+): number | undefined {
+  for (const [objectKey, valueKey] of paths) {
+    const container = record[objectKey];
+    if (!isRecord(container)) {
+      continue;
+    }
+    const normalized = normalizeTokenNumber(container[valueKey]);
+    if (normalized !== undefined) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+function normalizeTokenNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value));
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.trunc(parsed));
+    }
+  }
+  return undefined;
+}
+
+function toJsonLike(value: unknown): JsonLike | undefined {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => toJsonLike(entry) ?? null);
+  }
+  if (isRecord(value)) {
+    const normalized: Record<string, JsonLike> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const normalizedEntry = toJsonLike(entry);
+      if (normalizedEntry !== undefined) {
+        normalized[key] = normalizedEntry;
+      }
+    }
+    return normalized;
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeTurnStatus(status: unknown): ReadTurnResult["status"] {

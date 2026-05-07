@@ -13,6 +13,7 @@ interface MockTurnRecord {
   status: "inProgress" | "completed" | "interrupted" | "failed";
   finalMessage: string;
   errorMessage?: string | undefined;
+  usage?: unknown;
 }
 
 interface MockThreadRecord {
@@ -29,7 +30,7 @@ export interface MockTurnContext {
   readonly cwd: string;
   readonly input: readonly CodexInputItem[];
   readonly thread: MockThreadRecord;
-  complete: (message?: string) => void;
+  complete: (message?: string, usage?: unknown) => void;
   interrupt: (message?: string) => void;
 }
 
@@ -275,6 +276,7 @@ export class MockCodexAppServer {
               id: turn.turnId,
               status: turn.status,
               error: turn.errorMessage ? { message: turn.errorMessage } : null,
+              usage: turn.usage,
               items: turn.finalMessage
                 ? [
                   {
@@ -300,13 +302,14 @@ export class MockCodexAppServer {
       cwd: turn.cwd,
       input: turn.input,
       thread,
-      complete: (message = "") => {
+      complete: (message = "", usage?: unknown) => {
         if (turn.status !== "inProgress") {
           return;
         }
 
         turn.status = "completed";
         turn.finalMessage = message;
+        turn.usage = usage;
         thread.activeTurnId = undefined;
         if (message) {
           socket.send(JSON.stringify({
@@ -321,8 +324,10 @@ export class MockCodexAppServer {
           method: "turn/completed",
           params: {
             turn: {
-              id: turn.turnId
-            }
+              id: turn.turnId,
+              usage
+            },
+            usage
           }
         }));
       },

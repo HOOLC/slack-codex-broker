@@ -207,6 +207,78 @@ describe("AppServerClient disconnect handling", () => {
     });
   });
 
+  it("captures exact token usage from turn completion notifications", async () => {
+    const server = await createServer((socket, message) => {
+      if (message.method === "initialize") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { ok: true }
+        }));
+        return;
+      }
+
+      if (message.method === "turn/start") {
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: {
+            turn: {
+              id: "turn-usage"
+            }
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "turn/completed",
+          params: {
+            turn: {
+              id: "turn-usage",
+              usage: {
+                input_tokens: 1200,
+                cached_input_tokens: 300,
+                output_tokens: 450,
+                reasoning_tokens: 75,
+                total_tokens: 1725,
+                model: "gpt-5.5",
+                effort: "xhigh"
+              }
+            }
+          }
+        }));
+      }
+    });
+    servers.push(server);
+
+    const client = new AppServerClient({
+      url: server.url,
+      serviceName: "test",
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      reposRoot: "/tmp/repos"
+    });
+
+    await client.connect();
+    const started = await client.startTurn("thread-1", "/tmp", [
+      {
+        type: "text",
+        text: "hello",
+        text_elements: []
+      }
+    ]);
+
+    await expect(started.completion).resolves.toMatchObject({
+      threadId: "thread-1",
+      turnId: "turn-usage",
+      usage: {
+        source: "exact",
+        inputTokens: 1200,
+        cachedInputTokens: 300,
+        outputTokens: 450,
+        reasoningTokens: 75,
+        totalTokens: 1725,
+        model: "gpt-5.5",
+        effort: "xhigh"
+      }
+    });
+  });
+
   it("does not emit an unhandled rejection when a turn disconnects before completion is awaited", async () => {
     const server = await createServer((socket, message) => {
       if (message.method === "initialize") {

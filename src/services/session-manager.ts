@@ -6,6 +6,7 @@ import type {
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
   PersistedBackgroundJob,
+  PersistedCodexTurnUsage,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
@@ -374,6 +375,14 @@ export class SessionManager {
 
   async appendAdminAuditEvent(record: PersistedAdminAuditEvent): Promise<void> {
     await this.#stateStore.appendAdminAuditEvent(record);
+  }
+
+  listCodexTurnUsage(limit?: number): PersistedCodexTurnUsage[] {
+    return this.#stateStore.listCodexTurnUsage(limit);
+  }
+
+  async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
+    await this.#stateStore.upsertCodexTurnUsage(record);
   }
 
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {
