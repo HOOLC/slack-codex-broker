@@ -71,6 +71,11 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "GET" && url.pathname === "/admin/api/usage") {
+    respondJson(response, 200, await options.adminService.getUsageOverview());
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/audit") {
     respondJson(response, 200, await options.adminService.listAdminAuditEvents({
       operationId: readString(url.searchParams.get("operation_id")) ?? undefined

@@ -100,7 +100,7 @@ export function renderAdminPage(options: {
 
     .command-grid {
       display: grid;
-      grid-template-columns: minmax(360px, 1fr) minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+      grid-template-columns: repeat(4, minmax(260px, 1fr));
       gap: 12px;
       margin: 16px 0;
     }
@@ -227,6 +227,22 @@ export function renderAdminPage(options: {
       margin-top: 10px;
       color: var(--muted);
       font-size: 11px;
+    }
+    .usage-list {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .usage-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 24px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      padding-top: 7px;
     }
     .badge {
       display: inline-flex;
@@ -525,6 +541,38 @@ export function renderAdminPage(options: {
 
       <section class="panel">
         <div class="panel-head">
+          <div class="panel-title">消耗监控</div>
+          <span id="usage-badge" class="badge info">同步中</span>
+        </div>
+        <div class="panel-body">
+          <div class="metric-grid">
+            <div class="metric">
+              <div class="metric-label">总 token</div>
+              <div class="metric-value" id="usage-total">--</div>
+              <div class="metric-detail" id="usage-total-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">24 小时</div>
+              <div class="metric-value good" id="usage-day">--</div>
+              <div class="metric-detail" id="usage-day-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">1 小时</div>
+              <div class="metric-value" id="usage-hour">--</div>
+              <div class="metric-detail" id="usage-hour-detail">...</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">缺失用量</div>
+              <div class="metric-value warn" id="usage-missing">--</div>
+              <div class="metric-detail" id="usage-missing-detail">...</div>
+            </div>
+          </div>
+          <div id="usage-list" class="usage-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
           <div class="panel-title">发布风险门禁</div>
           <span id="risk-badge" class="badge info">检查中</span>
         </div>
@@ -759,6 +807,12 @@ export function renderAdminPage(options: {
       const rel = formatRelativeDuration(delta);
       return delta > 0 ? rel + "后" : rel + "前";
     }
+    function fmtTokens(value) {
+      const n = Math.max(0, Number(value || 0));
+      if (n >= 1000000) return (n / 1000000).toFixed(2).replace(/\\.00$/, "") + "M";
+      if (n >= 1000) return (n / 1000).toFixed(1).replace(/\\.0$/, "") + "K";
+      return String(Math.round(n));
+    }
     function clampPercent(value) {
       return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
     }
@@ -796,6 +850,9 @@ export function renderAdminPage(options: {
         session: "会话",
         admin: "管理",
         audit: "审计",
+        exact: "精确",
+        estimated: "估算",
+        missing: "缺失",
         unknown: "未知",
         combined: "合并模式"
       };
@@ -847,6 +904,41 @@ export function renderAdminPage(options: {
       document.getElementById("session-open-count").textContent = st.openInboundCount || 0;
       document.getElementById("session-human-count").textContent = st.openHumanInboundCount || 0;
       document.getElementById("session-system-count").textContent = st.openSystemInboundCount || 0;
+    }
+
+    function renderUsage(data) {
+      const usage = data.usage || {};
+      const totals = usage.totals || {};
+      const windows = usage.windows || {};
+      const lastDay = windows.lastDay || {};
+      const lastHour = windows.lastHour || {};
+      const recentTurns = usage.recentTurns || [];
+      const bySession = usage.bySession || [];
+      const totalTurns = Number(totals.totalTurns || 0);
+      const exactTurns = Number(totals.exactTurns || 0);
+      const missingTurns = Number(totals.missingTurns || 0);
+      const badge = document.getElementById("usage-badge");
+      badge.textContent = totalTurns ? ("精确 " + exactTurns + "/" + totalTurns) : "暂无数据";
+      badge.className = "badge " + (!totalTurns || missingTurns ? "warn" : "good");
+      document.getElementById("usage-total").textContent = fmtTokens(totals.totalTokens);
+      document.getElementById("usage-total-detail").textContent = "输入 " + fmtTokens(totals.inputTokens) + " · 输出 " + fmtTokens(totals.outputTokens);
+      document.getElementById("usage-day").textContent = fmtTokens(lastDay.totalTokens);
+      document.getElementById("usage-day-detail").textContent = "回合 " + (lastDay.totalTurns || 0) + " · 推理 " + fmtTokens(lastDay.reasoningTokens);
+      document.getElementById("usage-hour").textContent = fmtTokens(lastHour.totalTokens);
+      document.getElementById("usage-hour-detail").textContent = "回合 " + (lastHour.totalTurns || 0) + " · 缓存 " + fmtTokens(lastHour.cachedInputTokens);
+      document.getElementById("usage-missing").textContent = missingTurns;
+      document.getElementById("usage-missing-detail").textContent = "估算 " + (totals.estimatedTurns || 0) + " · 精确 " + exactTurns;
+
+      const list = document.getElementById("usage-list");
+      if (!totalTurns) {
+        list.innerHTML = '<div class="summary-detail">还没有完成的 Codex 回合用量记录</div>';
+        return;
+      }
+      const leader = bySession[0];
+      const latest = recentTurns[0];
+      list.innerHTML =
+        '<div class="usage-row"><span>' + esc(leader ? ("最高会话：" + leader.sessionKey) : "最高会话：--") + '</span><strong>' + esc(fmtTokens(leader?.totalTokens || 0)) + '</strong></div>' +
+        '<div class="usage-row"><span>' + esc(latest ? ("最近回合：" + latest.sessionKey + " · " + statusLabel(latest.source)) : "最近回合：--") + '</span><strong>' + esc(fmtTokens(latest?.totalTokens || 0)) + '</strong></div>';
     }
 
     function renderRiskPanel(data) {
@@ -1151,6 +1243,7 @@ export function renderAdminPage(options: {
     function render(data) {
       latestStatus = data;
       renderSummary(data);
+      renderUsage(data);
       renderRiskPanel(data);
       renderOperations(data);
       renderService(data);

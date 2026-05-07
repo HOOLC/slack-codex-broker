@@ -10,6 +10,7 @@ import type {
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
   PersistedBackgroundJob,
+  PersistedCodexTurnUsage,
   PersistedInboundMessage,
   SlackSessionRecord
 } from "../types.js";
@@ -78,6 +79,19 @@ interface AdminOperationStore {
     readonly limit?: number | undefined;
   }) => PersistedAdminAuditEvent[]) | undefined;
   readonly appendAdminAuditEvent?: ((record: PersistedAdminAuditEvent) => Promise<void>) | undefined;
+  readonly listCodexTurnUsage?: ((limit?: number) => PersistedCodexTurnUsage[]) | undefined;
+}
+
+interface CodexUsageTotals {
+  readonly totalTurns: number;
+  readonly exactTurns: number;
+  readonly estimatedTurns: number;
+  readonly missingTurns: number;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+  readonly totalTokens: number;
 }
 
 export class AdminService {
@@ -106,6 +120,7 @@ export class AdminService {
   async getStatus(): Promise<Record<string, unknown>> {
     const snapshot = await this.#readSessionSnapshot();
     const runtime = await this.#readRuntimeStatus();
+    const usage = this.#readUsageOverview();
     const sessionSummaries = snapshot.allSessions.slice(0, 50).map((session) =>
       this.#summarizeSession(session, {
         inbound: snapshot.openInboundBySession.get(session.key) ?? [],
@@ -126,6 +141,7 @@ export class AdminService {
       account: runtime.account,
       rateLimits: runtime.rateLimits,
       deployment: runtime.deployment,
+      usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
       state: {
@@ -141,6 +157,7 @@ export class AdminService {
   async getOverview(): Promise<Record<string, unknown>> {
     const snapshot = await this.#readSessionSnapshot();
     const runtime = await this.#readRuntimeStatus();
+    const usage = this.#readUsageOverview();
     return {
       ok: true,
       service: this.#serviceInfo(),
@@ -149,9 +166,18 @@ export class AdminService {
       account: runtime.account,
       rateLimits: runtime.rateLimits,
       deployment: runtime.deployment,
+      usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
       state: this.#summarizeStateCounts(snapshot)
+    };
+  }
+
+  async getUsageOverview(): Promise<Record<string, unknown>> {
+    await this.#refreshSessions();
+    return {
+      ok: true,
+      ...this.#readUsageOverview()
     };
   }
 
@@ -504,6 +530,25 @@ export class AdminService {
     };
   }
 
+  #readUsageOverview(): Record<string, unknown> {
+    const records = this.#listCodexTurnUsage(1000);
+    const totals = summarizeUsageTotals(records);
+    const windows = {
+      lastHour: summarizeUsageTotals(filterUsageWindow(records, 60 * 60 * 1000)),
+      lastDay: summarizeUsageTotals(filterUsageWindow(records, 24 * 60 * 60 * 1000))
+    };
+    return {
+      totals,
+      windows,
+      recentTurns: records
+        .slice()
+        .sort(compareUsageRecordsDescending)
+        .slice(0, 25)
+        .map(summarizeUsageRecord),
+      bySession: summarizeUsageBySession(records)
+    };
+  }
+
   #serviceInfo(): Record<string, unknown> {
     return {
       name: this.options.config.serviceName,
@@ -688,6 +733,11 @@ export class AdminService {
     return store.listAdminAuditEvents?.call(this.options.sessions, options) ?? [];
   }
 
+  #listCodexTurnUsage(limit: number): readonly PersistedCodexTurnUsage[] {
+    const store = this.#operationStore();
+    return store.listCodexTurnUsage?.call(this.options.sessions, limit) ?? [];
+  }
+
   #operationStore(): AdminOperationStore {
     return this.options.sessions as unknown as AdminOperationStore;
   }
@@ -835,6 +885,145 @@ export class AdminService {
       backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job))
     };
   }
+}
+
+function summarizeUsageTotals(records: readonly PersistedCodexTurnUsage[]): CodexUsageTotals {
+  let totalTurns = 0;
+  let exactTurns = 0;
+  let estimatedTurns = 0;
+  let missingTurns = 0;
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let totalTokens = 0;
+
+  for (const record of records) {
+    totalTurns += 1;
+    if (record.source === "exact") {
+      exactTurns += 1;
+    } else if (record.source === "estimated") {
+      estimatedTurns += 1;
+    } else {
+      missingTurns += 1;
+    }
+
+    inputTokens += record.inputTokens;
+    cachedInputTokens += record.cachedInputTokens;
+    outputTokens += record.outputTokens;
+    reasoningTokens += record.reasoningTokens;
+    totalTokens += record.totalTokens;
+  }
+
+  return {
+    totalTurns,
+    exactTurns,
+    estimatedTurns,
+    missingTurns,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens
+  };
+}
+
+function filterUsageWindow(records: readonly PersistedCodexTurnUsage[], windowMs: number): PersistedCodexTurnUsage[] {
+  const cutoff = Date.now() - windowMs;
+  return records.filter((record) => usageTimestampMs(record) >= cutoff);
+}
+
+function summarizeUsageRecord(record: PersistedCodexTurnUsage): Record<string, unknown> {
+  return {
+    turnId: record.turnId,
+    sessionKey: record.sessionKey,
+    channelId: record.channelId,
+    rootThreadTs: record.rootThreadTs,
+    codexThreadId: record.codexThreadId ?? null,
+    status: record.status,
+    source: record.source,
+    model: record.model ?? null,
+    effort: record.effort ?? null,
+    inputTokens: record.inputTokens,
+    cachedInputTokens: record.cachedInputTokens,
+    outputTokens: record.outputTokens,
+    reasoningTokens: record.reasoningTokens,
+    totalTokens: record.totalTokens,
+    startedAt: record.startedAt ?? null,
+    completedAt: record.completedAt ?? null,
+    updatedAt: record.updatedAt
+  };
+}
+
+function summarizeUsageBySession(records: readonly PersistedCodexTurnUsage[]): readonly Record<string, unknown>[] {
+  const groups = new Map<string, {
+    sessionKey: string;
+    channelId: string;
+    rootThreadTs: string;
+    turnCount: number;
+    exactTurns: number;
+    estimatedTurns: number;
+    missingTurns: number;
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+    totalTokens: number;
+    updatedAt: string;
+    lastTurnAt: string | null;
+    model: string | null;
+    effort: string | null;
+  }>();
+
+  for (const record of records) {
+    const existing = groups.get(record.sessionKey) ?? {
+      sessionKey: record.sessionKey,
+      channelId: record.channelId,
+      rootThreadTs: record.rootThreadTs,
+      turnCount: 0,
+      exactTurns: 0,
+      estimatedTurns: 0,
+      missingTurns: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+      updatedAt: record.updatedAt,
+      lastTurnAt: record.completedAt ?? record.updatedAt,
+      model: record.model ?? null,
+      effort: record.effort ?? null
+    };
+    existing.turnCount += 1;
+    existing.exactTurns += record.source === "exact" ? 1 : 0;
+    existing.estimatedTurns += record.source === "estimated" ? 1 : 0;
+    existing.missingTurns += record.source === "missing" ? 1 : 0;
+    existing.inputTokens += record.inputTokens;
+    existing.cachedInputTokens += record.cachedInputTokens;
+    existing.outputTokens += record.outputTokens;
+    existing.reasoningTokens += record.reasoningTokens;
+    existing.totalTokens += record.totalTokens;
+    if (usageTimestampMs(record) >= Date.parse(existing.lastTurnAt ?? "")) {
+      existing.updatedAt = record.updatedAt;
+      existing.lastTurnAt = record.completedAt ?? record.updatedAt;
+      existing.model = record.model ?? existing.model;
+      existing.effort = record.effort ?? existing.effort;
+    }
+    groups.set(record.sessionKey, existing);
+  }
+
+  return [...groups.values()]
+    .sort((left, right) => right.totalTokens - left.totalTokens || right.turnCount - left.turnCount)
+    .slice(0, 25);
+}
+
+function compareUsageRecordsDescending(left: PersistedCodexTurnUsage, right: PersistedCodexTurnUsage): number {
+  return usageTimestampMs(right) - usageTimestampMs(left) || right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function usageTimestampMs(record: PersistedCodexTurnUsage): number {
+  const parsed = Date.parse(record.completedAt ?? record.updatedAt ?? record.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function compareSessions(left: SlackSessionRecord, right: SlackSessionRecord): number {
