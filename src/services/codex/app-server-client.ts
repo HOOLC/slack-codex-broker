@@ -329,11 +329,16 @@ export class AppServerClient extends EventEmitter {
       developerInstructions: null,
       personality: null,
       ephemeral: false,
-      experimentalRawEvents: false,
+      experimentalRawEvents: true,
       persistExtendedHistory: true
     }) as {
       thread: { id: string };
     };
+    this.emit("notification", "broker/system_prompt", {
+      threadId: result.thread.id,
+      cwd: session.workspacePath,
+      baseInstructions
+    });
     logger.debug("Started Codex thread", {
       threadId: result.thread.id,
       cwd: session.workspacePath

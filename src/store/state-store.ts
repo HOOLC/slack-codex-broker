@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
+  PersistedAgentTraceEvent,
   JsonLike,
   PersistedBackgroundJob,
   PersistedCodexTurnUsage,
@@ -16,7 +17,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 3;
+export const CURRENT_STATE_SCHEMA_VERSION = 4;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -200,6 +201,39 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_session ON codex_turn_usage(session_key, completed_at);
         CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_completed ON codex_turn_usage(completed_at);
         CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_total ON codex_turn_usage(total_tokens);
+      `);
+    }
+  },
+  {
+    version: 4,
+    name: "agent_trace_events",
+    up(database) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS agent_trace_events (
+          id TEXT PRIMARY KEY,
+          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+          source TEXT NOT NULL,
+          type TEXT NOT NULL,
+          at TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          detail TEXT,
+          status TEXT,
+          role TEXT,
+          tool_name TEXT,
+          call_id TEXT,
+          turn_id TEXT,
+          detail_truncated INTEGER NOT NULL DEFAULT 0,
+          detail_original_chars INTEGER,
+          metadata TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_session_sequence ON agent_trace_events(session_key, sequence);
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_session_at ON agent_trace_events(session_key, at);
+        CREATE INDEX IF NOT EXISTS idx_agent_trace_events_turn ON agent_trace_events(session_key, turn_id);
       `);
     }
   }
@@ -620,6 +654,25 @@ export class StateStore {
     });
   }
 
+  listAgentTraceEvents(sessionKey: string, limit = 1000): PersistedAgentTraceEvent[] {
+    return this.#databaseRequired()
+      .prepare(`
+        SELECT * FROM agent_trace_events
+        WHERE session_key = ?
+        ORDER BY sequence ASC, at ASC, id ASC
+        LIMIT ?
+      `)
+      .all(sessionKey, limit)
+      .map((row) => this.#rowToAgentTraceEvent(row as SqlRow));
+  }
+
+  async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
+    const normalized = this.#normalizeAgentTraceEvent(record);
+    this.#transaction(() => {
+      this.#upsertAgentTraceEvent(normalized);
+    });
+  }
+
   #openDatabase(): void {
     if (this.#database) {
       return;
@@ -920,6 +973,54 @@ export class StateStore {
     );
   }
 
+  #upsertAgentTraceEvent(record: PersistedAgentTraceEvent): void {
+    this.#databaseRequired().prepare(`
+      INSERT INTO agent_trace_events (
+        id, session_key, source, type, at, sequence, title, summary, detail,
+        status, role, tool_name, call_id, turn_id, detail_truncated,
+        detail_original_chars, metadata, created_at, updated_at
+      ) VALUES (${placeholders(19)})
+      ON CONFLICT(id) DO UPDATE SET
+        session_key = excluded.session_key,
+        source = excluded.source,
+        type = excluded.type,
+        at = excluded.at,
+        sequence = excluded.sequence,
+        title = excluded.title,
+        summary = excluded.summary,
+        detail = excluded.detail,
+        status = excluded.status,
+        role = excluded.role,
+        tool_name = excluded.tool_name,
+        call_id = excluded.call_id,
+        turn_id = excluded.turn_id,
+        detail_truncated = excluded.detail_truncated,
+        detail_original_chars = excluded.detail_original_chars,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).run(
+      record.id,
+      record.sessionKey,
+      record.source,
+      record.type,
+      record.at,
+      record.sequence,
+      record.title,
+      record.summary,
+      record.detail ?? null,
+      record.status ?? null,
+      record.role ?? null,
+      record.toolName ?? null,
+      record.callId ?? null,
+      record.turnId ?? null,
+      record.detailTruncated ? 1 : 0,
+      record.detailOriginalChars ?? null,
+      jsonOrNull(record.metadata),
+      record.createdAt,
+      record.updatedAt
+    );
+  }
+
   #markProcessedEvent(eventId: string): void {
     this.#databaseRequired()
       .prepare("INSERT OR IGNORE INTO processed_events (event_id) VALUES (?)")
@@ -1086,6 +1187,30 @@ export class StateStore {
       rawUsage: readJsonColumn<JsonLike | undefined>(row, "raw_usage", undefined),
       startedAt: optionalStringColumn(row, "started_at"),
       completedAt: optionalStringColumn(row, "completed_at"),
+      createdAt: stringColumn(row, "created_at"),
+      updatedAt: stringColumn(row, "updated_at")
+    });
+  }
+
+  #rowToAgentTraceEvent(row: SqlRow): PersistedAgentTraceEvent {
+    return this.#normalizeAgentTraceEvent({
+      id: stringColumn(row, "id"),
+      sessionKey: stringColumn(row, "session_key"),
+      source: stringColumn(row, "source") as PersistedAgentTraceEvent["source"],
+      type: stringColumn(row, "type"),
+      at: stringColumn(row, "at"),
+      sequence: optionalNumberColumn(row, "sequence") ?? 0,
+      title: stringColumn(row, "title"),
+      summary: stringColumn(row, "summary"),
+      detail: optionalStringColumn(row, "detail"),
+      status: optionalStringColumn(row, "status"),
+      role: optionalStringColumn(row, "role"),
+      toolName: optionalStringColumn(row, "tool_name"),
+      callId: optionalStringColumn(row, "call_id"),
+      turnId: optionalStringColumn(row, "turn_id"),
+      detailTruncated: booleanColumn(row, "detail_truncated", false),
+      detailOriginalChars: optionalNumberColumn(row, "detail_original_chars"),
+      metadata: readJsonColumn<JsonLike | undefined>(row, "metadata", undefined),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at")
     });
@@ -1268,6 +1393,35 @@ export class StateStore {
     };
   }
 
+  #normalizeAgentTraceEvent(raw: Partial<PersistedAgentTraceEvent>): PersistedAgentTraceEvent {
+    if (!raw.id || !raw.sessionKey || !raw.source || !raw.type || !raw.at || !raw.title) {
+      throw new Error(`Invalid agent trace event: ${raw.id ?? "unknown"}`);
+    }
+
+    const now = new Date().toISOString();
+    return {
+      id: String(raw.id),
+      sessionKey: String(raw.sessionKey),
+      source: raw.source,
+      type: String(raw.type),
+      at: String(raw.at),
+      sequence: normalizeFiniteNumber(raw.sequence) ?? timestampSequence(raw.at),
+      title: String(raw.title),
+      summary: String(raw.summary ?? ""),
+      detail: typeof raw.detail === "string" ? raw.detail : undefined,
+      status: typeof raw.status === "string" ? raw.status : undefined,
+      role: typeof raw.role === "string" ? raw.role : undefined,
+      toolName: typeof raw.toolName === "string" ? raw.toolName : undefined,
+      callId: typeof raw.callId === "string" ? raw.callId : undefined,
+      turnId: typeof raw.turnId === "string" ? raw.turnId : undefined,
+      detailTruncated: raw.detailTruncated,
+      detailOriginalChars: normalizeFiniteNumber(raw.detailOriginalChars),
+      metadata: raw.metadata,
+      createdAt: String(raw.createdAt ?? now),
+      updatedAt: String(raw.updatedAt ?? raw.createdAt ?? now)
+    };
+  }
+
   #databaseRequired(): DatabaseSync {
     if (!this.#database) {
       throw new Error("StateStore has not been loaded");
@@ -1398,4 +1552,9 @@ function normalizeFiniteNumber(value: unknown): number | undefined {
 function normalizeTokenCount(value: unknown): number {
   const parsed = normalizeFiniteNumber(value) ?? 0;
   return Math.max(0, Math.trunc(parsed));
+}
+
+function timestampSequence(value: unknown): number {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 }

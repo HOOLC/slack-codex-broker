@@ -1082,6 +1082,7 @@ describe("AppServerClient disconnect handling", () => {
     })).resolves.toBe("thread-1");
 
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("channel_id: C123"));
+    expect(threadStartParams?.experimentalRawEvents).toBe(true);
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("thread_ts: 111.222"));
     expect(threadStartParams?.baseInstructions).toEqual(expect.stringContaining("session_workspace: /tmp/workspace"));
     expect(threadStartParams?.baseInstructions).toEqual(

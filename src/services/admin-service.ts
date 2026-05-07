@@ -9,6 +9,7 @@ import type {
   JsonLike,
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
+  PersistedAgentTraceEvent,
   PersistedBackgroundJob,
   PersistedCodexTurnUsage,
   PersistedInboundMessage,
@@ -44,8 +45,10 @@ interface FileInfo {
 interface SessionSnapshot {
   readonly allSessions: readonly SlackSessionRecord[];
   readonly activeSessions: readonly SlackSessionRecord[];
+  readonly inbound: readonly PersistedInboundMessage[];
   readonly openInbound: readonly PersistedInboundMessage[];
   readonly backgroundJobs: readonly PersistedBackgroundJob[];
+  readonly inboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>;
   readonly openInboundBySession: ReadonlyMap<string, readonly PersistedInboundMessage[]>;
   readonly jobsBySession: ReadonlyMap<string, readonly PersistedBackgroundJob[]>;
   readonly usageBySession: ReadonlyMap<string, SessionUsageSummary>;
@@ -144,7 +147,8 @@ export class AdminService {
     const usage = this.#readUsageOverview();
     const sessionSummaries = snapshot.allSessions.slice(0, 50).map((session) =>
       this.#summarizeSession(session, {
-        inbound: snapshot.openInboundBySession.get(session.key) ?? [],
+        inbound: snapshot.inboundBySession.get(session.key) ?? [],
+        openInbound: snapshot.openInboundBySession.get(session.key) ?? [],
         jobs: snapshot.jobsBySession.get(session.key) ?? [],
         usage: snapshot.usageBySession.get(session.key)
       })
@@ -207,9 +211,10 @@ export class AdminService {
     const snapshot = await this.#readSessionSnapshot();
     return {
       ok: true,
-      sessions: snapshot.allSessions.slice(0, 100).map((session) =>
+      sessions: snapshot.allSessions.slice(0, 500).map((session) =>
         this.#summarizeSession(session, {
-          inbound: snapshot.openInboundBySession.get(session.key) ?? [],
+          inbound: snapshot.inboundBySession.get(session.key) ?? [],
+          openInbound: snapshot.openInboundBySession.get(session.key) ?? [],
           jobs: snapshot.jobsBySession.get(session.key) ?? [],
           usage: snapshot.usageBySession.get(session.key)
         })
@@ -247,7 +252,7 @@ export class AdminService {
         type: "session_created",
         at: session.createdAt,
         status: session.activeTurnId ? "active" : "idle",
-        summary: session.workspacePath
+        summary: "Slack thread 初始化"
       }
     ];
 
@@ -286,14 +291,18 @@ export class AdminService {
       });
     }
 
+    const agentEvents = this.options.sessions.listAgentTraceEvents(session.key, 1000);
+
     return {
       ok: true,
       session: this.#summarizeSession(session, {
-        inbound: openInbound,
+        inbound,
+        openInbound,
         jobs,
         usage: summarizeUsageBySessionMap(this.#listCodexTurnUsage(1000)).get(session.key)
       }),
-      events: events.sort(compareTimelineEvents)
+      trace: summarizeAgentTrace(agentEvents),
+      events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
     };
   }
 
@@ -519,6 +528,7 @@ export class AdminService {
       .listSessions()
       .sort((left, right) => compareSessions(left, right));
     const activeSessions = allSessions.filter((session) => Boolean(session.activeTurnId));
+    const inbound = this.options.sessions.listInboundMessages();
     const openInbound = this.options.sessions
       .listInboundMessages({
         status: ["pending", "inflight"]
@@ -532,8 +542,10 @@ export class AdminService {
     return {
       allSessions,
       activeSessions,
+      inbound,
       openInbound,
       backgroundJobs,
+      inboundBySession: groupBySession(inbound),
       openInboundBySession: groupBySession(openInbound),
       jobsBySession: groupBySession(backgroundJobs),
       usageBySession
@@ -879,21 +891,30 @@ export class AdminService {
     session: SlackSessionRecord,
     related: {
       readonly inbound: readonly PersistedInboundMessage[];
+      readonly openInbound: readonly PersistedInboundMessage[];
       readonly jobs: readonly PersistedBackgroundJob[];
       readonly usage?: SessionUsageSummary | undefined;
     }
   ): Record<string, unknown> {
     const runningBackgroundJobCount = related.jobs.filter((job) => job.status === "running").length;
     const failedBackgroundJobCount = related.jobs.filter((job) => job.status === "failed").length;
-    const openHumanInboundCount = related.inbound.filter(isHumanInboundMessage).length;
-    const openSystemInboundCount = related.inbound.length - openHumanInboundCount;
+    const openHumanInboundCount = related.openInbound.filter(isHumanInboundMessage).length;
+    const openSystemInboundCount = related.openInbound.length - openHumanInboundCount;
+    const userMessages = related.inbound.filter(isUserInboundMessage);
+    const firstUserMessage = userMessages.at(0);
+    const lastUserMessage = userMessages.at(-1);
     return {
       key: session.key,
       channelId: session.channelId,
+      channelLabel: channelLabelForSession(session, related.inbound),
       rootThreadTs: session.rootThreadTs,
+      threadUrl: buildSlackThreadUrl(session.channelId, session.rootThreadTs),
       workspacePath: session.workspacePath,
+      codexThreadId: session.codexThreadId ?? null,
       updatedAt: session.updatedAt,
       createdAt: session.createdAt,
+      firstUserMessage: firstUserMessage ? this.#summarizeInbound(firstUserMessage) : null,
+      lastUserMessage: lastUserMessage ? this.#summarizeInbound(lastUserMessage) : null,
       activeTurnId: session.activeTurnId ?? null,
       activeTurnStartedAt: session.activeTurnStartedAt ?? null,
       lastTurnSignalKind: session.lastTurnSignalKind ?? null,
@@ -902,10 +923,10 @@ export class AdminService {
       lastSlackReplyAt: session.lastSlackReplyAt ?? null,
       lastObservedMessageTs: session.lastObservedMessageTs ?? null,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs ?? null,
-      openInboundCount: related.inbound.length,
+      openInboundCount: related.openInbound.length,
       openHumanInboundCount,
       openSystemInboundCount,
-      openInbound: related.inbound.slice(0, 5).map((message) => this.#summarizeInbound(message)),
+      openInbound: related.openInbound.slice(0, 5).map((message) => this.#summarizeInbound(message)),
       backgroundJobCount: related.jobs.length,
       runningBackgroundJobCount,
       failedBackgroundJobCount,
@@ -1081,7 +1102,56 @@ function compareTimelineEvents(left: Record<string, JsonLike>, right: Record<str
   if (right.type === "session_created" && left.type !== "session_created") {
     return 1;
   }
-  return String(left.at ?? "").localeCompare(String(right.at ?? ""));
+  const atComparison = String(left.at ?? "").localeCompare(String(right.at ?? ""));
+  if (atComparison !== 0) {
+    return atComparison;
+  }
+  const leftSequence = typeof left.sequence === "number" ? left.sequence : 0;
+  const rightSequence = typeof right.sequence === "number" ? right.sequence : 0;
+  return leftSequence - rightSequence;
+}
+
+function summarizeAgentTrace(events: readonly PersistedAgentTraceEvent[]): Record<string, JsonLike> {
+  const categories: Record<string, number> = {};
+  const sources: Record<string, number> = {};
+  for (const event of events) {
+    categories[event.type] = (categories[event.type] ?? 0) + 1;
+    sources[event.source] = (sources[event.source] ?? 0) + 1;
+  }
+  return {
+    source: "broker_db",
+    eventCount: events.length,
+    categories,
+    sources
+  };
+}
+
+function agentTraceEventToTimelineEvent(event: PersistedAgentTraceEvent): Record<string, JsonLike> {
+  return withoutUndefined({
+    type: event.type,
+    at: event.at,
+    sequence: event.sequence,
+    title: event.title,
+    summary: event.summary,
+    detail: event.detail,
+    status: event.status,
+    role: event.role,
+    toolName: event.toolName,
+    source: event.source,
+    detailTruncated: event.detailTruncated,
+    detailOriginalChars: event.detailOriginalChars,
+    metadata: event.metadata
+  });
+}
+
+function withoutUndefined(values: Record<string, JsonLike | undefined>): Record<string, JsonLike> {
+  const result: Record<string, JsonLike> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 async function listJsonlFiles(directoryPath: string): Promise<Array<{
@@ -1168,4 +1238,50 @@ function isHumanInboundMessage(message: PersistedInboundMessage): boolean {
     message.source === "direct_message" ||
     message.source === "thread_reply"
   );
+}
+
+function isUserInboundMessage(message: PersistedInboundMessage): boolean {
+  return (
+    isHumanInboundMessage(message) &&
+    message.senderKind !== "bot" &&
+    message.senderKind !== "app" &&
+    message.text.trim().length > 0
+  );
+}
+
+function channelLabelForSession(
+  session: SlackSessionRecord,
+  inbound: readonly PersistedInboundMessage[]
+): string {
+  const channelName = inbound
+    .map((message) => readStringField(message.slackMessage, "channel_name"))
+    .find((value) => value);
+  if (channelName) {
+    return channelName.startsWith("#") ? channelName : `#${channelName}`;
+  }
+
+  const channelType = inbound.find((message) => message.channelType)?.channelType;
+  if (channelType === "im") {
+    return "私信";
+  }
+  if (channelType === "mpim") {
+    return "群聊";
+  }
+  return session.channelId;
+}
+
+function buildSlackThreadUrl(channelId: string, rootThreadTs: string): string {
+  const params = new URLSearchParams({
+    channel: channelId,
+    message_ts: rootThreadTs
+  });
+  return `https://slack.com/app_redirect?${params.toString()}`;
+}
+
+function readStringField(value: JsonLike | undefined, key: string): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
 }

@@ -5,6 +5,7 @@ import type {
   JsonLike,
   PersistedAdminAuditEvent,
   PersistedAdminOperation,
+  PersistedAgentTraceEvent,
   PersistedBackgroundJob,
   PersistedCodexTurnUsage,
   PersistedInboundMessage,
@@ -383,6 +384,14 @@ export class SessionManager {
 
   async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
     await this.#stateStore.upsertCodexTurnUsage(record);
+  }
+
+  listAgentTraceEvents(sessionKey: string, limit?: number): PersistedAgentTraceEvent[] {
+    return this.#stateStore.listAgentTraceEvents(sessionKey, limit);
+  }
+
+  async upsertAgentTraceEvent(record: PersistedAgentTraceEvent): Promise<void> {
+    await this.#stateStore.upsertAgentTraceEvent(record);
   }
 
   #requireSession(channelId: string, rootThreadTs: string): SlackSessionRecord {

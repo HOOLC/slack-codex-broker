@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
+import { renderAdminShellHtml } from "../src/admin-ui/admin-shell.js";
 import { createHttpHandler } from "../src/http/router.js";
 import { AdminService } from "../src/services/admin-service.js";
 import { createCodexBroker } from "../src/services/service-components.js";
@@ -244,8 +245,14 @@ describe("admin token usage e2e", () => {
 
     const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
-    expect(html).toContain("消耗监控");
-    expect(html).toContain("Token 消耗");
+    const shell = renderAdminShellHtml("slack-codex-broker");
+    const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
+    expect(html).toContain('/admin/assets/admin-ui.js');
+    expect(shell).toContain('id="topbar-quota"');
+    expect(shell).toContain("session-react-root");
+    expect(sessionViewSource).toContain("会话详情");
+    expect(sessionViewSource).toContain("Token 消耗");
+    expect(sessionViewSource).toContain("Token / 轮次");
   });
 });
 

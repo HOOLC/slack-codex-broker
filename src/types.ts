@@ -200,6 +200,28 @@ export interface PersistedCodexTurnUsage {
   readonly updatedAt: string;
 }
 
+export interface PersistedAgentTraceEvent {
+  readonly id: string;
+  readonly sessionKey: string;
+  readonly source: "broker" | "codex_runtime";
+  readonly type: string;
+  readonly at: string;
+  readonly sequence: number;
+  readonly title: string;
+  readonly summary: string;
+  readonly detail?: string | undefined;
+  readonly status?: string | undefined;
+  readonly role?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly callId?: string | undefined;
+  readonly turnId?: string | undefined;
+  readonly detailTruncated?: boolean | undefined;
+  readonly detailOriginalChars?: number | undefined;
+  readonly metadata?: JsonLike | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SlackInputMessage {
   readonly channelId: string;
   readonly channelType?: string | undefined;

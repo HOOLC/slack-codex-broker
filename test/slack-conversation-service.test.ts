@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config.js";
 import { SlackConversationService } from "../src/services/slack/slack-conversation-service.js";
-import type { PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
+import type { PersistedAgentTraceEvent, PersistedInboundMessage, SlackSessionRecord } from "../src/types.js";
 
 const TEST_SESSION: SlackSessionRecord = {
   key: "C123:111.222",
@@ -102,6 +102,63 @@ describe("SlackConversationService", () => {
 
     expect(listSessions).not.toHaveBeenCalled();
     expect(setAssistantThreadStatus).not.toHaveBeenCalled();
+
+    await service.stop();
+  });
+
+  it("persists Codex notifications as agent trace events", async () => {
+    const codex = new EventEmitter();
+    const records: PersistedAgentTraceEvent[] = [];
+    const upsertAgentTraceEvent = vi.fn(async (record: PersistedAgentTraceEvent) => {
+      records.push(record);
+    });
+
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        listSessions: vi.fn(() => [TEST_SESSION]),
+        findSessionByWorkspace: vi.fn(() => TEST_SESSION),
+        upsertAgentTraceEvent
+      } as never,
+      codex: codex as never,
+      slackApi: {
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    codex.emit("notification", "broker/system_prompt", {
+      cwd: TEST_SESSION.workspacePath,
+      baseInstructions: [
+        "System instruction",
+        "",
+        "Personal long-lived memory from ~/.codex/AGENT.md:",
+        "- remember the admin language",
+        "",
+        "Slack thread message model:",
+        "live thread"
+      ].join("\n")
+    });
+    codex.emit("notification", "codex/event/tool_start", {
+      turnId: TEST_SESSION.activeTurnId,
+      name: "exec_command",
+      callId: "call-1"
+    });
+
+    await vi.waitFor(() => {
+      expect(upsertAgentTraceEvent).toHaveBeenCalledTimes(3);
+    });
+    expect(records.map((record) => record.type)).toEqual(expect.arrayContaining([
+      "agent_system_prompt",
+      "agent_memory",
+      "agent_tool_call"
+    ]));
+    expect(records.find((record) => record.type === "agent_tool_call")).toEqual(expect.objectContaining({
+      source: "codex_runtime",
+      toolName: "exec_command"
+    }));
 
     await service.stop();
   });

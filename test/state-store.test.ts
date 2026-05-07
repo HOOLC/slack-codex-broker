@@ -184,6 +184,58 @@ describe("StateStore", () => {
     store.close();
   });
 
+  it("persists agent trace events and cascades them with the owning session", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-agent-trace-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z"
+    });
+
+    await store.upsertAgentTraceEvent({
+      id: "trace-1",
+      sessionKey: "C123:111.222",
+      source: "broker",
+      type: "agent_user_message",
+      at: "2026-03-15T00:00:01.000Z",
+      sequence: 1,
+      title: "用户消息",
+      summary: "hello",
+      detail: "hello",
+      status: "received",
+      role: "user",
+      turnId: "turn-1",
+      metadata: {
+        sample: true
+      },
+      createdAt: "2026-03-15T00:00:01.000Z",
+      updatedAt: "2026-03-15T00:00:01.000Z"
+    });
+
+    expect(store.listAgentTraceEvents("C123:111.222")).toEqual([
+      expect.objectContaining({
+        id: "trace-1",
+        sessionKey: "C123:111.222",
+        source: "broker",
+        type: "agent_user_message",
+        summary: "hello",
+        metadata: {
+          sample: true
+        }
+      })
+    ]);
+
+    await store.deleteSession("C123:111.222");
+    expect(store.listAgentTraceEvents("C123:111.222")).toHaveLength(0);
+    store.close();
+  });
+
   it("records explicit schema migrations and does not treat ad hoc DDL as the migration state", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-migrations-"));
     const sessionsRoot = path.join(stateDir, "sessions");
@@ -207,8 +259,12 @@ describe("StateStore", () => {
           name: "admin_operations"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 3,
           name: "codex_turn_usage"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "agent_trace_events"
         }
       ]);
     } finally {
