@@ -7,7 +7,7 @@ import type {
   PersistedAgentTraceEvent,
   JsonLike,
   PersistedBackgroundJob,
-  PersistedCodexTurnUsage,
+  PersistedAgentTurnUsage,
   PersistedInboundMessage,
   PersistedInboundMessageStatus,
   PersistedInboundSource,
@@ -17,7 +17,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 4;
+export const CURRENT_STATE_SCHEMA_VERSION = 5;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -41,7 +41,7 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           workspace_path TEXT NOT NULL,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
-          codex_thread_id TEXT,
+          agent_session_id TEXT,
           active_turn_id TEXT,
           active_turn_started_at TEXT,
           last_observed_message_ts TEXT,
@@ -173,35 +173,9 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
   },
   {
     version: 3,
-    name: "codex_turn_usage",
+    name: "agent_turn_usage",
     up(database) {
-      database.exec(`
-        CREATE TABLE IF NOT EXISTS codex_turn_usage (
-          turn_id TEXT PRIMARY KEY,
-          session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
-          channel_id TEXT NOT NULL,
-          root_thread_ts TEXT NOT NULL,
-          codex_thread_id TEXT,
-          status TEXT NOT NULL,
-          source TEXT NOT NULL,
-          model TEXT,
-          effort TEXT,
-          input_tokens INTEGER NOT NULL DEFAULT 0,
-          cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-          output_tokens INTEGER NOT NULL DEFAULT 0,
-          reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-          total_tokens INTEGER NOT NULL DEFAULT 0,
-          raw_usage TEXT,
-          started_at TEXT,
-          completed_at TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_session ON codex_turn_usage(session_key, completed_at);
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_completed ON codex_turn_usage(completed_at);
-        CREATE INDEX IF NOT EXISTS idx_codex_turn_usage_total ON codex_turn_usage(total_tokens);
-      `);
+      createAgentTurnUsageSchema(database);
     }
   },
   {
@@ -236,8 +210,83 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_agent_trace_events_turn ON agent_trace_events(session_key, turn_id);
       `);
     }
+  },
+  {
+    version: 5,
+    name: "agent_schema_repair",
+    up(database) {
+      createAgentTurnUsageSchema(database);
+
+      if (!tableExists(database, "codex_turn_usage")) {
+        return;
+      }
+
+      const columns = tableColumns(database, "codex_turn_usage");
+      const agentSessionColumn = columns.has("codex_thread_id")
+        ? "codex_thread_id"
+        : (columns.has("agent_session_id") ? "agent_session_id" : "NULL");
+      database.exec(`
+        INSERT OR IGNORE INTO agent_turn_usage (
+          turn_id, session_key, channel_id, root_thread_ts, agent_session_id,
+          status, source, model, effort,
+          input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens,
+          raw_usage, started_at, completed_at, created_at, updated_at
+        )
+        SELECT
+          turn_id, session_key, channel_id, root_thread_ts, ${agentSessionColumn},
+          status, source, model, effort,
+          input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, total_tokens,
+          raw_usage, started_at, completed_at, created_at, updated_at
+        FROM codex_turn_usage;
+
+        DROP TABLE codex_turn_usage;
+      `);
+    }
   }
 ];
+
+function createAgentTurnUsageSchema(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_turn_usage (
+      turn_id TEXT PRIMARY KEY,
+      session_key TEXT NOT NULL REFERENCES sessions(key) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL,
+      root_thread_ts TEXT NOT NULL,
+      agent_session_id TEXT,
+      status TEXT NOT NULL,
+      source TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      raw_usage TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_session ON agent_turn_usage(session_key, completed_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_completed ON agent_turn_usage(completed_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_turn_usage_total ON agent_turn_usage(total_tokens);
+  `);
+}
+
+function tableExists(database: DatabaseSync, tableName: string): boolean {
+  return Boolean(database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName));
+}
+
+function tableColumns(database: DatabaseSync, tableName: string): Set<string> {
+  return new Set(
+    (database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>)
+      .map((row) => row.name)
+  );
+}
 
 export class StateStore {
   readonly #stateDir: string;
@@ -636,21 +685,21 @@ export class StateStore {
     });
   }
 
-  listCodexTurnUsage(limit = 1000): PersistedCodexTurnUsage[] {
+  listAgentTurnUsage(limit = 1000): PersistedAgentTurnUsage[] {
     return this.#databaseRequired()
       .prepare(`
-        SELECT * FROM codex_turn_usage
+        SELECT * FROM agent_turn_usage
         ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, updated_at DESC
         LIMIT ?
       `)
       .all(limit)
-      .map((row) => this.#rowToCodexTurnUsage(row as SqlRow));
+      .map((row) => this.#rowToAgentTurnUsage(row as SqlRow));
   }
 
-  async upsertCodexTurnUsage(record: PersistedCodexTurnUsage): Promise<void> {
-    const normalized = this.#normalizeCodexTurnUsage(record);
+  async upsertAgentTurnUsage(record: PersistedAgentTurnUsage): Promise<void> {
+    const normalized = this.#normalizeAgentTurnUsage(record);
     this.#transaction(() => {
-      this.#upsertCodexTurnUsage(normalized);
+      this.#upsertAgentTurnUsage(normalized);
     });
   }
 
@@ -716,7 +765,7 @@ export class StateStore {
     this.#databaseRequired().prepare(`
       INSERT INTO sessions (
         key, channel_id, root_thread_ts, workspace_path, created_at, updated_at,
-        codex_thread_id, active_turn_id, active_turn_started_at,
+        agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at,
         last_progress_reminder_at, last_turn_signal_turn_id, last_turn_signal_kind,
         last_turn_signal_reason, last_turn_signal_at,
@@ -730,7 +779,7 @@ export class StateStore {
         workspace_path = excluded.workspace_path,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
-        codex_thread_id = excluded.codex_thread_id,
+        agent_session_id = excluded.agent_session_id,
         active_turn_id = excluded.active_turn_id,
         active_turn_started_at = excluded.active_turn_started_at,
         last_observed_message_ts = excluded.last_observed_message_ts,
@@ -755,7 +804,7 @@ export class StateStore {
       record.workspacePath,
       record.createdAt,
       record.updatedAt,
-      record.codexThreadId ?? null,
+      record.agentSessionId ?? null,
       record.activeTurnId ?? null,
       record.activeTurnStartedAt ?? null,
       record.lastObservedMessageTs ?? null,
@@ -923,10 +972,10 @@ export class StateStore {
     );
   }
 
-  #upsertCodexTurnUsage(record: PersistedCodexTurnUsage): void {
+  #upsertAgentTurnUsage(record: PersistedAgentTurnUsage): void {
     this.#databaseRequired().prepare(`
-      INSERT INTO codex_turn_usage (
-        turn_id, session_key, channel_id, root_thread_ts, codex_thread_id,
+      INSERT INTO agent_turn_usage (
+        turn_id, session_key, channel_id, root_thread_ts, agent_session_id,
         status, source, model, effort, input_tokens, cached_input_tokens,
         output_tokens, reasoning_tokens, total_tokens, raw_usage,
         started_at, completed_at, created_at, updated_at
@@ -935,7 +984,7 @@ export class StateStore {
         session_key = excluded.session_key,
         channel_id = excluded.channel_id,
         root_thread_ts = excluded.root_thread_ts,
-        codex_thread_id = excluded.codex_thread_id,
+        agent_session_id = excluded.agent_session_id,
         status = excluded.status,
         source = excluded.source,
         model = excluded.model,
@@ -955,7 +1004,7 @@ export class StateStore {
       record.sessionKey,
       record.channelId,
       record.rootThreadTs,
-      record.codexThreadId ?? null,
+      record.agentSessionId ?? null,
       record.status,
       record.source,
       record.model ?? null,
@@ -1054,7 +1103,7 @@ export class StateStore {
       workspacePath: stringColumn(row, "workspace_path"),
       createdAt: stringColumn(row, "created_at"),
       updatedAt: stringColumn(row, "updated_at"),
-      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
+      agentSessionId: optionalStringColumn(row, "agent_session_id"),
       activeTurnId: optionalStringColumn(row, "active_turn_id"),
       activeTurnStartedAt: optionalStringColumn(row, "active_turn_started_at"),
       lastObservedMessageTs: optionalStringColumn(row, "last_observed_message_ts"),
@@ -1168,15 +1217,15 @@ export class StateStore {
     });
   }
 
-  #rowToCodexTurnUsage(row: SqlRow): PersistedCodexTurnUsage {
-    return this.#normalizeCodexTurnUsage({
+  #rowToAgentTurnUsage(row: SqlRow): PersistedAgentTurnUsage {
+    return this.#normalizeAgentTurnUsage({
       turnId: stringColumn(row, "turn_id"),
       sessionKey: stringColumn(row, "session_key"),
       channelId: stringColumn(row, "channel_id"),
       rootThreadTs: stringColumn(row, "root_thread_ts"),
-      codexThreadId: optionalStringColumn(row, "codex_thread_id"),
-      status: stringColumn(row, "status") as PersistedCodexTurnUsage["status"],
-      source: stringColumn(row, "source") as PersistedCodexTurnUsage["source"],
+      agentSessionId: optionalStringColumn(row, "agent_session_id"),
+      status: stringColumn(row, "status") as PersistedAgentTurnUsage["status"],
+      source: stringColumn(row, "source") as PersistedAgentTurnUsage["source"],
       model: optionalStringColumn(row, "model"),
       effort: optionalStringColumn(row, "effort"),
       inputTokens: optionalNumberColumn(row, "input_tokens") ?? 0,
@@ -1231,7 +1280,7 @@ export class StateStore {
       workspacePath,
       createdAt: String(session.createdAt),
       updatedAt: String(session.updatedAt),
-      codexThreadId: session.codexThreadId,
+      agentSessionId: session.agentSessionId,
       activeTurnId: session.activeTurnId,
       activeTurnStartedAt: session.activeTurnStartedAt,
       lastObservedMessageTs: session.lastObservedMessageTs,
@@ -1364,9 +1413,9 @@ export class StateStore {
     };
   }
 
-  #normalizeCodexTurnUsage(raw: Partial<PersistedCodexTurnUsage>): PersistedCodexTurnUsage {
+  #normalizeAgentTurnUsage(raw: Partial<PersistedAgentTurnUsage>): PersistedAgentTurnUsage {
     if (!raw.turnId || !raw.sessionKey || !raw.channelId || !raw.rootThreadTs || !raw.status || !raw.source) {
-      throw new Error(`Invalid Codex turn usage: ${raw.turnId ?? "unknown"}`);
+      throw new Error(`Invalid Agent turn usage: ${raw.turnId ?? "unknown"}`);
     }
 
     const now = new Date().toISOString();
@@ -1375,7 +1424,7 @@ export class StateStore {
       sessionKey: String(raw.sessionKey),
       channelId: String(raw.channelId),
       rootThreadTs: String(raw.rootThreadTs),
-      codexThreadId: typeof raw.codexThreadId === "string" ? raw.codexThreadId : undefined,
+      agentSessionId: typeof raw.agentSessionId === "string" ? raw.agentSessionId : undefined,
       status: raw.status,
       source: raw.source,
       model: typeof raw.model === "string" ? raw.model : undefined,

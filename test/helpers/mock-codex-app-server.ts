@@ -45,6 +45,10 @@ export class MockCodexAppServer {
     readonly turnId: string;
     readonly input: readonly CodexInputItem[];
   }> = [];
+  readonly interrupts: Array<{
+    readonly threadId: string;
+    readonly turnId: string;
+  }> = [];
   readonly onTurnStart: ((context: MockTurnContext) => Promise<void> | void) | undefined;
   readonly onTurnSteer: ((context: MockTurnContext) => Promise<void> | void) | undefined;
 
@@ -263,6 +267,10 @@ export class MockCodexAppServer {
         const turnId = String(params.turnId ?? "");
         const thread = this.#requireThread(threadId);
         const turn = this.#requireTurn(thread, turnId);
+        this.interrupts.push({
+          threadId,
+          turnId
+        });
         this.#respond(socket, message.id, { ok: true });
         this.#interruptTurn(socket, thread, turn, "interrupted");
         return;

@@ -11,7 +11,7 @@ import type {
   PersistedAdminOperation,
   PersistedAgentTraceEvent,
   PersistedBackgroundJob,
-  PersistedCodexTurnUsage,
+  PersistedAgentTurnUsage,
   PersistedInboundMessage,
   SlackSessionRecord
 } from "../types.js";
@@ -83,10 +83,10 @@ interface AdminOperationStore {
     readonly limit?: number | undefined;
   }) => PersistedAdminAuditEvent[]) | undefined;
   readonly appendAdminAuditEvent?: ((record: PersistedAdminAuditEvent) => Promise<void>) | undefined;
-  readonly listCodexTurnUsage?: ((limit?: number) => PersistedCodexTurnUsage[]) | undefined;
+  readonly listAgentTurnUsage?: ((limit?: number) => PersistedAgentTurnUsage[]) | undefined;
 }
 
-interface CodexUsageTotals {
+interface AgentUsageTotals {
   readonly totalTurns: number;
   readonly exactTurns: number;
   readonly estimatedTurns: number;
@@ -299,7 +299,7 @@ export class AdminService {
         inbound,
         openInbound,
         jobs,
-        usage: summarizeUsageBySessionMap(this.#listCodexTurnUsage(1000)).get(session.key)
+        usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key)
       }),
       trace: summarizeAgentTrace(agentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
@@ -537,7 +537,7 @@ export class AdminService {
     const backgroundJobs = this.options.sessions
       .listBackgroundJobs()
       .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
-    const usageBySession = summarizeUsageBySessionMap(this.#listCodexTurnUsage(1000));
+    const usageBySession = summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000));
 
     return {
       allSessions,
@@ -569,7 +569,7 @@ export class AdminService {
   }
 
   #readUsageOverview(): Record<string, unknown> {
-    const records = this.#listCodexTurnUsage(1000);
+    const records = this.#listAgentTurnUsage(1000);
     const totals = summarizeUsageTotals(records);
     const windows = {
       lastHour: summarizeUsageTotals(filterUsageWindow(records, 60 * 60 * 1000)),
@@ -771,9 +771,9 @@ export class AdminService {
     return store.listAdminAuditEvents?.call(this.options.sessions, options) ?? [];
   }
 
-  #listCodexTurnUsage(limit: number): readonly PersistedCodexTurnUsage[] {
+  #listAgentTurnUsage(limit: number): readonly PersistedAgentTurnUsage[] {
     const store = this.#operationStore();
-    return store.listCodexTurnUsage?.call(this.options.sessions, limit) ?? [];
+    return store.listAgentTurnUsage?.call(this.options.sessions, limit) ?? [];
   }
 
   #operationStore(): AdminOperationStore {
@@ -910,7 +910,7 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs,
       threadUrl: buildSlackThreadUrl(session.channelId, session.rootThreadTs),
       workspacePath: session.workspacePath,
-      codexThreadId: session.codexThreadId ?? null,
+      agentSessionId: session.agentSessionId ?? null,
       updatedAt: session.updatedAt,
       createdAt: session.createdAt,
       firstUserMessage: firstUserMessage ? this.#summarizeInbound(firstUserMessage) : null,
@@ -936,7 +936,7 @@ export class AdminService {
   }
 }
 
-function summarizeUsageTotals(records: readonly PersistedCodexTurnUsage[]): CodexUsageTotals {
+function summarizeUsageTotals(records: readonly PersistedAgentTurnUsage[]): AgentUsageTotals {
   let totalTurns = 0;
   let exactTurns = 0;
   let estimatedTurns = 0;
@@ -977,18 +977,18 @@ function summarizeUsageTotals(records: readonly PersistedCodexTurnUsage[]): Code
   };
 }
 
-function filterUsageWindow(records: readonly PersistedCodexTurnUsage[], windowMs: number): PersistedCodexTurnUsage[] {
+function filterUsageWindow(records: readonly PersistedAgentTurnUsage[], windowMs: number): PersistedAgentTurnUsage[] {
   const cutoff = Date.now() - windowMs;
   return records.filter((record) => usageTimestampMs(record) >= cutoff);
 }
 
-function summarizeUsageRecord(record: PersistedCodexTurnUsage): Record<string, unknown> {
+function summarizeUsageRecord(record: PersistedAgentTurnUsage): Record<string, unknown> {
   return {
     turnId: record.turnId,
     sessionKey: record.sessionKey,
     channelId: record.channelId,
     rootThreadTs: record.rootThreadTs,
-    codexThreadId: record.codexThreadId ?? null,
+    agentSessionId: record.agentSessionId ?? null,
     status: record.status,
     source: record.source,
     model: record.model ?? null,
@@ -1004,12 +1004,12 @@ function summarizeUsageRecord(record: PersistedCodexTurnUsage): Record<string, u
   };
 }
 
-function summarizeUsageBySessionMap(records: readonly PersistedCodexTurnUsage[]): ReadonlyMap<string, SessionUsageSummary> {
+function summarizeUsageBySessionMap(records: readonly PersistedAgentTurnUsage[]): ReadonlyMap<string, SessionUsageSummary> {
   return new Map(summarizeUsageBySession(records).map((entry) => [entry.sessionKey, entry]));
 }
 
 function summarizeUsageBySession(
-  records: readonly PersistedCodexTurnUsage[],
+  records: readonly PersistedAgentTurnUsage[],
   limit?: number
 ): readonly SessionUsageSummary[] {
   const groups = new Map<string, MutableSessionUsageSummary>();
@@ -1077,11 +1077,11 @@ function emptySessionUsageSummary(session: SlackSessionRecord): SessionUsageSumm
   };
 }
 
-function compareUsageRecordsDescending(left: PersistedCodexTurnUsage, right: PersistedCodexTurnUsage): number {
+function compareUsageRecordsDescending(left: PersistedAgentTurnUsage, right: PersistedAgentTurnUsage): number {
   return usageTimestampMs(right) - usageTimestampMs(left) || right.updatedAt.localeCompare(left.updatedAt);
 }
 
-function usageTimestampMs(record: PersistedCodexTurnUsage): number {
+function usageTimestampMs(record: PersistedAgentTurnUsage): number {
   const parsed = Date.parse(record.completedAt ?? record.updatedAt ?? record.createdAt);
   return Number.isFinite(parsed) ? parsed : 0;
 }

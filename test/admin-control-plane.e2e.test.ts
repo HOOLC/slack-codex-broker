@@ -25,8 +25,8 @@ describe("admin control plane e2e", () => {
   it("exposes overview, sessions, timeline, and preflight as separate control-plane resources", async () => {
     const { baseUrl, sessions } = await startAdminFixture();
     await seedActiveSession(sessions);
-    const codexThreadId = "019e022d-049b-7d32-a69b-d6d23b3773f2";
-    await sessions.setCodexThreadId("C123", "111.222", codexThreadId);
+    const agentSessionId = "019e022d-049b-7d32-a69b-d6d23b3773f2";
+    await sessions.setAgentSessionId("C123", "111.222", agentSessionId);
     await seedAgentTraceFixture(sessions, "C123:111.222");
 
     const overview = await readJson(`${baseUrl}/admin/api/overview`);
@@ -68,7 +68,7 @@ describe("admin control plane e2e", () => {
       ok: true,
       session: {
         key: "C123:111.222",
-        codexThreadId,
+        agentSessionId,
         lastTurnSignalKind: "wait"
       },
       trace: {
@@ -467,7 +467,7 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
     },
     {
       id: `${sessionKey}:runtime:assistant`,
-      source: "codex_runtime",
+      source: "agent_runtime",
       type: "agent_assistant_message",
       at: "2026-03-19T00:00:03.000Z",
       sequence: 3000,
@@ -480,7 +480,7 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
     },
     {
       id: `${sessionKey}:runtime:tool-call`,
-      source: "codex_runtime",
+      source: "agent_runtime",
       type: "agent_tool_call",
       at: "2026-03-19T00:00:04.000Z",
       sequence: 4000,
@@ -495,7 +495,7 @@ async function seedAgentTraceFixture(sessions: SessionManager, sessionKey: strin
     },
     {
       id: `${sessionKey}:runtime:tool-result`,
-      source: "codex_runtime",
+      source: "agent_runtime",
       type: "agent_tool_result",
       at: "2026-03-19T00:00:05.000Z",
       sequence: 5000,

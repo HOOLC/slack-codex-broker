@@ -9,7 +9,7 @@ import { loadConfig } from "../src/config.js";
 import { renderAdminShellHtml } from "../src/admin-ui/admin-shell.js";
 import { createHttpHandler } from "../src/http/router.js";
 import { AdminService } from "../src/services/admin-service.js";
-import { createCodexBroker } from "../src/services/service-components.js";
+import { createAgentRuntime, createCodexBroker } from "../src/services/service-components.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { SlackInboundStore } from "../src/services/slack/slack-inbound-store.js";
 import { SlackTurnRunner } from "../src/services/slack/slack-turn-runner.js";
@@ -25,7 +25,7 @@ describe("admin token usage e2e", () => {
     }
   });
 
-  it("records exact Codex turn token usage and exposes it through admin resources", async () => {
+  it("records exact agent turn token usage and exposes it through admin resources", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-token-usage-"));
     cleanups.push(async () => {
       await fs.rm(dataRoot, { force: true, recursive: true });
@@ -74,9 +74,13 @@ describe("admin token usage e2e", () => {
     });
 
     const codex = createCodexBroker(config);
-    await codex.start();
+    const agentRuntime = createAgentRuntime({
+      codex,
+      sessions
+    });
+    await agentRuntime.start();
     cleanups.push(async () => {
-      await codex.stop();
+      await agentRuntime.stop();
     });
 
     const slackApi = {
@@ -92,15 +96,15 @@ describe("admin token usage e2e", () => {
       slackApi
     });
     const runner = new SlackTurnRunner({
-      codex,
+      agentRuntime,
       slackApi,
       sessions,
       inboundStore
     });
 
     let session = await sessions.ensureSession("C123", "111.222");
-    session = await runner.ensureCodexThread(session);
-    await runner.runTurnWithRecovery({
+    session = await runner.ensureAgentSession(session);
+    await runner.submitInputWithRecovery({
       session,
       sessionKey: session.key,
       senderUserId: "U123",

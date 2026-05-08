@@ -1077,7 +1077,7 @@ describe("AppServerClient disconnect handling", () => {
     await expect(client.ensureThread({
       channelId: "C123",
       rootThreadTs: "111.222",
-      codexThreadId: "thread-1",
+      agentSessionId: "thread-1",
       workspacePath: "/tmp/workspace"
     })).resolves.toBe("thread-1");
 

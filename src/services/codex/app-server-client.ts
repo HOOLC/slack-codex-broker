@@ -5,8 +5,7 @@ import WebSocket from "ws";
 
 import { logger } from "../../logger.js";
 import type {
-  CodexTurnTokenUsage,
-  CodexTurnResult,
+  AgentTurnTokenUsage,
   GeneratedImageArtifact,
   JsonLike,
   SlackUserIdentity
@@ -46,7 +45,7 @@ interface ActiveTurn {
   readonly turnId: string;
   text: string;
   generatedImages: GeneratedImageArtifact[];
-  usage?: CodexTurnTokenUsage | undefined;
+  usage?: AgentTurnTokenUsage | undefined;
   lastTokenCountCumulativeTokens?: number | undefined;
   resolve: (result: CodexTurnResult) => void;
   reject: (error: Error) => void;
@@ -56,18 +55,27 @@ interface BufferedTurnEvents {
   text: string;
   terminalState: "completed" | "aborted" | null;
   generatedImages: GeneratedImageArtifact[];
-  usage?: CodexTurnTokenUsage | undefined;
+  usage?: AgentTurnTokenUsage | undefined;
   lastTokenCountCumulativeTokens?: number | undefined;
 }
 
 interface CodexTokenCountUsageEvent {
-  readonly usage: CodexTurnTokenUsage;
+  readonly usage: AgentTurnTokenUsage;
   readonly cumulativeTotalTokens?: number | undefined;
 }
 
 export interface StartedTurn {
   readonly turnId: string;
   readonly completion: Promise<CodexTurnResult>;
+}
+
+export interface CodexTurnResult {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly finalMessage: string;
+  readonly aborted: boolean;
+  readonly generatedImages?: readonly GeneratedImageArtifact[] | undefined;
+  readonly usage?: AgentTurnTokenUsage | undefined;
 }
 
 export interface CodexTextInputItem {
@@ -94,7 +102,7 @@ export interface ReadTurnResult {
   readonly finalMessage: string;
   readonly errorMessage?: string | undefined;
   readonly generatedImages: readonly GeneratedImageArtifact[];
-  readonly usage?: CodexTurnTokenUsage | undefined;
+  readonly usage?: AgentTurnTokenUsage | undefined;
 }
 
 export interface ReadTurnResultOptions {
@@ -143,7 +151,7 @@ export class AppServerClient extends EventEmitter {
   readonly #pendingRequests = new Map<string, PendingRequest>();
   readonly #activeTurns = new Map<string, ActiveTurn>();
   readonly #bufferedTurnEvents = new Map<string, BufferedTurnEvents>();
-  #pendingAnonymousTokenUsage: CodexTurnTokenUsage | undefined;
+  #pendingAnonymousTokenUsage: AgentTurnTokenUsage | undefined;
   #pendingAnonymousTokenUsageCumulativeTokens: number | undefined;
   #connected = false;
   #disconnectHandled = false;
@@ -287,18 +295,18 @@ export class AppServerClient extends EventEmitter {
   }
 
   async ensureThread(session: {
-    readonly codexThreadId?: string | undefined;
+    readonly agentSessionId?: string | undefined;
     readonly workspacePath: string;
     readonly channelId: string;
     readonly rootThreadTs: string;
   }): Promise<string> {
-    if (session.codexThreadId) {
+    if (session.agentSessionId) {
       logger.debug("Resuming Codex thread", {
-        threadId: session.codexThreadId,
+        threadId: session.agentSessionId,
         cwd: session.workspacePath
       });
       const result = await this.request("thread/resume", {
-        threadId: session.codexThreadId,
+        threadId: session.agentSessionId,
         cwd: session.workspacePath,
         approvalPolicy: "never",
         sandbox: "danger-full-access",
@@ -510,7 +518,7 @@ export class AppServerClient extends EventEmitter {
       .map((item, index) => normalizeGeneratedImageArtifact(item, index))
       .filter((item): item is GeneratedImageArtifact => item !== null);
     const status = normalizeTurnStatus(turn.status);
-    const usage = normalizeCodexTurnUsageFromThreadTurn(turn);
+    const usage = normalizeAgentTurnUsageFromThreadTurn(turn);
 
     const normalizedResult: ReadTurnResult = {
       status,
@@ -654,7 +662,7 @@ export class AppServerClient extends EventEmitter {
     }
 
     if (method === "codex/event/token_count") {
-      const usageEvent = normalizeCodexTurnUsageFromTokenCountEvent(params);
+      const usageEvent = normalizeAgentTurnUsageFromTokenCountEvent(params);
       if (!usageEvent) {
         return;
       }
@@ -687,7 +695,7 @@ export class AppServerClient extends EventEmitter {
       if (!turnId) {
         return;
       }
-      const usage = normalizeCodexTurnUsageFromTurnEvent(params);
+      const usage = normalizeAgentTurnUsageFromTurnEvent(params);
 
       const turn = this.#activeTurns.get(turnId);
       if (!turn) {
@@ -806,7 +814,7 @@ export class AppServerClient extends EventEmitter {
   #bufferTurnTerminalState(
     turnId: string,
     terminalState: "completed" | "aborted",
-    usage?: CodexTurnTokenUsage | undefined
+    usage?: AgentTurnTokenUsage | undefined
   ): void {
     const buffered = this.#bufferedTurnEvents.get(turnId) ?? {
       text: "",
@@ -822,7 +830,7 @@ export class AppServerClient extends EventEmitter {
 
   #applyTurnUsage(
     turnId: string,
-    usage: CodexTurnTokenUsage,
+    usage: AgentTurnTokenUsage,
     cumulativeTotalTokens?: number | undefined
   ): void {
     const turn = this.#activeTurns.get(turnId);
@@ -974,24 +982,24 @@ export class AppServerClient extends EventEmitter {
 
 function withOptionalUsage(
   result: Omit<CodexTurnResult, "usage">,
-  usage: CodexTurnTokenUsage | undefined
+  usage: AgentTurnTokenUsage | undefined
 ): CodexTurnResult {
   return usage ? { ...result, usage } : result;
 }
 
-function normalizeCodexTurnUsageFromTurnEvent(params: Record<string, any>): CodexTurnTokenUsage | undefined {
+function normalizeAgentTurnUsageFromTurnEvent(params: Record<string, any>): AgentTurnTokenUsage | undefined {
   const turn = isRecord(params.turn) ? params.turn : {};
   return (
-    normalizeCodexTurnTokenUsage(turn.usage) ??
-    normalizeCodexTurnTokenUsage(turn.token_usage) ??
-    normalizeCodexTurnTokenUsage(turn.tokenUsage) ??
-    normalizeCodexTurnTokenUsage(params.usage) ??
-    normalizeCodexTurnTokenUsage(params.token_usage) ??
-    normalizeCodexTurnTokenUsage(params.tokenUsage)
+    normalizeAgentTurnTokenUsage(turn.usage) ??
+    normalizeAgentTurnTokenUsage(turn.token_usage) ??
+    normalizeAgentTurnTokenUsage(turn.tokenUsage) ??
+    normalizeAgentTurnTokenUsage(params.usage) ??
+    normalizeAgentTurnTokenUsage(params.token_usage) ??
+    normalizeAgentTurnTokenUsage(params.tokenUsage)
   );
 }
 
-function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>): CodexTokenCountUsageEvent | undefined {
+function normalizeAgentTurnUsageFromTokenCountEvent(params: Record<string, any>): CodexTokenCountUsageEvent | undefined {
   const event =
     isRecord(params.msg) ? params.msg :
       isRecord(params.payload) ? params.payload :
@@ -999,14 +1007,14 @@ function normalizeCodexTurnUsageFromTokenCountEvent(params: Record<string, any>)
   const info = isRecord(event.info) ? event.info : isRecord(params.info) ? params.info : undefined;
 
   const usage = (
-    normalizeCodexTurnTokenUsage(info?.last_token_usage) ??
-    normalizeCodexTurnTokenUsage(info?.lastTokenUsage) ??
-    normalizeCodexTurnTokenUsage(event.last_token_usage) ??
-    normalizeCodexTurnTokenUsage(event.lastTokenUsage) ??
-    normalizeCodexTurnTokenUsage(params.last_token_usage) ??
-    normalizeCodexTurnTokenUsage(params.lastTokenUsage) ??
-    normalizeCodexTurnTokenUsage(event.usage) ??
-    normalizeCodexTurnTokenUsage(params.usage)
+    normalizeAgentTurnTokenUsage(info?.last_token_usage) ??
+    normalizeAgentTurnTokenUsage(info?.lastTokenUsage) ??
+    normalizeAgentTurnTokenUsage(event.last_token_usage) ??
+    normalizeAgentTurnTokenUsage(event.lastTokenUsage) ??
+    normalizeAgentTurnTokenUsage(params.last_token_usage) ??
+    normalizeAgentTurnTokenUsage(params.lastTokenUsage) ??
+    normalizeAgentTurnTokenUsage(event.usage) ??
+    normalizeAgentTurnTokenUsage(params.usage)
   );
   if (!usage) {
     return undefined;
@@ -1039,9 +1047,9 @@ function readCodexEventTurnId(params: Record<string, any>): string | undefined {
 }
 
 function addCodexTurnUsage(
-  current: CodexTurnTokenUsage | undefined,
-  next: CodexTurnTokenUsage
-): CodexTurnTokenUsage {
+  current: AgentTurnTokenUsage | undefined,
+  next: AgentTurnTokenUsage
+): AgentTurnTokenUsage {
   if (!current) {
     return next;
   }
@@ -1081,19 +1089,19 @@ function updateTokenCountCumulativeTotal(
   return Math.max(previousCumulativeTotalTokens, nextCumulativeTotalTokens);
 }
 
-function normalizeCodexTurnUsageFromThreadTurn(turn: {
+function normalizeAgentTurnUsageFromThreadTurn(turn: {
   readonly usage?: unknown;
   readonly token_usage?: unknown;
   readonly tokenUsage?: unknown;
-}): CodexTurnTokenUsage | undefined {
+}): AgentTurnTokenUsage | undefined {
   return (
-    normalizeCodexTurnTokenUsage(turn.usage) ??
-    normalizeCodexTurnTokenUsage(turn.token_usage) ??
-    normalizeCodexTurnTokenUsage(turn.tokenUsage)
+    normalizeAgentTurnTokenUsage(turn.usage) ??
+    normalizeAgentTurnTokenUsage(turn.token_usage) ??
+    normalizeAgentTurnTokenUsage(turn.tokenUsage)
   );
 }
 
-function normalizeCodexTurnTokenUsage(value: unknown): CodexTurnTokenUsage | undefined {
+function normalizeAgentTurnTokenUsage(value: unknown): AgentTurnTokenUsage | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
