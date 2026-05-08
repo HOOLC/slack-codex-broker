@@ -1,6 +1,8 @@
 export interface SlackSessionRecord {
   readonly key: string;
   readonly channelId: string;
+  readonly channelName?: string | undefined;
+  readonly channelType?: string | undefined;
   readonly rootThreadTs: string;
   readonly workspacePath: string;
   readonly createdAt: string;
@@ -11,7 +13,6 @@ export interface SlackSessionRecord {
   readonly lastObservedMessageTs?: string | undefined;
   readonly lastDeliveredMessageTs?: string | undefined;
   readonly lastSlackReplyAt?: string | undefined;
-  readonly lastProgressReminderAt?: string | undefined;
   readonly lastTurnSignalTurnId?: string | undefined;
   readonly lastTurnSignalKind?: SlackTurnSignalKind | undefined;
   readonly lastTurnSignalReason?: string | undefined;
@@ -85,6 +86,7 @@ export interface PersistedInboundMessage {
   readonly appId?: string | undefined;
   readonly senderUsername?: string | undefined;
   readonly mentionedUserIds?: readonly string[] | undefined;
+  readonly mentionedUsers?: readonly SlackUserIdentity[] | undefined;
   readonly contextText?: string | undefined;
   readonly images?: readonly SlackImageAttachment[] | undefined;
   readonly slackMessage?: JsonLike | undefined;

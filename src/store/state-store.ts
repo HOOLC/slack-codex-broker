@@ -12,12 +12,13 @@ import type {
   PersistedInboundMessageStatus,
   PersistedInboundSource,
   PersistedSlackEvent,
+  SlackUserIdentity,
   SlackSessionRecord
 } from "../types.js";
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 6;
+export const CURRENT_STATE_SCHEMA_VERSION = 8;
 
 type SqlValue = string | number | bigint | null;
 type SqlRow = Record<string, unknown>;
@@ -37,6 +38,8 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE TABLE IF NOT EXISTS sessions (
           key TEXT PRIMARY KEY,
           channel_id TEXT NOT NULL,
+          channel_name TEXT,
+          channel_type TEXT,
           root_thread_ts TEXT NOT NULL,
           workspace_path TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -47,7 +50,6 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           last_observed_message_ts TEXT,
           last_delivered_message_ts TEXT,
           last_slack_reply_at TEXT,
-          last_progress_reminder_at TEXT,
           last_turn_signal_turn_id TEXT,
           last_turn_signal_kind TEXT,
           last_turn_signal_reason TEXT,
@@ -77,6 +79,7 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
           app_id TEXT,
           sender_username TEXT,
           mentioned_user_ids TEXT,
+          mentioned_users TEXT,
           context_text TEXT,
           images TEXT,
           slack_message TEXT,
@@ -249,8 +252,47 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       repairSessionAgentSchema(database);
     }
+  },
+  {
+    version: 7,
+    name: "session_channel_metadata",
+    up(database) {
+      repairSessionChannelMetadataSchema(database);
+    }
+  },
+  {
+    version: 8,
+    name: "inbound_mentioned_users",
+    up(database) {
+      repairInboundMentionedUsersSchema(database);
+    }
   }
 ];
+
+function repairInboundMentionedUsersSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "inbound_messages")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "inbound_messages");
+  if (!columns.has("mentioned_users")) {
+    database.exec("ALTER TABLE inbound_messages ADD COLUMN mentioned_users TEXT");
+  }
+}
+
+function repairSessionChannelMetadataSchema(database: DatabaseSync): void {
+  if (!tableExists(database, "sessions")) {
+    return;
+  }
+
+  const columns = tableColumns(database, "sessions");
+  if (!columns.has("channel_name")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN channel_name TEXT");
+  }
+  if (!columns.has("channel_type")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN channel_type TEXT");
+  }
+}
 
 function repairSessionAgentSchema(database: DatabaseSync): void {
   if (!tableExists(database, "sessions")) {
@@ -790,17 +832,18 @@ export class StateStore {
   #upsertSession(record: SlackSessionRecord): void {
     this.#databaseRequired().prepare(`
       INSERT INTO sessions (
-        key, channel_id, root_thread_ts, workspace_path, created_at, updated_at,
+        key, channel_id, channel_name, channel_type, root_thread_ts, workspace_path, created_at, updated_at,
         agent_session_id, active_turn_id, active_turn_started_at,
         last_observed_message_ts, last_delivered_message_ts, last_slack_reply_at,
-        last_progress_reminder_at, last_turn_signal_turn_id, last_turn_signal_kind,
-        last_turn_signal_reason, last_turn_signal_at,
+        last_turn_signal_turn_id, last_turn_signal_kind, last_turn_signal_reason, last_turn_signal_at,
         co_author_candidate_user_ids, co_author_candidate_revision,
         co_author_confirmed_user_ids, co_author_confirmed_revision,
         co_author_ignore_missing_revision, co_author_prompt_revision, co_author_prompted_at
-      ) VALUES (${placeholders(24)})
+      ) VALUES (${placeholders(25)})
       ON CONFLICT(key) DO UPDATE SET
         channel_id = excluded.channel_id,
+        channel_name = excluded.channel_name,
+        channel_type = excluded.channel_type,
         root_thread_ts = excluded.root_thread_ts,
         workspace_path = excluded.workspace_path,
         created_at = excluded.created_at,
@@ -811,7 +854,6 @@ export class StateStore {
         last_observed_message_ts = excluded.last_observed_message_ts,
         last_delivered_message_ts = excluded.last_delivered_message_ts,
         last_slack_reply_at = excluded.last_slack_reply_at,
-        last_progress_reminder_at = excluded.last_progress_reminder_at,
         last_turn_signal_turn_id = excluded.last_turn_signal_turn_id,
         last_turn_signal_kind = excluded.last_turn_signal_kind,
         last_turn_signal_reason = excluded.last_turn_signal_reason,
@@ -826,6 +868,8 @@ export class StateStore {
     `).run(
       record.key,
       record.channelId,
+      record.channelName ?? null,
+      record.channelType ?? null,
       record.rootThreadTs,
       record.workspacePath,
       record.createdAt,
@@ -836,7 +880,6 @@ export class StateStore {
       record.lastObservedMessageTs ?? null,
       record.lastDeliveredMessageTs ?? null,
       record.lastSlackReplyAt ?? null,
-      record.lastProgressReminderAt ?? null,
       record.lastTurnSignalTurnId ?? null,
       record.lastTurnSignalKind ?? null,
       record.lastTurnSignalReason ?? null,
@@ -856,9 +899,9 @@ export class StateStore {
       INSERT INTO inbound_messages (
         key, session_key, channel_id, channel_type, root_thread_ts, message_ts,
         source, user_id, text, sender_kind, bot_id, app_id, sender_username,
-        mentioned_user_ids, context_text, images, slack_message, background_job,
+        mentioned_user_ids, mentioned_users, context_text, images, slack_message, background_job,
         unexpected_turn_stop, status, batch_id, created_at, updated_at
-      ) VALUES (${placeholders(23)})
+      ) VALUES (${placeholders(24)})
       ON CONFLICT(session_key, message_ts) DO UPDATE SET
         key = excluded.key,
         session_key = excluded.session_key,
@@ -874,6 +917,7 @@ export class StateStore {
         app_id = excluded.app_id,
         sender_username = excluded.sender_username,
         mentioned_user_ids = excluded.mentioned_user_ids,
+        mentioned_users = excluded.mentioned_users,
         context_text = excluded.context_text,
         images = excluded.images,
         slack_message = excluded.slack_message,
@@ -898,6 +942,7 @@ export class StateStore {
       record.appId ?? null,
       record.senderUsername ?? null,
       jsonOrNull(record.mentionedUserIds ?? []),
+      jsonOrNull(record.mentionedUsers ?? []),
       record.contextText ?? null,
       jsonOrNull(record.images ?? []),
       jsonOrNull(record.slackMessage),
@@ -1125,6 +1170,8 @@ export class StateStore {
     return this.#normalizeSession({
       key: stringColumn(row, "key"),
       channelId: stringColumn(row, "channel_id"),
+      channelName: optionalStringColumn(row, "channel_name"),
+      channelType: optionalStringColumn(row, "channel_type"),
       rootThreadTs: stringColumn(row, "root_thread_ts"),
       workspacePath: stringColumn(row, "workspace_path"),
       createdAt: stringColumn(row, "created_at"),
@@ -1135,7 +1182,6 @@ export class StateStore {
       lastObservedMessageTs: optionalStringColumn(row, "last_observed_message_ts"),
       lastDeliveredMessageTs: optionalStringColumn(row, "last_delivered_message_ts"),
       lastSlackReplyAt: optionalStringColumn(row, "last_slack_reply_at"),
-      lastProgressReminderAt: optionalStringColumn(row, "last_progress_reminder_at"),
       lastTurnSignalTurnId: optionalStringColumn(row, "last_turn_signal_turn_id"),
       lastTurnSignalKind: optionalStringColumn(row, "last_turn_signal_kind") as SlackSessionRecord["lastTurnSignalKind"],
       lastTurnSignalReason: optionalStringColumn(row, "last_turn_signal_reason"),
@@ -1176,6 +1222,7 @@ export class StateStore {
       appId: optionalStringColumn(row, "app_id"),
       senderUsername: optionalStringColumn(row, "sender_username"),
       mentionedUserIds: readJsonColumn(row, "mentioned_user_ids", []),
+      mentionedUsers: readJsonColumn<readonly SlackUserIdentity[]>(row, "mentioned_users", []),
       contextText: optionalStringColumn(row, "context_text"),
       images: readJsonColumn(row, "images", []),
       slackMessage: readJsonColumn(row, "slack_message", undefined),
@@ -1302,6 +1349,8 @@ export class StateStore {
     return {
       key: String(session.key),
       channelId: String(session.channelId),
+      channelName: optionalNonEmptyString(session.channelName),
+      channelType: optionalNonEmptyString(session.channelType),
       rootThreadTs: String(session.rootThreadTs),
       workspacePath,
       createdAt: String(session.createdAt),
@@ -1312,7 +1361,6 @@ export class StateStore {
       lastObservedMessageTs: session.lastObservedMessageTs,
       lastDeliveredMessageTs: session.lastDeliveredMessageTs,
       lastSlackReplyAt: session.lastSlackReplyAt,
-      lastProgressReminderAt: session.lastProgressReminderAt,
       lastTurnSignalTurnId: session.lastTurnSignalTurnId,
       lastTurnSignalKind: session.lastTurnSignalKind,
       lastTurnSignalReason: session.lastTurnSignalReason,
@@ -1348,6 +1396,7 @@ export class StateStore {
       appId: raw.appId,
       senderUsername: raw.senderUsername,
       mentionedUserIds: raw.mentionedUserIds ?? [],
+      mentionedUsers: raw.mentionedUsers ?? [],
       contextText: typeof raw.contextText === "string" ? raw.contextText : undefined,
       images: raw.images ?? [],
       slackMessage: raw.slackMessage,
@@ -1566,6 +1615,14 @@ function stringColumn(row: SqlRow, column: string): string {
 function optionalStringColumn(row: SqlRow, column: string): string | undefined {
   const value = row[column];
   return value === null || value === undefined ? undefined : String(value);
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function optionalNumberColumn(row: SqlRow, column: string): number | undefined {

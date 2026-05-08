@@ -32,6 +32,7 @@ import {
   type SerializedAccountStatus,
   type SerializedRateLimitsStatus
 } from "./codex/account-status.js";
+import { resolveMentionText } from "./slack/slack-message-format.js";
 
 const LOG_TAIL_MAX_BYTES_PER_FILE = 256 * 1024;
 
@@ -861,13 +862,14 @@ export class AdminService {
   }
 
   #summarizeInbound(message: PersistedInboundMessage): Record<string, unknown> {
+    const text = resolveMentionText(message.text, message.mentionedUsers);
     return {
       sessionKey: message.sessionKey,
       messageTs: message.messageTs,
       source: message.source,
       status: message.status,
       userId: message.userId,
-      textPreview: message.text.slice(0, 160),
+      textPreview: text.slice(0, 160),
       updatedAt: message.updatedAt,
       batchId: message.batchId ?? null
     };
@@ -907,6 +909,8 @@ export class AdminService {
       key: session.key,
       channelId: session.channelId,
       channelLabel: channelLabelForSession(session, related.inbound),
+      channelName: session.channelName ?? null,
+      channelType: session.channelType ?? related.inbound.find((message) => message.channelType)?.channelType ?? null,
       rootThreadTs: session.rootThreadTs,
       threadUrl: buildSlackThreadUrl(session.channelId, session.rootThreadTs),
       workspacePath: session.workspacePath,
@@ -1253,14 +1257,18 @@ function channelLabelForSession(
   session: SlackSessionRecord,
   inbound: readonly PersistedInboundMessage[]
 ): string {
+  if (session.channelName) {
+    return formatSlackChannelName(session.channelName);
+  }
+
   const channelName = inbound
     .map((message) => readStringField(message.slackMessage, "channel_name"))
     .find((value) => value);
   if (channelName) {
-    return channelName.startsWith("#") ? channelName : `#${channelName}`;
+    return formatSlackChannelName(channelName);
   }
 
-  const channelType = inbound.find((message) => message.channelType)?.channelType;
+  const channelType = session.channelType ?? inbound.find((message) => message.channelType)?.channelType;
   if (channelType === "im") {
     return "私信";
   }
@@ -1268,6 +1276,10 @@ function channelLabelForSession(
     return "群聊";
   }
   return session.channelId;
+}
+
+function formatSlackChannelName(channelName: string): string {
+  return channelName.startsWith("#") ? channelName : `#${channelName}`;
 }
 
 function buildSlackThreadUrl(channelId: string, rootThreadTs: string): string {

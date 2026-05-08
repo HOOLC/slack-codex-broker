@@ -604,10 +604,7 @@ export class SlackConversationService {
 
     for (const session of sessions) {
       try {
-        const outcome = await this.#reconcileSingleActiveTurn(session);
-        if (outcome === "retained") {
-          await this.#maybeRemindSilentActiveTurn(this.#findSessionByKey(session.key));
-        }
+        await this.#reconcileSingleActiveTurn(session);
       } catch (error) {
         logger.warn("Failed to reconcile live agent turn state", {
           sessionKey: session.key,
@@ -762,58 +759,6 @@ export class SlackConversationService {
 
     this.#clearAssistantStatus(session.channelId, session.rootThreadTs);
     return latestSession;
-  }
-
-  async #maybeRemindSilentActiveTurn(session: SlackSessionRecord): Promise<void> {
-    if (!session.activeTurnId || !session.agentSessionId || !session.activeTurnStartedAt) {
-      return;
-    }
-
-    const nowMs = Date.now();
-    const turnStartedAtMs = Date.parse(session.activeTurnStartedAt);
-    if (!Number.isFinite(turnStartedAtMs)) {
-      return;
-    }
-
-    const lastSlackReplyAtMs = session.lastSlackReplyAt ? Date.parse(session.lastSlackReplyAt) : Number.NaN;
-    const silenceAnchorMs =
-      Number.isFinite(lastSlackReplyAtMs) && lastSlackReplyAtMs > turnStartedAtMs
-        ? lastSlackReplyAtMs
-        : turnStartedAtMs;
-
-    if (nowMs - silenceAnchorMs < this.#config.slackProgressReminderAfterMs) {
-      return;
-    }
-
-    if (session.lastProgressReminderAt) {
-      const lastReminderAtMs = Date.parse(session.lastProgressReminderAt);
-      if (Number.isFinite(lastReminderAtMs) && nowMs - lastReminderAtMs < this.#config.slackProgressReminderRepeatMs) {
-        return;
-      }
-    }
-
-    try {
-      await this.#turnRunner.submitRuntimeReminder(
-        session,
-        [
-          "You have been working in this Slack thread for a while without a user-visible update.",
-          "This is only a reminder, not a command to send filler.",
-          "Decide whether there is a meaningful progress point, blocker, partial conclusion, or next-step update worth sharing now.",
-          "If yes, send a short Slack update. If not, keep working."
-        ].join("\n")
-      );
-    } catch (error) {
-      if (isMissingActiveTurnInputError(error)) {
-        await this.#syncActiveTurnFromActiveInputError(session, error);
-        return;
-      }
-      throw error;
-    }
-    await this.#sessions.setLastProgressReminderAt(
-      session.channelId,
-      session.rootThreadTs,
-      new Date().toISOString()
-    );
   }
 
   async #dispatchPersistedMessage(session: SlackSessionRecord, messageTs: string): Promise<void> {

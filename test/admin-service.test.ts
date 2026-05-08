@@ -293,7 +293,10 @@ describe("AdminService", () => {
       sessionsRoot: config.sessionsRoot
     });
     await writerSessions.load();
-    await writerSessions.ensureSession("C123", "111.222");
+    await writerSessions.ensureSession("C123", "111.222", {
+      channelName: "deep-review",
+      channelType: "channel"
+    });
     await writerSessions.setActiveTurnId("C123", "111.222", "turn-1");
     await writerSessions.upsertInboundMessage({
       key: "C123:111.222:111.223",
@@ -303,7 +306,17 @@ describe("AdminService", () => {
       messageTs: "111.223",
       source: "thread_reply",
       userId: "U123",
-      text: "follow up",
+      text: "<@U234> follow up",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [
+        {
+          userId: "U234",
+          mention: "<@U234>",
+          username: "mock-user-234",
+          displayName: "Mock Display 234",
+          realName: "Mock User 234"
+        }
+      ],
       status: "pending",
       createdAt: "2026-03-19T00:00:00.000Z",
       updatedAt: "2026-03-19T00:00:00.000Z"
@@ -316,7 +329,21 @@ describe("AdminService", () => {
         activeCount: 1,
         openInboundCount: 1,
         openHumanInboundCount: 1,
-        openSystemInboundCount: 0
+        openSystemInboundCount: 0,
+        sessions: [
+          {
+            channelId: "C123",
+            channelName: "deep-review",
+            channelType: "channel",
+            channelLabel: "#deep-review",
+            firstUserMessage: {
+              textPreview: "@Mock Display 234 follow up"
+            },
+            lastUserMessage: {
+              textPreview: "@Mock Display 234 follow up"
+            }
+          }
+        ]
       }
     });
   });

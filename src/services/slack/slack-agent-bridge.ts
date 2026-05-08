@@ -3,6 +3,7 @@ import { logger } from "../../logger.js";
 import type {
   BackgroundJobEventPayload,
   JsonLike,
+  PersistedInboundMessage,
   ResolvedSlackThreadMessage,
   SlackSessionRecord,
   SlackUserIdentity
@@ -10,6 +11,7 @@ import type {
 import type { AgentRuntime } from "../agent-runtime/types.js";
 import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
 import { SessionManager } from "../session-manager.js";
+import type { SessionChannelMetadata } from "../session-manager.js";
 import {
   type ParsedSlackEvent,
   isSlackMessageEffectivelyEmpty,
@@ -80,6 +82,8 @@ export class SlackAgentBridge {
     this.#botIdentity = await this.#slackApi.getUserIdentity(this.#botUserId);
     this.#agentRuntime.setSlackBotIdentity(this.#botIdentity);
 
+    await this.#backfillSessionChannelMetadata("startup");
+    await this.#backfillInboundMentionedUsers("startup");
     await this.#conversations.start();
     await this.#drainPersistedSlackEvents("startup");
 
@@ -367,16 +371,19 @@ export class SlackAgentBridge {
       return;
     }
 
+    const channelMetadata = await this.#resolveChannelMetadata(parsed);
+
     switch (parsed.route) {
       case "app_mention":
         await this.#handleInteractiveSessionEvent(parsed, {
           createSession: true,
-          preloadHistory: parsed.rootThreadTs !== parsed.messageTs
+          preloadHistory: parsed.rootThreadTs !== parsed.messageTs,
+          channelMetadata
         });
         return;
       case "direct_message":
         if (parsed.controlText === "-stop" && (parsed.input.images?.length ?? 0) === 0) {
-          const existing = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+          const existing = await this.#getSessionWithChannelMetadata(parsed, channelMetadata);
           if (existing) {
             await this.#handleStop(existing);
           }
@@ -385,11 +392,12 @@ export class SlackAgentBridge {
 
         await this.#handleInteractiveSessionEvent(parsed, {
           createSession: true,
-          preloadHistory: false
+          preloadHistory: false,
+          channelMetadata
         });
         return;
       case "thread_reply": {
-        const session = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+        const session = await this.#getSessionWithChannelMetadata(parsed, channelMetadata);
         if (!session) {
           return;
         }
@@ -415,20 +423,155 @@ export class SlackAgentBridge {
     }
   }
 
+  async #getSessionWithChannelMetadata(
+    parsed: ParsedSlackEvent,
+    metadata: SessionChannelMetadata
+  ): Promise<SlackSessionRecord | undefined> {
+    const session = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
+    if (!session) {
+      return undefined;
+    }
+
+    return await this.#sessions.setChannelMetadata(parsed.channelId, parsed.rootThreadTs, metadata);
+  }
+
+  async #resolveChannelMetadata(parsed: ParsedSlackEvent): Promise<SessionChannelMetadata> {
+    const fallback: SessionChannelMetadata = {
+      channelType: parsed.channelType
+    };
+    const info = await this.#slackApi.getConversationInfo(parsed.channelId);
+    if (!info) {
+      return fallback;
+    }
+
+    return {
+      channelName: info.name,
+      channelType: parsed.channelType ?? info.channelType
+    };
+  }
+
+  async #backfillSessionChannelMetadata(reason: string): Promise<void> {
+    const sessionsByChannel = new Map<string, SlackSessionRecord[]>();
+    for (const session of this.#sessions.listSessions()) {
+      if (session.channelName && session.channelType) {
+        continue;
+      }
+
+      const sessions = sessionsByChannel.get(session.channelId) ?? [];
+      sessions.push(session);
+      sessionsByChannel.set(session.channelId, sessions);
+    }
+
+    if (!sessionsByChannel.size) {
+      return;
+    }
+
+    let updatedCount = 0;
+    for (const [channelId, sessions] of sessionsByChannel.entries()) {
+      const info = await this.#slackApi.getConversationInfo(channelId);
+      if (!info) {
+        continue;
+      }
+
+      for (const session of sessions) {
+        await this.#sessions.setChannelMetadata(session.channelId, session.rootThreadTs, {
+          channelName: info.name,
+          channelType: info.channelType
+        });
+        updatedCount += 1;
+      }
+    }
+
+    if (updatedCount) {
+      logger.info("Backfilled Slack session channel metadata", {
+        reason,
+        updatedCount,
+        channelCount: sessionsByChannel.size
+      });
+    }
+  }
+
+  async #backfillInboundMentionedUsers(reason: string): Promise<void> {
+    const candidates = this.#sessions.listInboundMessages({
+      source: ["app_mention", "direct_message", "thread_reply"]
+    }).filter((message) => {
+      const mentionedUserIds = message.mentionedUserIds ?? [];
+      const mentionedUsers = message.mentionedUsers ?? [];
+      return mentionedUserIds.length > 0 && mentionedUsers.length < mentionedUserIds.length;
+    });
+
+    if (!candidates.length) {
+      return;
+    }
+
+    let updatedCount = 0;
+    for (const message of candidates) {
+      const mentionedUsers = await this.#resolveMentionedUsers(message);
+      if (!mentionedUsers.length) {
+        continue;
+      }
+
+      await this.#sessions.upsertInboundMessage({
+        ...message,
+        mentionedUsers,
+        updatedAt: new Date().toISOString()
+      });
+      updatedCount += 1;
+    }
+
+    if (updatedCount) {
+      logger.info("Backfilled Slack inbound mention identities", {
+        reason,
+        updatedCount
+      });
+    }
+  }
+
+  async #resolveMentionedUsers(message: PersistedInboundMessage): Promise<readonly SlackUserIdentity[]> {
+    const mentionedUserIds = message.mentionedUserIds ?? [];
+    if (!mentionedUserIds.length) {
+      return [];
+    }
+
+    const knownUsers = new Map(
+      (message.mentionedUsers ?? []).map((user) => [user.userId, user])
+    );
+
+    for (const userId of mentionedUserIds) {
+      if (knownUsers.has(userId)) {
+        continue;
+      }
+
+      const identity = await this.#slackApi.getUserIdentity(userId);
+      if (identity) {
+        knownUsers.set(userId, identity);
+      }
+    }
+
+    return mentionedUserIds
+      .map((userId) => knownUsers.get(userId))
+      .filter((user): user is SlackUserIdentity => Boolean(user));
+  }
+
   async #handleInteractiveSessionEvent(
     parsed: ParsedSlackEvent,
     options: {
       readonly createSession: boolean;
       readonly preloadHistory: boolean;
+      readonly channelMetadata: SessionChannelMetadata;
     }
   ): Promise<void> {
     const existing = this.#sessions.getSession(parsed.channelId, parsed.rootThreadTs);
     let session = options.createSession
-      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs)
+      ? await this.#sessions.ensureSession(parsed.channelId, parsed.rootThreadTs, options.channelMetadata)
       : existing;
 
     if (!session) {
       return;
+    }
+
+    if (!options.createSession) {
+      session = await this.#sessions.setChannelMetadata(parsed.channelId, parsed.rootThreadTs, options.channelMetadata);
     }
 
     if (this.#conversations.isAlreadyHandled(session, parsed.messageTs)) {

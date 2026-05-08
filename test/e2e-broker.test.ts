@@ -37,7 +37,14 @@ describe.sequential("slack-codex-broker e2e", () => {
     let brokerBaseUrl = "";
     const mockSlack = new MockSlackServer("UBOT", {
       botId: "BBOT",
-      appId: "AAPP"
+      appId: "AAPP",
+      channels: [
+        {
+          id: "C123",
+          name: "deep-review",
+          is_channel: true
+        }
+      ]
     });
     const mockCodex = new MockCodexAppServer({
       onTurnStart: async (context) => {
@@ -214,7 +221,14 @@ describe.sequential("slack-codex-broker e2e", () => {
 
     const mockSlack = new MockSlackServer("UBOT", {
       botId: "BBOT",
-      appId: "AAPP"
+      appId: "AAPP",
+      channels: [
+        {
+          id: "C123",
+          name: "deep-review",
+          is_channel: true
+        }
+      ]
     });
     const mockCodex = new MockCodexAppServer();
     const slackPort = await mockSlack.start();
@@ -253,15 +267,38 @@ describe.sequential("slack-codex-broker e2e", () => {
       channel: "C123",
       thread_ts: "111.220",
       ts: "111.222",
-      text: "<@UBOT> 看看这条 thread"
+      text: "<@UBOT> 看看 <@U234> 这条 thread"
     });
 
     await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
     await waitForSessionIdle(tempRoot, "C123:111.220");
+    await expect(readSessionRecord(tempRoot, "C123:111.220")).resolves.toMatchObject({
+      channelName: "deep-review",
+      channelType: "channel"
+    });
     const firstTurnText = collectTextInput(mockCodex.turnsStarted[0]!.input);
     expect(firstTurnText).toContain("ROOT_CONTEXT_ABC");
     expect(firstTurnText).toContain("RECENT_CONTEXT_DEF");
     expect(firstTurnText).toContain("structured_message_json");
+    expect(firstTurnText).toContain("\"text_with_resolved_mentions\": \"@Mock Bot 看看 @Mock Display 234 这条 thread\"");
+
+    const sessionListResponse = await fetch(`${broker.baseUrl}/admin/api/sessions`);
+    expect(sessionListResponse.ok).toBe(true);
+    const sessionList = await sessionListResponse.json() as {
+      readonly sessions?: Array<{
+        readonly key?: string;
+        readonly firstUserMessage?: { readonly textPreview?: string };
+        readonly lastUserMessage?: { readonly textPreview?: string };
+      }>;
+    };
+    expect(sessionList.sessions?.find((session) => session.key === "C123:111.220")).toMatchObject({
+      firstUserMessage: {
+        textPreview: "@Mock Bot 看看 @Mock Display 234 这条 thread"
+      },
+      lastUserMessage: {
+        textPreview: "@Mock Bot 看看 @Mock Display 234 这条 thread"
+      }
+    });
 
     await mockSlack.sendEvent("evt-linear-card", {
       type: "message",
@@ -306,6 +343,74 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(botCardText).toContain("\"attachments\"");
     expect(botCardText).toContain("https://linear.app/cue/issue/CUE-1180");
   }, 90_000);
+
+  it("backfills Slack channel names for persisted sessions on startup", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const seedStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const seedSessions = new SessionManager({
+      stateStore: seedStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await seedSessions.load();
+    await seedSessions.ensureSession("CBACK", "222.333");
+    const now = new Date().toISOString();
+    await seedSessions.upsertInboundMessage({
+      key: "CBACK:222.333:222.334",
+      sessionKey: "CBACK:222.333",
+      channelId: "CBACK",
+      rootThreadTs: "222.333",
+      messageTs: "222.334",
+      source: "thread_reply",
+      userId: "U123",
+      text: "<@U234> 旧消息",
+      senderKind: "user",
+      mentionedUserIds: ["U234"],
+      status: "pending",
+      createdAt: now,
+      updatedAt: now
+    });
+    seedStore.close();
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP",
+      channels: [
+        {
+          id: "CBACK",
+          name: "admin-trace",
+          is_channel: true
+        }
+      ]
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await waitFor(async () => {
+      const session = await readSessionRecord(tempRoot, "CBACK:222.333");
+      return session.channelName === "admin-trace" && session.channelType === "channel";
+    }, "persisted session channel metadata backfill");
+    await waitFor(async () => {
+      const inbound = await readInboundMessages(tempRoot, "CBACK:222.333");
+      return inbound[0]?.mentionedUsers?.[0]?.displayName === "Mock Display 234";
+    }, "persisted inbound mention identity backfill");
+  }, 60_000);
 
   it("replays missed thread messages after restart as a single recovered batch", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
@@ -896,69 +1001,7 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(deliveredTexts.some((text) => text.includes("\"job_kind\": \"watch_ci\""))).toBe(true);
   }, 60_000);
 
-  it("nudges long-running turns to consider a Slack progress update", async () => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
-    cleanups.push(async () => {
-      await removeTempRoot(tempRoot);
-    });
-
-    const mockSlack = new MockSlackServer("UBOT", {
-      botId: "BBOT",
-      appId: "AAPP"
-    });
-    const mockCodex = new MockCodexAppServer({
-      onTurnStart: async (context) => {
-        await delay(900);
-        context.complete("");
-      }
-    });
-    const slackPort = await mockSlack.start();
-    const codexUrl = await mockCodex.start();
-    cleanups.push(async () => {
-      await mockCodex.stop();
-      await mockSlack.stop();
-    });
-
-    const broker = await startBrokerProcess({
-      port: await getFreePort(),
-      slackPort,
-      codexUrl,
-      tempRoot,
-      extraEnv: {
-        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
-        SLACK_PROGRESS_REMINDER_AFTER_MS: "200",
-        SLACK_PROGRESS_REMINDER_REPEAT_MS: "200"
-      }
-    });
-    cleanups.push(() => broker.stop());
-
-    await mockSlack.sendEvent("evt-session", {
-      type: "app_mention",
-      user: "U123",
-      channel: "C123",
-      thread_ts: "444.220",
-      ts: "444.221",
-      text: "<@UBOT> 花点时间调研一下"
-    });
-
-    await waitFor(() => mockCodex.turnsStarted.length >= 1, "initial long-running turn");
-    await waitFor(
-      () =>
-        mockCodex.steers.some((steer) =>
-          collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-        ),
-      "progress reminder input"
-    );
-
-    const reminder = mockCodex.steers.find((steer) =>
-      collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-    );
-    expect(reminder).toBeTruthy();
-    expect(collectTextInput(reminder!.input)).toContain("If yes, send a short Slack update. If not, keep working.");
-    await waitForSessionIdle(tempRoot, "C123:444.220");
-  }, 60_000);
-
-  it("delivers idle input, active follow-up input, and progress reminders through one broker agent input contract", async () => {
+  it("delivers idle input and active follow-up input through one broker agent input contract", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
       await removeTempRoot(tempRoot);
@@ -990,9 +1033,7 @@ describe.sequential("slack-codex-broker e2e", () => {
       codexUrl,
       tempRoot,
       extraEnv: {
-        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100",
-        SLACK_PROGRESS_REMINDER_AFTER_MS: "200",
-        SLACK_PROGRESS_REMINDER_REPEAT_MS: "200"
+        SLACK_ACTIVE_TURN_RECONCILE_INTERVAL_MS: "100"
       }
     });
     cleanups.push(() => broker.stop());
@@ -1022,12 +1063,6 @@ describe.sequential("slack-codex-broker e2e", () => {
       () => mockCodex.steers.some((steer) => collectTextInput(steer.input).includes("FOLLOW_UP_ACTIVE_INPUT")),
       "active follow-up delivered immediately"
     );
-    await waitFor(
-      () => mockCodex.steers.some((steer) =>
-        collectTextInput(steer.input).includes("This is only a reminder, not a command to send filler.")
-      ),
-      "active progress reminder delivered immediately"
-    );
 
     expect(mockCodex.turnsStarted).toHaveLength(1);
     expect(mockCodex.interrupts).toHaveLength(0);
@@ -1053,7 +1088,7 @@ describe.sequential("slack-codex-broker e2e", () => {
         })
       })
     ]));
-    expect(deliveredEvents.filter((event) => event.status === "joined_active_turn")).toHaveLength(2);
+    expect(deliveredEvents.filter((event) => event.status === "joined_active_turn")).toHaveLength(1);
     expect(traceEvents.map((event) => event.type)).toEqual(expect.arrayContaining([
       "agent_input_received",
       "agent_input_delivered",

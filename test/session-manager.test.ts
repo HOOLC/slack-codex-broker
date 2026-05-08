@@ -18,7 +18,10 @@ describe("SessionManager", () => {
     });
 
     await manager.load();
-    const session = await manager.ensureSession("C123", "111.222");
+    const session = await manager.ensureSession("C123", "111.222", {
+      channelName: "deep-review",
+      channelType: "channel"
+    });
 
     expect(session.workspacePath).toBe(path.join(sessionsRoot, "C123-111-222", "workspace"));
 
@@ -29,7 +32,20 @@ describe("SessionManager", () => {
     });
     await reloadedManager.load();
 
-    expect(reloadedManager.getSession("C123", "111.222")?.key).toBe("C123:111.222");
+    expect(reloadedManager.getSession("C123", "111.222")).toMatchObject({
+      key: "C123:111.222",
+      channelName: "deep-review",
+      channelType: "channel"
+    });
+
+    await reloadedManager.setChannelMetadata("C123", "111.222", {
+      channelName: "admin-ui",
+      channelType: "group"
+    });
+    expect(reloadedManager.getSession("C123", "111.222")).toMatchObject({
+      channelName: "admin-ui",
+      channelType: "group"
+    });
   });
 
   it("updates codex thread and active turn metadata", async () => {
@@ -49,7 +65,6 @@ describe("SessionManager", () => {
     expect(updated.agentSessionId).toBe("thread-1");
     expect(updated.activeTurnId).toBe("turn-1");
     expect(updated.activeTurnStartedAt).toBeTruthy();
-    expect(updated.lastProgressReminderAt).toBeUndefined();
 
     const cleared = await manager.setActiveTurnId("C123", "111.222", undefined);
     expect(cleared.activeTurnId).toBeUndefined();
