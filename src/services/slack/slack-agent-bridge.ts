@@ -81,6 +81,7 @@ export class SlackAgentBridge {
     this.#botIdentity = await this.#slackApi.getUserIdentity(this.#botUserId);
     this.#agentRuntime.setSlackBotIdentity(this.#botIdentity);
 
+    await this.#backfillSessionChannelMetadata("startup");
     await this.#conversations.start();
     await this.#drainPersistedSlackEvents("startup");
 
@@ -445,6 +446,47 @@ export class SlackAgentBridge {
       channelName: info.name,
       channelType: parsed.channelType ?? info.channelType
     };
+  }
+
+  async #backfillSessionChannelMetadata(reason: string): Promise<void> {
+    const sessionsByChannel = new Map<string, SlackSessionRecord[]>();
+    for (const session of this.#sessions.listSessions()) {
+      if (session.channelName && session.channelType) {
+        continue;
+      }
+
+      const sessions = sessionsByChannel.get(session.channelId) ?? [];
+      sessions.push(session);
+      sessionsByChannel.set(session.channelId, sessions);
+    }
+
+    if (!sessionsByChannel.size) {
+      return;
+    }
+
+    let updatedCount = 0;
+    for (const [channelId, sessions] of sessionsByChannel.entries()) {
+      const info = await this.#slackApi.getConversationInfo(channelId);
+      if (!info) {
+        continue;
+      }
+
+      for (const session of sessions) {
+        await this.#sessions.setChannelMetadata(session.channelId, session.rootThreadTs, {
+          channelName: info.name,
+          channelType: info.channelType
+        });
+        updatedCount += 1;
+      }
+    }
+
+    if (updatedCount) {
+      logger.info("Backfilled Slack session channel metadata", {
+        reason,
+        updatedCount,
+        channelCount: sessionsByChannel.size
+      });
+    }
   }
 
   async #handleInteractiveSessionEvent(

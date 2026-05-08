@@ -325,6 +325,54 @@ describe.sequential("slack-codex-broker e2e", () => {
     expect(botCardText).toContain("https://linear.app/cue/issue/CUE-1180");
   }, 90_000);
 
+  it("backfills Slack channel names for persisted sessions on startup", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const seedStore = new StateStore(path.join(tempRoot, "state"), path.join(tempRoot, "sessions"));
+    const seedSessions = new SessionManager({
+      stateStore: seedStore,
+      sessionsRoot: path.join(tempRoot, "sessions")
+    });
+    await seedSessions.load();
+    await seedSessions.ensureSession("CBACK", "222.333");
+    seedStore.close();
+
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP",
+      channels: [
+        {
+          id: "CBACK",
+          name: "admin-trace",
+          is_channel: true
+        }
+      ]
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await waitFor(async () => {
+      const session = await readSessionRecord(tempRoot, "CBACK:222.333");
+      return session.channelName === "admin-trace" && session.channelType === "channel";
+    }, "persisted session channel metadata backfill");
+  }, 60_000);
+
   it("replays missed thread messages after restart as a single recovered batch", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {
