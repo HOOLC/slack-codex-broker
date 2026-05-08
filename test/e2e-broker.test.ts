@@ -1062,6 +1062,95 @@ describe.sequential("slack-codex-broker e2e", () => {
     ]));
   }, 90_000);
 
+  it("queues active Slack follow-up input when immediate active delivery fails", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const releaseInitialTurn = createDeferred<void>();
+    const releaseFollowUpTurn = createDeferred<void>();
+    let steerFailureInjected = false;
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer({
+      onTurnSteerRequest: (request) => {
+        if (!steerFailureInjected && collectTextInput(request.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")) {
+          steerFailureInjected = true;
+          return "temporary active input delivery failure";
+        }
+        return undefined;
+      },
+      onTurnStart: async (context) => {
+        if (mockCodex.turnsStarted.length === 1) {
+          await releaseInitialTurn.promise;
+          context.complete("INITIAL_DONE");
+          return;
+        }
+
+        await releaseFollowUpTurn.promise;
+        context.complete("FOLLOW_UP_DONE");
+      }
+    });
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      releaseInitialTurn.resolve();
+      releaseFollowUpTurn.resolve();
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const sessionKey = "C123:446.220";
+    const broker = await startBrokerProcess({
+      port: await getFreePort(),
+      slackPort,
+      codexUrl,
+      tempRoot
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-active-delivery-fallback-initial", {
+      type: "app_mention",
+      user: "U123",
+      channel: "C123",
+      thread_ts: "446.220",
+      ts: "446.221",
+      text: "<@UBOT> INITIAL_ACTIVE_DELIVERY_FAILURE_TEST"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length === 1, "initial turn before active delivery failure");
+    await waitForSessionActive(tempRoot, sessionKey);
+
+    await mockSlack.sendEvent("evt-active-delivery-fallback-follow-up", {
+      type: "message",
+      user: "U234",
+      channel: "C123",
+      thread_ts: "446.220",
+      ts: "446.222",
+      text: "FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE"
+    });
+
+    await waitFor(() => steerFailureInjected, "active delivery failure injected");
+    expect(mockCodex.steers).toHaveLength(0);
+
+    releaseInitialTurn.resolve();
+    await waitFor(
+      () => mockCodex.turnsStarted.some((turn) => collectTextInput(turn.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")),
+      "follow-up starts as queued turn after active delivery failure"
+    );
+
+    const followUpTurn = mockCodex.turnsStarted.find((turn) =>
+      collectTextInput(turn.input).includes("FOLLOW_UP_QUEUED_AFTER_ACTIVE_DELIVERY_FAILURE")
+    );
+    expect(followUpTurn).toBeTruthy();
+    expect(mockSlack.postedMessages.map((message) => message.text)).not.toContain(
+      "I hit an internal issue while working on this thread. Send a quick follow-up and I will continue from the latest state."
+    );
+  }, 90_000);
+
   it("wakes a turn that ends without an explicit final, block, or wait state", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
     cleanups.push(async () => {

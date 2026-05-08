@@ -845,9 +845,6 @@ export class SlackConversationService {
           error: error instanceof Error ? error.message : String(error)
         });
 
-        if (!isMissingActiveTurnInputError(error)) {
-          throw error;
-        }
         if (isMissingActiveTurnInputError(error)) {
           latestSession = await this.#syncActiveTurnFromActiveInputError(latestSession, error, {
             messageTs
@@ -899,9 +896,6 @@ export class SlackConversationService {
           error: error instanceof Error ? error.message : String(error)
         });
 
-        if (!isMissingActiveTurnInputError(error)) {
-          throw error;
-        }
         if (isMissingActiveTurnInputError(error)) {
           latestSession = await this.#syncActiveTurnFromActiveInputError(latestSession, error);
         }

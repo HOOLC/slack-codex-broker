@@ -34,6 +34,12 @@ export interface MockTurnContext {
   interrupt: (message?: string) => void;
 }
 
+export interface MockTurnSteerRequest {
+  readonly threadId: string;
+  readonly expectedTurnId: string;
+  readonly input: readonly CodexInputItem[];
+}
+
 export class MockCodexAppServer {
   readonly #server = http.createServer();
   readonly #wsServer = new WebSocketServer({ server: this.#server });
@@ -51,15 +57,18 @@ export class MockCodexAppServer {
   }> = [];
   readonly onTurnStart: ((context: MockTurnContext) => Promise<void> | void) | undefined;
   readonly onTurnSteer: ((context: MockTurnContext) => Promise<void> | void) | undefined;
+  readonly onTurnSteerRequest: ((request: MockTurnSteerRequest) => string | undefined) | undefined;
   readonly #emitThreadTokenUsage: boolean;
 
   constructor(options?: {
     readonly onTurnStart?: (context: MockTurnContext) => Promise<void> | void;
     readonly onTurnSteer?: (context: MockTurnContext) => Promise<void> | void;
+    readonly onTurnSteerRequest?: (request: MockTurnSteerRequest) => string | undefined;
     readonly emitThreadTokenUsage?: boolean;
   }) {
     this.onTurnStart = options?.onTurnStart;
     this.onTurnSteer = options?.onTurnSteer;
+    this.onTurnSteerRequest = options?.onTurnSteerRequest;
     this.#emitThreadTokenUsage = options?.emitThreadTokenUsage ?? false;
 
     this.#wsServer.on("connection", (socket) => {
@@ -252,6 +261,16 @@ export class MockCodexAppServer {
 
         const turn = this.#requireTurn(thread, expectedTurnId);
         const input = normalizeInput(params.input);
+        const requestError = this.onTurnSteerRequest?.({
+          threadId,
+          expectedTurnId,
+          input
+        });
+        if (requestError) {
+          this.#error(socket, message.id, requestError);
+          return;
+        }
+
         this.steers.push({
           threadId,
           turnId: expectedTurnId,
