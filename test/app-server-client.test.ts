@@ -1386,6 +1386,18 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("do not mirror every watcher update back into Slack")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("event` means a material asynchronous change occurred")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("Do not use `event` as a timer, polling tick")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("If the state is unchanged, call `node \"$BROKER_JOB_HELPER\" heartbeat` or stay silent")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
+      expect.stringContaining("If the background job cannot inspect the watched system well enough")
+    );
+    expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("shared_repos_root: /tmp/repos")
     );
     expect(threadStartParams?.baseInstructions).toEqual(
@@ -1398,6 +1410,8 @@ describe("AppServerClient disconnect handling", () => {
       expect.stringContaining("The broker may append `Co-authored-by:` trailers automatically")
     );
     expect(String(threadStartParams?.baseInstructions)).toContain("node \\\"$BROKER_JOB_HELPER\\\" event");
+    expect(String(threadStartParams?.baseInstructions)).toContain("node \\\"$BROKER_JOB_HELPER\\\" heartbeat");
+    expect(String(threadStartParams?.baseInstructions)).toContain("replace with the changed state");
     expect(threadStartParams?.baseInstructions).toEqual(
       expect.stringContaining("Identity and instruction boundaries")
     );

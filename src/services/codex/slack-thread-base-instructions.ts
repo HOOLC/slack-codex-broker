@@ -86,7 +86,17 @@ export async function buildSlackThreadBaseInstructions(
     thread_ts: options.rootThreadTs,
     kind: "watch_ci",
     cwd: ".",
-    script: "#!/usr/bin/env bash\nset -euo pipefail\nnode \"$BROKER_JOB_HELPER\" event --kind \"state_changed\" --summary \"replace with your update\"\nnode \"$BROKER_JOB_HELPER\" complete --summary \"replace with your completion update\""
+    script: [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "# Poll or inspect the watched system here and compare it with previous state.",
+      "# If nothing changed, only heartbeat or stay silent; do not wake the agent.",
+      "node \"$BROKER_JOB_HELPER\" heartbeat",
+      "# Only emit an event after a material state change:",
+      "# node \"$BROKER_JOB_HELPER\" event --kind \"state_changed\" --summary \"replace with the changed state\"",
+      "# Complete only when monitoring is finished:",
+      "# node \"$BROKER_JOB_HELPER\" complete --summary \"replace with your completion update\""
+    ].join("\n")
   });
 
   return renderTemplate(template, {
