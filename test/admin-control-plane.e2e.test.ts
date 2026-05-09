@@ -403,13 +403,10 @@ describe("admin control plane e2e", () => {
         listProfilesStatus: async () => options?.authProfilesStatus ?? ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         }),
         addProfile: async () => ({ name: "profile" }),
-        deleteProfile: async () => {},
-        activateProfile: async (name: string) => ({ name })
+        deleteProfile: async () => {}
       } as never,
       githubAuthorMappings: {
         load: async () => {},
@@ -748,8 +745,6 @@ function authProfilesStatusFixture(): AuthProfilesStatus {
   return {
     managedRoot: "/tmp/auth-profiles",
     profilesRoot: "/tmp/auth-profiles/docker/profiles",
-    activeProfile: "empty-profile",
-    activeAuthPath: "/tmp/codex-home/auth.json",
     profiles: [
       authProfileFixture("empty-profile", 100, 20),
       authProfileFixture("usable-profile", 10, 15)
@@ -761,7 +756,6 @@ function authProfileFixture(name: string, primaryUsed: number, secondaryUsed: nu
   return {
     name,
     path: `/tmp/auth-profiles/docker/profiles/${name}.json`,
-    active: name === "empty-profile",
     source: "probe",
     checkedAt: "2026-05-09T00:00:00.000Z",
     account: {

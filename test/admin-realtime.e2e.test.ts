@@ -152,13 +152,10 @@ describe("admin realtime e2e", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         }),
         addProfile: async () => ({ name: "profile" }),
-        deleteProfile: async () => {},
-        activateProfile: async (name: string) => ({ name })
+        deleteProfile: async () => {}
       } as never,
       githubAuthorMappings: {
         load: async () => {},

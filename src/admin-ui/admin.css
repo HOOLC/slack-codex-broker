@@ -109,8 +109,8 @@
     .mini-title { padding: 3px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .mini-body { padding: 4px 6px; }
     .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
-    .auth-profile-current { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); font-size: 10px; }
-    .auth-profile-current strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .auth-profile-bound { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; color: var(--muted); font-size: 10px; }
+    .auth-profile-bound strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
     .auth-profile-blocked { display: flex; gap: 6px; align-items: center; min-width: 0; color: var(--red); font-size: 10px; }
     .auth-profile-blocked span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .auth-profile-switcher { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
@@ -166,7 +166,6 @@
 
     .maintenance-grid { display: grid; gap: 1px; background: var(--line); }
     .profile-row { display: grid; gap: 4px; padding: 5px 6px; background: var(--panel); }
-    .profile-row.is-active { border-left: 2px solid var(--cyan); }
     .profile-line { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
     .profile-account { font-weight: 700; font-size: 11px; }
     .profile-plan, .summary-detail { color: var(--muted); font-size: 10px; }

@@ -61,7 +61,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -130,7 +129,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -159,7 +157,7 @@ describe("admin routes", () => {
     expect(shell).not.toContain("实时");
     expect(shell).not.toContain("刷新");
     expect(shell).toContain("auth-profiles-panel");
-    expect(shell).toContain("认证档案");
+    expect(shell).toContain("账号池");
     expect(shell).toContain("github-authors-panel");
     expect(shell).toContain("GitHub 作者映射");
     expect(shell).toContain("发布");
@@ -199,7 +197,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -226,7 +223,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -337,7 +333,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -390,7 +385,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -440,7 +434,6 @@ describe("admin routes", () => {
       },
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -474,7 +467,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -499,7 +491,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);
         return { ok: true };
@@ -537,7 +528,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);

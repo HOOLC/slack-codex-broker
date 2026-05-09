@@ -464,28 +464,6 @@ export class AdminService {
     );
   }
 
-  async activateAuthProfile(options: {
-    readonly name: string;
-    readonly allowActive: boolean;
-  }): Promise<Record<string, unknown>> {
-    return await this.#runTrackedOperation(
-      "auth_profile_activate",
-      {
-        name: options.name,
-        allowActive: options.allowActive
-      },
-      async () => {
-        await this.#assertSafeToInterrupt(options.allowActive, "auth profile switch");
-        const activated = await this.options.authProfiles.activateProfile(options.name);
-        await this.options.runtime.restartRuntime(`admin auth profile switch: ${activated.name}`);
-        return {
-          ok: true,
-          activatedProfile: activated.name
-        };
-      }
-    );
-  }
-
   async switchSessionAuthProfile(options: {
     readonly sessionKey: string;
     readonly name: string;
@@ -630,17 +608,7 @@ export class AdminService {
       this.#readAccountRateLimits(),
       this.options.deployment?.getStatus() ?? Promise.resolve(null)
     ]);
-    const authProfiles = await this.options.authProfiles.listProfilesStatus({
-      activeSnapshot:
-        account.ok && rateLimits.ok
-          ? {
-              source: "runtime",
-              checkedAt: new Date().toISOString(),
-              account,
-              rateLimits
-            }
-          : undefined
-    });
+    const authProfiles = await this.options.authProfiles.listProfilesStatus();
     const mappings = this.options.githubAuthorMappings.listMappings();
     return {
       account,

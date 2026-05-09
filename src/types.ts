@@ -141,7 +141,6 @@ export type AdminOperationKind =
   | "rollback"
   | "auth_profile_add"
   | "auth_profile_delete"
-  | "auth_profile_activate"
   | "session_auth_profile_switch"
   | "github_author_upsert"
   | "github_author_delete";

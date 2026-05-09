@@ -261,22 +261,6 @@ export async function handleAdminRequest(
     return true;
   }
 
-  if (method === "POST" && url.pathname.startsWith("/admin/api/auth-profiles/") && url.pathname.endsWith("/activate")) {
-    const profileName = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/".length, -"/activate".length));
-    const body = await readAdminBody(request, response);
-    if (!body) {
-      return true;
-    }
-
-    await runAdminOperation(response, () =>
-      options.adminService.activateAuthProfile({
-        name: profileName,
-        allowActive: body.allow_active === true
-      })
-    );
-    return true;
-  }
-
   if (method === "DELETE" && url.pathname.startsWith("/admin/api/auth-profiles/")) {
     const profileName = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/".length));
     if (!profileName || profileName.includes("/")) {

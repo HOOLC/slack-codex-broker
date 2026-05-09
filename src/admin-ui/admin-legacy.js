@@ -329,9 +329,8 @@ export function initAdminPage(options = {}) {
       const labels = {
         deploy: "发布",
         rollback: "回滚",
-        auth_profile_add: "新增认证档案",
-        auth_profile_delete: "删除认证档案",
-        auth_profile_activate: "切换认证档案",
+        auth_profile_add: "添加账号",
+        auth_profile_delete: "删除账号",
         github_author_upsert: "保存 GitHub 作者",
         github_author_delete: "删除 GitHub 作者"
       };
@@ -513,36 +512,25 @@ export function initAdminPage(options = {}) {
     function renderAuthProfiles(data) {
       const authProfiles = data.authProfiles || {};
       const profiles = [...(authProfiles.profiles || [])].sort((left, right) => {
-        if (left.active !== right.active) return left.active ? -1 : 1;
         return String(right.mtime || "").localeCompare(String(left.mtime || ""));
       });
       const panel = document.getElementById("auth-profiles-panel");
       if (!profiles.length) {
-        panel.innerHTML = '<div class="empty-state">暂无认证档案</div>';
+        panel.innerHTML = '<div class="empty-state">暂无账号</div>';
         return;
       }
       panel.innerHTML = profiles.map((profile) => {
         const account = profile.account || {};
         const email = account.ok ? (account.account?.email || "未知账号") : "账号异常";
         const plan = account.ok ? (account.account?.planType || account.account?.type || "ChatGPT") : (account.error || "账号不可用");
-        return '<div class="profile-row' + (profile.active ? " is-active" : "") + '">' +
-          '<div class="profile-line"><span class="profile-account">' + esc(email) + '</span><span class="profile-plan">' + esc(plan) + '</span>' + (profile.active ? renderBadge("active", "info") : "") + '</div>' +
+        return '<div class="profile-row">' +
+          '<div class="profile-line"><span class="profile-account">' + esc(email) + '</span><span class="profile-plan">' + esc(plan) + '</span></div>' +
           renderProfileQuota(profile.rateLimits) +
           '<div class="profile-actions">' +
-            '<button class="secondary" data-activate-profile="' + esc(profile.name) + '"' + (profile.active ? " disabled" : "") + '>使用</button>' +
-            '<button class="danger" data-delete-profile="' + esc(profile.name) + '"' + (profile.active ? " disabled" : "") + '>删除</button>' +
+            '<button class="danger" data-delete-profile="' + esc(profile.name) + '">删除</button>' +
           '</div>' +
         '</div>';
       }).join("");
-      document.querySelectorAll("[data-activate-profile]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const name = button.getAttribute("data-activate-profile");
-          if (!name) return;
-          const allowActive = await confirmInterruptRisk("auth_profile_activate", "切换认证档案");
-          if (allowActive == null) return;
-          await activateProfile(name, allowActive);
-        });
-      });
       document.querySelectorAll("[data-delete-profile]").forEach((button) => {
         button.addEventListener("click", async () => {
           const name = button.getAttribute("data-delete-profile");
@@ -964,26 +952,12 @@ export function initAdminPage(options = {}) {
         }
       });
     }
-    async function activateProfile(name, allowActive) {
-      replaceStatus.textContent = "正在切换认证档案...";
-      try {
-        const payload = await requestJson("/admin/api/auth-profiles/" + encodeURIComponent(name) + "/activate", {
-          method: "POST",
-          headers: authHeaders({ "content-type": "application/json" }),
-          body: JSON.stringify({ allow_active: allowActive })
-        });
-        render(payload.status);
-        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已切换</span>';
-      } catch (error) {
-        replaceStatus.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
-      }
-    }
     async function deleteProfile(name) {
-      replaceStatus.textContent = "正在删除认证档案...";
+      replaceStatus.textContent = "正在删除账号...";
       try {
         const payload = await requestJson("/admin/api/auth-profiles/" + encodeURIComponent(name), { method: "DELETE", headers: authHeaders() });
         render(payload.status);
-        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已删除</span>';
+        replaceStatus.innerHTML = '<span style="color:var(--green)">账号已删除</span>';
       } catch (error) {
         replaceStatus.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
       }

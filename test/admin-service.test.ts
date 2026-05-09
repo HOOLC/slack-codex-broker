@@ -51,8 +51,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: "primary",
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,
@@ -149,7 +147,6 @@ describe("AdminService", () => {
         }
       },
       authProfiles: {
-        activeProfile: "primary",
         profiles: []
       }
     });
@@ -185,8 +182,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,
@@ -242,8 +237,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,
@@ -390,8 +383,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,
@@ -513,8 +504,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,
@@ -602,8 +591,6 @@ describe("AdminService", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never,

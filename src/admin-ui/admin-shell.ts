@@ -46,8 +46,8 @@ export function renderAdminShellHtml(serviceName: string): string {
         <div class="view-grid">
           <section class="panel">
             <div class="panel-head">
-              <div class="panel-title">认证档案</div>
-              <button id="open-add-profile-dialog">新增</button>
+              <div class="panel-title">账号池</div>
+              <button id="open-add-profile-dialog">添加</button>
             </div>
             <div id="auth-profiles-panel" class="panel-body maintenance-grid"></div>
             <div id="replace-status" class="summary-detail" style="padding:0 8px 8px;"></div>

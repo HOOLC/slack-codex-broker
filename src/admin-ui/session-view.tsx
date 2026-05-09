@@ -409,8 +409,8 @@ function AuthProfilePanel({ session, profiles }: {
 
   return (
     <div className="auth-profile-panel">
-      <div className="auth-profile-current">
-        <span>当前</span>
+      <div className="auth-profile-bound">
+        <span>绑定账号</span>
         <strong title={currentProfile ? profileTitle(currentProfile) : String(session.authProfileName || "")}>
           {currentLabel}
         </strong>
