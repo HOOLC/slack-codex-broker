@@ -13,22 +13,28 @@ export interface AuthProfileEvaluation {
   readonly profileName: string;
   readonly usable: boolean;
   readonly reason?: AuthProfileUnavailableReason | undefined;
-  readonly effectiveRemainingPercent: number;
+  readonly effectiveQuotaScore: number;
   readonly primaryRemainingPercent?: number | undefined;
   readonly secondaryRemainingPercent?: number | undefined;
+  readonly secondaryRefreshDays?: number | undefined;
+  readonly secondaryRemainingPercentPerDay?: number | undefined;
 }
 
-export function selectBestAuthProfile(status: AuthProfilesStatus): AuthProfileSummary | null {
+export function selectBestAuthProfile(
+  status: AuthProfilesStatus,
+  options: { readonly now?: Date | number | string | undefined } = {}
+): AuthProfileSummary | null {
+  const nowMs = timestampMs(options.now);
   const candidates = status.profiles
     .map((profile) => ({
       profile,
-      evaluation: evaluateAuthProfile(profile)
+      evaluation: evaluateAuthProfile(profile, { now: nowMs })
     }))
     .filter((candidate) => candidate.evaluation.usable)
     .sort((left, right) => {
-      const remainingDelta = right.evaluation.effectiveRemainingPercent - left.evaluation.effectiveRemainingPercent;
-      if (remainingDelta) {
-        return remainingDelta;
+      const scoreDelta = right.evaluation.effectiveQuotaScore - left.evaluation.effectiveQuotaScore;
+      if (scoreDelta) {
+        return scoreDelta;
       }
 
       const secondaryDelta =
@@ -55,7 +61,10 @@ export function findAuthProfile(status: AuthProfilesStatus, profileName: string)
   return status.profiles.find((profile) => profile.name === profileName) ?? null;
 }
 
-export function evaluateAuthProfile(profile: AuthProfileSummary): AuthProfileEvaluation {
+export function evaluateAuthProfile(
+  profile: AuthProfileSummary,
+  options: { readonly now?: Date | number | string | undefined } = {}
+): AuthProfileEvaluation {
   if (!profile.account.ok) {
     return unavailable(profile.name, "account_probe_failed");
   }
@@ -67,6 +76,8 @@ export function evaluateAuthProfile(profile: AuthProfileSummary): AuthProfileEva
   const limits = profile.rateLimits.rateLimits;
   const primaryRemaining = remainingPercent(limits?.primary?.usedPercent);
   const secondaryRemaining = remainingPercent(limits?.secondary?.usedPercent);
+  const secondaryRefreshDays = daysUntilReset(limits?.secondary?.resetsAt, timestampMs(options.now));
+  const secondaryRemainingPerDay = remainingPercentPerDay(secondaryRemaining, secondaryRefreshDays);
   const credits = limits?.credits;
 
   if (primaryRemaining !== undefined && primaryRemaining <= 0) {
@@ -93,9 +104,11 @@ export function evaluateAuthProfile(profile: AuthProfileSummary): AuthProfileEva
   return {
     profileName: profile.name,
     usable: true,
-    effectiveRemainingPercent: Math.min(primaryRemaining ?? 100, secondaryRemaining ?? 100),
+    effectiveQuotaScore: secondaryRemainingPerDay ?? secondaryRemaining ?? primaryRemaining ?? 100,
     primaryRemainingPercent: primaryRemaining,
-    secondaryRemainingPercent: secondaryRemaining
+    secondaryRemainingPercent: secondaryRemaining,
+    secondaryRefreshDays,
+    secondaryRemainingPercentPerDay: secondaryRemainingPerDay
   };
 }
 
@@ -128,6 +141,45 @@ function remainingPercent(usedPercent: number | undefined): number | undefined {
   return Math.max(0, Math.min(100, 100 - Number(usedPercent)));
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MIN_REFRESH_DAYS = 1 / (24 * 60);
+
+function remainingPercentPerDay(
+  remaining: number | undefined,
+  refreshDays: number | undefined
+): number | undefined {
+  if (remaining === undefined) {
+    return undefined;
+  }
+  if (refreshDays === undefined) {
+    return remaining;
+  }
+  return remaining / refreshDays;
+}
+
+function daysUntilReset(resetsAt: number | null | undefined, nowMs: number): number | undefined {
+  if (!Number.isFinite(resetsAt)) {
+    return undefined;
+  }
+
+  const deltaDays = (Number(resetsAt) * 1000 - nowMs) / MS_PER_DAY;
+  return Math.max(deltaDays, MIN_REFRESH_DAYS);
+}
+
+function timestampMs(value: Date | number | string | undefined): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : Date.now();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+  return Date.now();
+}
+
 function unavailable(
   profileName: string,
   reason: AuthProfileUnavailableReason,
@@ -140,7 +192,7 @@ function unavailable(
     profileName,
     usable: false,
     reason,
-    effectiveRemainingPercent: 0,
+    effectiveQuotaScore: 0,
     primaryRemainingPercent: partial?.primaryRemainingPercent,
     secondaryRemainingPercent: partial?.secondaryRemainingPercent
   };

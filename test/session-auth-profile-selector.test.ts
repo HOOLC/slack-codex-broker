@@ -7,7 +7,9 @@ import {
 import type { AuthProfileSummary, AuthProfilesStatus } from "../src/services/auth-profile-service.js";
 
 describe("session auth profile selector", () => {
-  it("selects the usable profile with the highest conservative remaining quota", () => {
+  const now = new Date("2026-05-09T00:00:00.000Z");
+
+  it("selects the usable profile with the highest weekly quota velocity", () => {
     const status = profileStatus([
       profile("low", {
         primaryUsed: 5,
@@ -26,10 +28,10 @@ describe("session auth profile selector", () => {
       })
     ]);
 
-    expect(selectBestAuthProfile(status)?.name).toBe("best");
+    expect(selectBestAuthProfile(status, { now })?.name).toBe("best");
   });
 
-  it("keeps a usable bound profile even when another profile has more quota", () => {
+  it("still treats a lower quota bound profile as usable without auto-switching it here", () => {
     const status = profileStatus([
       profile("bound", {
         primaryUsed: 60,
@@ -41,8 +43,31 @@ describe("session auth profile selector", () => {
       })
     ]);
 
-    expect(evaluateAuthProfile(status.profiles[0]!).usable).toBe(true);
-    expect(selectBestAuthProfile(status)?.name).toBe("bigger");
+    expect(evaluateAuthProfile(status.profiles[0]!, { now }).usable).toBe(true);
+    expect(selectBestAuthProfile(status, { now })?.name).toBe("bigger");
+  });
+
+  it("prefers weekly quota that refreshes sooner when remaining quota is equal", () => {
+    const oneDay = Math.floor((now.getTime() + 24 * 60 * 60 * 1000) / 1000);
+    const sevenDays = Math.floor((now.getTime() + 7 * 24 * 60 * 60 * 1000) / 1000);
+    const status = profileStatus([
+      profile("later-refresh", {
+        primaryUsed: 0,
+        secondaryUsed: 50,
+        secondaryResetsAt: sevenDays
+      }),
+      profile("sooner-refresh", {
+        primaryUsed: 0,
+        secondaryUsed: 50,
+        secondaryResetsAt: oneDay
+      })
+    ]);
+
+    const later = evaluateAuthProfile(status.profiles[0]!, { now });
+    const sooner = evaluateAuthProfile(status.profiles[1]!, { now });
+    expect(later.secondaryRemainingPercentPerDay).toBeCloseTo(50 / 7);
+    expect(sooner.secondaryRemainingPercentPerDay).toBeCloseTo(50);
+    expect(selectBestAuthProfile(status, { now })?.name).toBe("sooner-refresh");
   });
 
   it("marks a profile unavailable when either quota window is exhausted", () => {
@@ -79,6 +104,7 @@ function profile(
   options: {
     readonly primaryUsed?: number | undefined;
     readonly secondaryUsed?: number | undefined;
+    readonly secondaryResetsAt?: number | undefined;
     readonly rateLimitsOk?: boolean | undefined;
   } = {}
 ): AuthProfileSummary {
@@ -112,7 +138,7 @@ function profile(
             secondary: {
               usedPercent: options.secondaryUsed ?? 0,
               windowDurationMins: 10_080,
-              resetsAt: 1_780_000_000
+              resetsAt: options.secondaryResetsAt ?? 1_780_000_000
             },
             credits: null,
             planType: "pro"

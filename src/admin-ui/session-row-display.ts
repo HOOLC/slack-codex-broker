@@ -1,6 +1,6 @@
 import {
-  profileDisplayLabel,
-  profileTitle
+  profileTitle,
+  profileWeeklyQuotaLabel
 } from "./auth-profile-display.js";
 
 type SessionRecord = Record<string, any>;
@@ -52,7 +52,7 @@ export function renderSessionMeta(
     session.authBlockedAt ? { key: "auth-blocked", label: "账号待切换", tone: "danger", title: stringOrUndefined(session.authBlockReasonLabel || session.authBlockReason) } : null,
     session.authProfileName ? {
       key: "auth-profile",
-      label: authProfile ? "账号 " + profileDisplayLabel(authProfile) : "账号已绑定",
+      label: authProfile ? profileWeeklyQuotaLabel(authProfile) : "账号已绑定",
       tone: "info",
       title: authProfile ? profileTitle(authProfile) : String(session.authProfileName)
     } : null,
