@@ -412,7 +412,7 @@ function rawCodexEventToAgentEvents(
   if (rawType === "response_item" && payloadType === "message" && turnId) {
     const role = normalizeNonEmptyString(payload.role);
     const text = extractContentText(payload.content);
-    if (role === "assistant") {
+    if (role === "assistant" && text.trim()) {
       return [{
         type: "agent.message.completed",
         agentSessionId,

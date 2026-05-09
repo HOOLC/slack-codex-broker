@@ -149,11 +149,16 @@ export class AgentTraceRecorder {
           turnId: event.turnId
         }, now)];
       case "agent.message.completed":
+        {
+          const text = event.text.trim();
+          if (!text) {
+            return [];
+          }
         return [this.#trace(session, event, {
           type: event.role === "assistant" ? "agent_assistant_message" : "agent_user_message",
           title: event.role === "assistant" ? "Assistant 消息" : "用户消息",
-          summary: summarizeTraceText(event.text),
-          detail: event.text,
+          summary: summarizeTraceText(text),
+          detail: text,
           status: "completed",
           role: event.role,
           turnId: event.turnId,
@@ -161,6 +166,7 @@ export class AgentTraceRecorder {
             messageId: event.messageId
           }
         }, now)];
+        }
       case "agent.tool.started":
         {
           const toolSummary = summarizeToolTrace(event.name, "agent_tool_call", "running", event.input);

@@ -1894,13 +1894,23 @@ async function waitForHttpReady(url: string, logs: readonly string[], timeoutMs 
 async function waitFor(predicate: () => boolean | Promise<boolean>, label: string, timeoutMs = DEFAULT_E2E_TIMEOUT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
+    try {
+      if (await predicate()) {
+        return;
+      }
+    } catch (error) {
+      if (!isTransientSqliteLock(error)) {
+        throw error;
+      }
     }
     await delay(100);
   }
 
   throw new Error(`Timed out waiting for ${label}`);
+}
+
+function isTransientSqliteLock(error: unknown): boolean {
+  return error instanceof Error && /database is locked/i.test(error.message);
 }
 
 async function waitForSessionIdle(

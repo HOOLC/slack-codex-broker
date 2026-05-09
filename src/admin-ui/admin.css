@@ -118,6 +118,7 @@
     .timeline-title { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
     .timeline-title strong { min-width: 0; max-width: min(54ch, 58%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .timeline-title span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .timeline-title.timeline-title-single strong { max-width: 100%; }
     .trace-meta { color: var(--muted); font-size: 9px; }
     .trace-details summary { cursor: pointer; color: var(--cyan); font-size: 9px; }
     .trace-details pre { margin: 4px 0 0; padding: 4px 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); background: #030508; font: 10px/1.4 var(--mono); }
@@ -184,11 +185,67 @@
       .admin-nav { overflow-x: auto; }
       .nav-item { white-space: nowrap; }
       .view-grid { grid-template-columns: 1fr; }
-      .session-master-detail { grid-template-columns: 1fr; }
+      .session-master-detail { grid-template-columns: 1fr; grid-template-rows: minmax(180px, 32vh) minmax(0, 1fr); }
       .session-list { max-height: 32vh; min-height: 0; }
       .session-line { grid-template-columns: minmax(0, 1fr) auto; }
       .session-time { grid-column: 1 / -1; }
       .session-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .session-inspector { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      body { font-size: 11px; }
+      .shell { padding: 6px; }
+      .topbar { align-items: flex-start; flex-wrap: wrap; gap: 6px; padding: 4px 0 6px; }
+      .admin-nav { max-width: 100%; }
+      .topbar-center { order: 3; flex-basis: 100%; width: 100%; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
+      .top-actions { margin-left: auto; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
+      .quota-account { max-width: 100%; }
+      .nav-item { padding: 6px 12px; }
+      .admin-content { padding-top: 6px; }
+      .panel-head { align-items: flex-start; flex-wrap: wrap; gap: 6px; padding: 5px 6px; }
+      .toolbar { gap: 4px; padding: 4px 6px; }
+      .toolbar input { min-width: 0; }
+      .toolbar select { flex: 0 0 126px; }
+      .selected-session-head { grid-template-columns: 1fr; align-items: start; gap: 6px; padding: 6px; }
+      .session-detail-actions { width: 100%; min-width: 0; overflow-x: auto; padding-bottom: 2px; }
+      .session-detail-title, .session-detail-subtitle { white-space: normal; overflow-wrap: anywhere; }
+      .session-body { padding: 6px; }
+      .session-detail-summary { margin-bottom: 4px; }
+      .mini-body { padding: 4px; }
+      .trace-summary { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+      .timeline { max-height: none; height: min(60dvh, 540px); }
+      .session-permalink-panel .timeline { height: min(64dvh, 640px); }
+      .timeline-event { grid-template-columns: 54px 78px minmax(0, 1fr); gap: 4px; padding: 6px 4px; }
+      .timeline-title { display: block; }
+      .timeline-title strong,
+      .timeline-title span {
+        display: block;
+        max-width: 100%;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .timeline-title span { margin-top: 2px; }
+      .trace-details pre { max-height: 220px; }
+      .operation-row { grid-template-columns: 1fr; }
+      .deploy-actions { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .topbar { display: grid; grid-template-columns: 1fr; }
+      .top-actions { width: 100%; margin-left: 0; }
+      .topbar-center { order: initial; }
+      .session-master-detail { grid-template-rows: minmax(190px, 38dvh) minmax(0, 1fr); }
+      .session-list { max-height: 38dvh; }
+      .session-summary { padding: 7px 6px 7px 8px; }
+      .session-line { gap: 4px; }
+      .session-meta-line { gap: 3px; }
+      .session-detail-actions { flex-wrap: wrap; overflow-x: visible; }
+      .session-detail-summary { grid-template-columns: 1fr; }
+      .timeline-event { grid-template-columns: 48px minmax(0, 1fr); }
+      .timeline-event > .badge { justify-self: start; }
+      .timeline-main { grid-column: 1 / -1; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .risk-strip { grid-template-columns: 1fr 1fr; }
     }

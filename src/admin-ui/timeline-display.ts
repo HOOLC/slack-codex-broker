@@ -47,6 +47,13 @@ export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisp
       }
       break;
     }
+    case "agent_assistant_message": {
+      const content = assistantMessageContent(event, rawSummary);
+      if (content) {
+        return { badgeLabel, title: content, summary: "" };
+      }
+      return { badgeLabel, title: rawTitle, summary: isGenericAssistantSummary(rawSummary) ? "" : rawSummary };
+    }
     case "agent_input_delivered":
     case "agent_turn_started":
     case "agent_turn_completed":
@@ -136,6 +143,33 @@ function normalizeTimelineText(value: unknown): string {
 
 function nonEmptyString(value: unknown): string {
   return String(value || "").trim();
+}
+
+function assistantMessageContent(event: TimelineEvent, rawSummary: string): string {
+  const detail = nonEmptyString(event.detail);
+  if (detail && !isGenericAssistantSummary(detail)) {
+    return compactTimelineText(detail, 320);
+  }
+  if (rawSummary && !isGenericAssistantSummary(rawSummary)) {
+    return compactTimelineText(rawSummary, 320);
+  }
+  return "";
+}
+
+function isGenericAssistantSummary(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "replied in slack." ||
+    normalized === "replied in slack" ||
+    normalized === "sent a slack reply." ||
+    normalized === "sent a slack reply";
+}
+
+function compactTimelineText(value: string, maxLength: number): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
 }
 
 export function statusLabel(value: unknown): string {

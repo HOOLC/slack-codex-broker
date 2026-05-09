@@ -399,7 +399,10 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
       <span>{fmtTime(event.at)}</span>
       <Badge label={display.badgeLabel} tone={badgeTone} />
       <div className="timeline-main">
-        <div className="timeline-title"><strong title={display.title}>{display.title}</strong><span title={display.summary}>{display.summary}</span></div>
+        <div className={"timeline-title" + (display.summary ? "" : " timeline-title-single")}>
+          <strong title={display.title}>{display.title}</strong>
+          {display.summary ? <span title={display.summary}>{display.summary}</span> : null}
+        </div>
         {meta ? <div className="trace-meta">{meta}</div> : null}
         {event.detail ? (
           <details className="trace-details">
