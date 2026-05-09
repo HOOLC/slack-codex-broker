@@ -171,9 +171,21 @@
     .profile-account { font-weight: 700; font-size: 11px; }
     .profile-plan, .summary-detail { color: var(--muted); font-size: 10px; }
     .profile-actions { display: flex; gap: 6px; }
-    .inline-link { color: var(--cyan); text-decoration: none; }
-    .inline-link:hover { text-decoration: underline; }
+    .modal-heading { display: grid; gap: 2px; }
+    .add-profile-modal { gap: 10px; }
+    .auth-primary-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px; border: 1px solid var(--cyan); background: rgba(61,181,199,0.06); }
+    .auth-primary-copy { min-width: 0; display: grid; gap: 2px; }
+    .auth-primary-title { color: var(--text); font-size: 13px; font-weight: 700; }
+    .device-code-panel { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); background: #05080c; }
+    .device-code-panel[hidden] { display: none; }
+    .device-code-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 10px; }
+    .device-code-label { color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .code-block { padding: 6px 8px; border: 1px solid var(--cyan); color: var(--text); font-size: 20px; font-weight: 700; letter-spacing: 0; text-align: center; }
+    .auth-json-fallback { border: 1px solid var(--line); background: #070b10; }
+    .auth-json-fallback summary { cursor: pointer; padding: 6px 8px; color: var(--muted); font-size: 10px; }
+    .auth-json-fallback[open] summary { border-bottom: 1px solid var(--line); color: var(--cyan); }
+    .fallback-body { display: grid; gap: 6px; padding: 8px; }
+    .fallback-actions, .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .quota-grid { display: grid; gap: 2px; }
     .quota-line { display: grid; grid-template-columns: 50px 70px 1fr; gap: 6px; color: var(--muted); font-size: 10px; }
     .quota-line strong { color: var(--text); }
@@ -239,6 +251,8 @@
       .trace-details pre { max-height: 220px; }
       .operation-row { grid-template-columns: 1fr; }
       .deploy-actions { grid-template-columns: 1fr; }
+      .auth-primary-card { grid-template-columns: 1fr; }
+      .auth-primary-card button { width: 100%; }
     }
     @media (max-width: 520px) {
       .topbar { display: grid; grid-template-columns: 1fr; }

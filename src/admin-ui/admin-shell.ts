@@ -86,19 +86,39 @@ export function renderAdminShellHtml(serviceName: string): string {
     </div>
   </div>
 
-  <dialog id="add-profile-dialog"><div class="modal-content">
-    <div class="panel-title">新增认证档案</div>
-    <button id="start-profile-device-code" class="secondary" type="button">设备码登录</button>
-    <div id="profile-device-code-panel" class="summary-detail" hidden>
-      <div>打开 <a id="profile-device-code-link" class="inline-link" href="#" target="_blank" rel="noreferrer">登录页面</a>，输入代码</div>
-      <div id="profile-device-code-value" class="code-block"></div>
-      <div id="profile-device-code-countdown"></div>
+  <dialog id="add-profile-dialog"><div class="modal-content add-profile-modal">
+    <div class="modal-heading">
+      <div class="panel-title">添加账号</div>
+      <div class="summary-detail">推荐使用设备码 OAuth</div>
     </div>
-    <input id="profile-auth-file" type="file" accept="application/json,.json" />
-    <textarea id="profile-auth-text" placeholder="在这里粘贴 auth.json..."></textarea>
-    <div style="display:flex; gap:8px; justify-content:flex-end;">
-      <button id="close-add-profile-dialog" class="secondary">取消</button>
-      <button id="submit-add-profile-dialog" class="primary">保存</button>
+    <section class="auth-primary-card">
+      <div class="auth-primary-copy">
+        <div class="auth-primary-title">设备码 OAuth</div>
+        <div class="summary-detail">浏览器完成登录后自动保存账号</div>
+      </div>
+      <button id="start-profile-device-code" class="primary" type="button">开始设备码登录</button>
+    </section>
+    <div id="profile-device-code-panel" class="device-code-panel" hidden>
+      <div class="device-code-row">
+        <span>登录页面</span>
+        <a id="profile-device-code-link" class="link-button" href="#" target="_blank" rel="noreferrer">打开</a>
+      </div>
+      <div class="device-code-label">一次性代码</div>
+      <div id="profile-device-code-value" class="code-block"></div>
+      <div id="profile-device-code-countdown" class="summary-detail"></div>
+    </div>
+    <details id="profile-auth-json-fallback" class="auth-json-fallback">
+      <summary>备用：导入 auth.json</summary>
+      <div class="fallback-body">
+        <input id="profile-auth-file" type="file" accept="application/json,.json" />
+        <textarea id="profile-auth-text" placeholder="在这里粘贴 auth.json..."></textarea>
+        <div class="fallback-actions">
+          <button id="submit-add-profile-dialog" class="secondary" type="button">保存 auth.json</button>
+        </div>
+      </div>
+    </details>
+    <div class="modal-actions">
+      <button id="close-add-profile-dialog" class="secondary" type="button">取消</button>
     </div>
     <div id="add-profile-status" class="summary-detail"></div>
   </div></dialog>

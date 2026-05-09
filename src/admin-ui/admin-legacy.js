@@ -99,9 +99,10 @@ export function initAdminPage(options = {}) {
     function resetProfileDeviceCode() {
       clearProfileDeviceCodeTimer();
       addProfileDeviceCode = null;
+      document.getElementById("profile-auth-json-fallback").open = false;
       document.getElementById("profile-device-code-panel").hidden = true;
       document.getElementById("profile-device-code-link").removeAttribute("href");
-      document.getElementById("profile-device-code-link").textContent = "登录页面";
+      document.getElementById("profile-device-code-link").textContent = "打开";
       document.getElementById("profile-device-code-value").textContent = "";
       document.getElementById("profile-device-code-countdown").textContent = "";
       document.getElementById("start-profile-device-code").disabled = false;
@@ -1037,7 +1038,7 @@ export function initAdminPage(options = {}) {
         addProfileDeviceCode = deviceCode;
         panel.hidden = false;
         link.href = deviceCode.verificationUrl;
-        link.textContent = deviceCode.verificationUrl.replace(/^https?:\/\//, "");
+        link.textContent = "打开";
         codeValue.textContent = deviceCode.userCode;
         setAddProfileStatus("等待登录确认...", "cyan");
         updateProfileDeviceCodeCountdown();
@@ -1206,6 +1207,7 @@ export function initAdminPage(options = {}) {
       document.getElementById("add-profile-status").style.color = "";
       resetProfileDeviceCode();
       addProfileDialog.showModal();
+      document.getElementById("start-profile-device-code").focus();
     };
     document.getElementById("open-github-author-dialog").onclick = () => {
       document.getElementById("github-author-dialog-status").textContent = "";

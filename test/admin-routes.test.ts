@@ -165,7 +165,10 @@ describe("admin routes", () => {
     expect(shell).toContain("发布");
     expect(shell).toContain("deploy-release-button");
     expect(shell).toContain("add-profile-dialog");
+    expect(shell).toContain("推荐使用设备码 OAuth");
+    expect(shell).toContain("备用：导入 auth.json");
     expect(shell).toContain("start-profile-device-code");
+    expect(shell).toContain("profile-auth-json-fallback");
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("session-search");
     expect(sessionViewSource).toContain("session-detail-panel");
