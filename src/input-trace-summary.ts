@@ -24,7 +24,7 @@ export function summarizeInputTraceDisplay(options: {
     return {
       badgeLabel: "输入",
       title: normalizeString(options.fallbackTitle) || "输入",
-      summary: "Broker 内部输入包装；未解析出 Slack 消息",
+      summary: "",
       metadata: {
         source
       }

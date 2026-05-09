@@ -97,6 +97,31 @@ describe("admin session timeline display", () => {
     });
   });
 
+  it("shows assistant reply content instead of generic Slack delivery text", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_assistant_message",
+      title: "Assistant 消息",
+      summary: "Replied in Slack.",
+      detail: "已经合并并部署，线上健康检查正常。"
+    })).toEqual({
+      badgeLabel: "Assistant",
+      title: "已经合并并部署，线上健康检查正常。",
+      summary: ""
+    });
+  });
+
+  it("does not surface broker English wrappers when no structured payload can be extracted", () => {
+    expect(getTimelineEventDisplay({
+      type: "agent_input_received",
+      title: "用户消息",
+      summary: "A newer Slack message arrived while the current turn is still active. Treat it as the latest instruction..."
+    })).toEqual({
+      badgeLabel: "输入",
+      title: "用户消息",
+      summary: ""
+    });
+  });
+
   it("hides joined-active-turn input delivery rows because they duplicate the input row", () => {
     expect(isTimelineEventVisible({
       type: "agent_input_delivered",

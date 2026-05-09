@@ -127,6 +127,62 @@ describe("CodexAppServerRuntime", () => {
       })
     ]);
   });
+
+  it("emits assistant message content from response_item notifications", () => {
+    const { codex, events } = createRuntimeFixture();
+
+    codex.emit("notification", "codex/event", {
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      msg: {
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "message-1",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: "我已经修好移动端布局。"
+            }
+          ]
+        },
+        timestamp: "2026-05-09T00:00:01.000Z"
+      }
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "agent.message.completed",
+        agentSessionId: "thread-1",
+        brokerSessionKey: TEST_SESSION.key,
+        turnId: "turn-1",
+        messageId: "message-1",
+        role: "assistant",
+        text: "我已经修好移动端布局。"
+      })
+    ]);
+  });
+
+  it("ignores empty assistant response_item notifications", () => {
+    const { codex, events } = createRuntimeFixture();
+
+    codex.emit("notification", "codex/event", {
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      msg: {
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "message-empty",
+          role: "assistant",
+          content: []
+        }
+      }
+    });
+
+    expect(events).toEqual([]);
+  });
 });
 
 function createRuntimeFixture(): {
