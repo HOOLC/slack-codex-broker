@@ -5,7 +5,8 @@ import {
   profileDisplayLabel,
   profileOptionLabel,
   profileQuotaLabel,
-  profileTitle
+  profileTitle,
+  profileWeeklyQuotaLabel
 } from "../src/admin-ui/auth-profile-display.js";
 
 describe("admin auth profile display", () => {
@@ -21,6 +22,7 @@ describe("admin auth profile display", () => {
     expect(profileAccountLabel(profile)).toBe("hejiachen@toeverything.info");
     expect(profileDisplayLabel(profile)).toBe("hejiachen@toeverything.info · Pro Lite");
     expect(profileQuotaLabel(profile)).toBe("短窗 96% / 周 64%");
+    expect(profileWeeklyQuotaLabel(profile)).toBe("周 64%");
     expect(profileOptionLabel(profile)).toBe("hejiachen@toeverything.info · Pro Lite · 短窗 96% / 周 64%");
     expect(profileTitle(profile)).toContain("内部标识 575d9997-db66-4b21-979d-4d3b9597b36e");
   });

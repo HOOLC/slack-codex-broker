@@ -263,10 +263,34 @@ describe("admin session timeline display", () => {
 
 describe("admin session row display", () => {
   it("keeps common session list metadata out of the row", () => {
+    const authProfiles = new Map<string, Record<string, any>>([
+      ["profile-a", {
+        name: "profile-a",
+        account: {
+          ok: true,
+          account: {
+            email: "hejiachen@toeverything.info",
+            planType: "prolite"
+          }
+        },
+        rateLimits: {
+          ok: true,
+          rateLimits: {
+            primary: {
+              usedPercent: 4
+            },
+            secondary: {
+              usedPercent: 36
+            }
+          }
+        }
+      }]
+    ]);
     const meta = renderSessionMeta({
       key: "C123:111.222",
       channelId: "C123",
       channelLabel: "C123",
+      authProfileName: "profile-a",
       firstUserMessage: {
         textPreview: "@codex-3720 你好"
       },
@@ -279,10 +303,12 @@ describe("admin session row display", () => {
       },
       backgroundJobCount: 0,
       updatedAt: new Date().toISOString()
-    }, new Map(), new Map([["C123", "#ops"]]));
+    }, authProfiles, new Map([["C123", "#ops"]]));
     const labels = meta.map((item) => item.label);
 
-    expect(labels).toEqual(["#ops", "Token 5.1K"]);
+    expect(labels).toEqual(["#ops", "周 64%", "Token 5.1K"]);
+    expect(labels.join(" ")).not.toContain("hejiachen@toeverything.info");
+    expect(labels.join(" ")).not.toContain("Pro Lite");
     expect(shouldShowSessionState({ rank: 10 })).toBe(false);
   });
 

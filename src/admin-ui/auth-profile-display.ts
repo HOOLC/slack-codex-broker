@@ -69,6 +69,17 @@ export function profileQuotaLabel(profile: AuthProfileRecord): string {
   return parts.length ? parts.join(" / ") : "额度未知";
 }
 
+export function profileWeeklyQuotaLabel(profile: AuthProfileRecord): string {
+  const rateLimits = profile.rateLimits || {};
+  if (rateLimits.ok === false) {
+    return "不可用";
+  }
+
+  const limits = rateLimits.rateLimits || {};
+  const secondary = remainingPercent(limits.secondary?.usedPercent);
+  return secondary !== null ? "周 " + Math.round(secondary) + "%" : "周额度未知";
+}
+
 function remainingPercent(usedPercent: unknown): number | null {
   const used = Number(usedPercent);
   if (!Number.isFinite(used)) {
