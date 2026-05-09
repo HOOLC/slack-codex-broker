@@ -18,6 +18,8 @@ export function initAdminPage(options = {}) {
     let uiState = loadUiState();
     let uiStatePersistTimer = null;
     let realtimeSource = null;
+    let addProfileDeviceCode = null;
+    let addProfileDeviceCodeTimer = null;
 
     async function requestJson(path, init = {}) {
       const response = await fetch(path, Object.assign({}, init, { headers: authHeaders(init.headers) }));
@@ -82,6 +84,27 @@ export function initAdminPage(options = {}) {
     }
     function authHeaders(extra) {
       return Object.assign({}, extra || {});
+    }
+    function setAddProfileStatus(message, color) {
+      const status = document.getElementById("add-profile-status");
+      status.textContent = message;
+      status.style.color = color ? "var(--" + color + ")" : "";
+    }
+    function clearProfileDeviceCodeTimer() {
+      if (addProfileDeviceCodeTimer != null) {
+        window.clearTimeout(addProfileDeviceCodeTimer);
+        addProfileDeviceCodeTimer = null;
+      }
+    }
+    function resetProfileDeviceCode() {
+      clearProfileDeviceCodeTimer();
+      addProfileDeviceCode = null;
+      document.getElementById("profile-device-code-panel").hidden = true;
+      document.getElementById("profile-device-code-link").removeAttribute("href");
+      document.getElementById("profile-device-code-link").textContent = "登录页面";
+      document.getElementById("profile-device-code-value").textContent = "";
+      document.getElementById("profile-device-code-countdown").textContent = "";
+      document.getElementById("start-profile-device-code").disabled = false;
     }
     function fmtTime(value) {
       if (!value) return "--";
@@ -969,7 +992,9 @@ export function initAdminPage(options = {}) {
       const fileInput = document.getElementById("profile-auth-file");
       const textArea = document.getElementById("profile-auth-text");
       const submitButton = document.getElementById("submit-add-profile-dialog");
+      clearProfileDeviceCodeTimer();
       status.textContent = "正在保存...";
+      status.style.color = "";
       submitButton.disabled = true;
       try {
         const content = textArea.value.trim() || (fileInput.files[0] ? await fileInput.files[0].text() : "");
@@ -989,6 +1014,96 @@ export function initAdminPage(options = {}) {
         status.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
       } finally {
         submitButton.disabled = false;
+      }
+    }
+    async function startProfileDeviceCodeAuth() {
+      const startButton = document.getElementById("start-profile-device-code");
+      const panel = document.getElementById("profile-device-code-panel");
+      const link = document.getElementById("profile-device-code-link");
+      const codeValue = document.getElementById("profile-device-code-value");
+      resetProfileDeviceCode();
+      startButton.disabled = true;
+      setAddProfileStatus("正在申请设备码...", "");
+      try {
+        const payload = await requestJson("/admin/api/auth-profiles/device-code/start", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: "{}"
+        });
+        const deviceCode = payload.deviceCode;
+        if (!deviceCode?.deviceAuthId || !deviceCode?.userCode || !deviceCode?.verificationUrl) {
+          throw new Error("设备码响应不完整");
+        }
+        addProfileDeviceCode = deviceCode;
+        panel.hidden = false;
+        link.href = deviceCode.verificationUrl;
+        link.textContent = deviceCode.verificationUrl.replace(/^https?:\/\//, "");
+        codeValue.textContent = deviceCode.userCode;
+        setAddProfileStatus("等待登录确认...", "cyan");
+        updateProfileDeviceCodeCountdown();
+        scheduleProfileDeviceCodePoll(deviceCode.intervalSeconds || 5);
+      } catch (error) {
+        setAddProfileStatus(error instanceof Error ? error.message : String(error), "red");
+        startButton.disabled = false;
+      }
+    }
+    function updateProfileDeviceCodeCountdown() {
+      if (!addProfileDeviceCode) return false;
+      const expiresAt = Date.parse(String(addProfileDeviceCode.expiresAt || ""));
+      const countdown = document.getElementById("profile-device-code-countdown");
+      if (!Number.isFinite(expiresAt)) {
+        countdown.textContent = "";
+        return true;
+      }
+      const remainingSeconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      if (remainingSeconds <= 0) {
+        countdown.textContent = "设备码已过期";
+        setAddProfileStatus("设备码已过期，重新申请一个。", "red");
+        clearProfileDeviceCodeTimer();
+        document.getElementById("start-profile-device-code").disabled = false;
+        return false;
+      }
+      countdown.textContent = "剩余 " + Math.ceil(remainingSeconds / 60) + " 分钟";
+      return true;
+    }
+    function scheduleProfileDeviceCodePoll(intervalSeconds) {
+      clearProfileDeviceCodeTimer();
+      addProfileDeviceCodeTimer = window.setTimeout(pollProfileDeviceCodeAuth, Math.max(1, Number(intervalSeconds) || 5) * 1000);
+    }
+    async function pollProfileDeviceCodeAuth() {
+      const deviceCode = addProfileDeviceCode;
+      if (!deviceCode || !updateProfileDeviceCodeCountdown()) return;
+      try {
+        const payload = await requestJson("/admin/api/auth-profiles/device-code/complete", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            device_auth_id: deviceCode.deviceAuthId,
+            user_code: deviceCode.userCode,
+            retry_after_seconds: deviceCode.intervalSeconds || 5
+          })
+        });
+        if (payload.deviceCode?.status === "pending") {
+          setAddProfileStatus("等待登录确认...", "cyan");
+          updateProfileDeviceCodeCountdown();
+          scheduleProfileDeviceCodePoll(payload.deviceCode.retryAfterSeconds || deviceCode.intervalSeconds || 5);
+          return;
+        }
+        if (payload.deviceCode?.status !== "complete") {
+          throw new Error("设备码确认响应不完整");
+        }
+
+        render(payload.status);
+        setAddProfileStatus("认证档案已保存", "green");
+        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已保存</span>';
+        document.getElementById("profile-auth-file").value = "";
+        document.getElementById("profile-auth-text").value = "";
+        resetProfileDeviceCode();
+        addProfileDialog.close();
+      } catch (error) {
+        setAddProfileStatus(error instanceof Error ? error.message : String(error), "red");
+        clearProfileDeviceCodeTimer();
+        document.getElementById("start-profile-device-code").disabled = false;
       }
     }
     async function deployRelease() {
@@ -1088,6 +1203,8 @@ export function initAdminPage(options = {}) {
     githubAuthorSearch.oninput = () => { if (latestStatus) renderGitHubAuthors(latestStatus); };
     document.getElementById("open-add-profile-dialog").onclick = () => {
       document.getElementById("add-profile-status").textContent = "";
+      document.getElementById("add-profile-status").style.color = "";
+      resetProfileDeviceCode();
       addProfileDialog.showModal();
     };
     document.getElementById("open-github-author-dialog").onclick = () => {
@@ -1098,11 +1215,21 @@ export function initAdminPage(options = {}) {
     };
     document.getElementById("deploy-release-button").onclick = deployRelease;
     document.getElementById("rollback-release-button").onclick = rollbackRelease;
-    document.getElementById("close-add-profile-dialog").onclick = () => addProfileDialog.close();
+    document.getElementById("close-add-profile-dialog").onclick = () => {
+      resetProfileDeviceCode();
+      addProfileDialog.close();
+    };
     document.getElementById("close-github-author-dialog").onclick = () => githubAuthorDialog.close();
     document.getElementById("submit-add-profile-dialog").onclick = submitAddProfile;
+    document.getElementById("start-profile-device-code").onclick = startProfileDeviceCodeAuth;
     document.getElementById("submit-github-author-dialog").onclick = submitGitHubAuthorMapping;
-    addProfileDialog.onclick = (event) => { if (event.target === addProfileDialog) addProfileDialog.close(); };
+    addProfileDialog.onclick = (event) => {
+      if (event.target === addProfileDialog) {
+        resetProfileDeviceCode();
+        addProfileDialog.close();
+      }
+    };
+    addProfileDialog.addEventListener("close", resetProfileDeviceCode);
     githubAuthorDialog.onclick = (event) => { if (event.target === githubAuthorDialog) githubAuthorDialog.close(); };
     refresh();
 

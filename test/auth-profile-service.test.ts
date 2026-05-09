@@ -113,8 +113,29 @@ describe("AuthProfileService", () => {
     });
     expect(duplicateProfile.name).toBe("backup-account-2");
 
+    const jwtNamedProfile = await profileService.addProfile({
+      authJsonContent: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          id_token: jwtWithClaims({
+            "https://api.openai.com/profile": {
+              email: "bot@example.com"
+            }
+          }),
+          access_token: "jwt-access",
+          account_id: "jwt-account"
+        }
+      })
+    });
+    expect(jwtNamedProfile.name).toBe("bot-example.com");
+
     const afterAdd = await profileService.listProfilesStatus();
-    expect(afterAdd.profiles.map((profile) => profile.name).sort()).toEqual(["backup-account", "backup-account-2", "primary"]);
+    expect(afterAdd.profiles.map((profile) => profile.name).sort()).toEqual([
+      "backup-account",
+      "backup-account-2",
+      "bot-example.com",
+      "primary"
+    ]);
 
     await profileService.activateProfile("backup-account");
     const activeLinkTarget = await fs.readlink(path.join(config.codexHome, "auth.json"));
@@ -128,6 +149,7 @@ describe("AuthProfileService", () => {
     await profileService.activateProfile("primary");
     await profileService.deleteProfile("backup-account");
     await profileService.deleteProfile("backup-account-2");
+    await profileService.deleteProfile("bot-example.com");
 
     const afterDelete = await profileService.listProfilesStatus();
     expect(afterDelete.profiles.map((profile) => profile.name).sort()).toEqual(["primary"]);
@@ -196,3 +218,11 @@ describe("AuthProfileService", () => {
     expect(afterAdd.profiles[0]?.active).toBe(true);
   });
 });
+
+function jwtWithClaims(claims: Record<string, unknown>): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+    Buffer.from(JSON.stringify(claims)).toString("base64url"),
+    "signature"
+  ].join(".");
+}

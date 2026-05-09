@@ -171,6 +171,9 @@
     .profile-account { font-weight: 700; font-size: 11px; }
     .profile-plan, .summary-detail { color: var(--muted); font-size: 10px; }
     .profile-actions { display: flex; gap: 6px; }
+    .inline-link { color: var(--cyan); text-decoration: none; }
+    .inline-link:hover { text-decoration: underline; }
+    .code-block { padding: 6px 8px; border: 1px solid var(--cyan); color: var(--text); font-size: 20px; font-weight: 700; letter-spacing: 0; text-align: center; }
     .quota-grid { display: grid; gap: 2px; }
     .quota-line { display: grid; grid-template-columns: 50px 70px 1fr; gap: 6px; color: var(--muted); font-size: 10px; }
     .quota-line strong { color: var(--text); }

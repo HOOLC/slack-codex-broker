@@ -88,6 +88,12 @@ export function renderAdminShellHtml(serviceName: string): string {
 
   <dialog id="add-profile-dialog"><div class="modal-content">
     <div class="panel-title">新增认证档案</div>
+    <button id="start-profile-device-code" class="secondary" type="button">设备码登录</button>
+    <div id="profile-device-code-panel" class="summary-detail" hidden>
+      <div>打开 <a id="profile-device-code-link" class="inline-link" href="#" target="_blank" rel="noreferrer">登录页面</a>，输入代码</div>
+      <div id="profile-device-code-value" class="code-block"></div>
+      <div id="profile-device-code-countdown"></div>
+    </div>
     <input id="profile-auth-file" type="file" accept="application/json,.json" />
     <textarea id="profile-auth-text" placeholder="在这里粘贴 auth.json..."></textarea>
     <div style="display:flex; gap:8px; justify-content:flex-end;">

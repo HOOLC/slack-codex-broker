@@ -165,6 +165,7 @@ describe("admin routes", () => {
     expect(shell).toContain("发布");
     expect(shell).toContain("deploy-release-button");
     expect(shell).toContain("add-profile-dialog");
+    expect(shell).toContain("start-profile-device-code");
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("session-search");
     expect(sessionViewSource).toContain("session-detail-panel");
@@ -352,6 +353,72 @@ describe("admin routes", () => {
       {
         name: undefined,
         authJsonContent: "{\"tokens\":{\"account_id\":\"acc-1\"}}"
+      }
+    ]);
+  });
+
+  it("forwards auth profile device-code start and completion to the admin service", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      startAuthProfileDeviceCode: async () => {
+        calls.push({ type: "start" });
+        return {
+          ok: true,
+          deviceCode: {
+            deviceAuthId: "device-1",
+            userCode: "ABCD-EFGH"
+          }
+        };
+      },
+      completeAuthProfileDeviceCode: async (payload: Record<string, unknown>) => {
+        calls.push({ type: "complete", ...payload });
+        return {
+          ok: true,
+          deviceCode: {
+            status: "pending"
+          }
+        };
+      },
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      activateAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
+    });
+
+    const start = await fetch(`${baseUrl}/admin/api/auth-profiles/device-code/start`, {
+      method: "POST"
+    });
+    expect(start.status).toBe(200);
+
+    const complete = await fetch(`${baseUrl}/admin/api/auth-profiles/device-code/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        device_auth_id: "device-1",
+        user_code: "ABCD-EFGH",
+        retry_after_seconds: 8
+      })
+    });
+    expect(complete.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        type: "start"
+      },
+      {
+        type: "complete",
+        name: undefined,
+        deviceAuthId: "device-1",
+        userCode: "ABCD-EFGH",
+        retryAfterSeconds: 8
       }
     ]);
   });

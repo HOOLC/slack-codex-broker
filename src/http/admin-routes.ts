@@ -158,6 +158,43 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname === "/admin/api/auth-profiles/device-code/start") {
+    await runAdminOperation(response, () =>
+      options.adminService.startAuthProfileDeviceCode()
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/admin/api/auth-profiles/device-code/complete") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const name = readString(body.name) ?? undefined;
+    const deviceAuthId = readString(body.device_auth_id);
+    const userCode = readString(body.user_code);
+    const retryAfterSeconds = readPositiveNumber(body.retry_after_seconds);
+    if (!deviceAuthId || !userCode) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["device_auth_id", "user_code"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.completeAuthProfileDeviceCode({
+        name,
+        deviceAuthId,
+        userCode,
+        retryAfterSeconds
+      })
+    );
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/admin/api/github-authors") {
     const body = await readAdminBody(request, response);
     if (!body) {
@@ -331,6 +368,11 @@ async function readAdminBody(
     });
     return null;
   }
+}
+
+function readPositiveNumber(value: unknown): number | undefined {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
 }
 
 async function runAdminOperation(

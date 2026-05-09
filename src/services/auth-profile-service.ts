@@ -11,6 +11,12 @@ import {
   type SerializedAccountStatus,
   type SerializedRateLimitsStatus
 } from "./codex/account-status.js";
+import {
+  completeChatGptDeviceCodeLogin,
+  requestChatGptDeviceCode,
+  type ChatGptDeviceCode,
+  type ChatGptDeviceCodePollResult
+} from "./codex/chatgpt-device-auth-api.js";
 import { readChatGptUsageSnapshot } from "./codex/chatgpt-usage-api.js";
 
 const DEFAULT_PROFILE_NAME = "primary";
@@ -155,6 +161,18 @@ export class AuthProfileService {
       account: snapshot.account,
       rateLimits: snapshot.rateLimits
     };
+  }
+
+  async requestDeviceCodeAuth(): Promise<ChatGptDeviceCode> {
+    return await requestChatGptDeviceCode();
+  }
+
+  async completeDeviceCodeAuth(options: {
+    readonly deviceAuthId: string;
+    readonly userCode: string;
+    readonly retryAfterSeconds?: number | undefined;
+  }): Promise<ChatGptDeviceCodePollResult> {
+    return await completeChatGptDeviceCodeLogin(options);
   }
 
   async deleteProfile(profileName: string): Promise<void> {
@@ -418,9 +436,31 @@ function parseAuthJson(content: string): ParsedAuthJson {
 function deriveProfileName(parsedAuthJson: Record<string, unknown>): string {
   const tokens = readRecord(parsedAuthJson.tokens);
   const accountId = readString(tokens?.account_id);
-  const email = readString(parsedAuthJson.email) ?? readString(readRecord(parsedAuthJson.user)?.email);
+  const email =
+    readString(parsedAuthJson.email) ??
+    readString(readRecord(parsedAuthJson.user)?.email) ??
+    readJwtEmail(readString(tokens?.id_token));
   const seed = email ?? accountId ?? "profile";
   return sanitizeProfileName(seed);
+}
+
+function readJwtEmail(jwt: string | null): string | null {
+  const payload = decodeJwtPayload(jwt);
+  const profileClaims = readRecord(payload?.["https://api.openai.com/profile"]);
+  return readString(payload?.email) ?? readString(profileClaims?.email);
+}
+
+function decodeJwtPayload(jwt: string | null): Record<string, unknown> | null {
+  const payload = jwt?.split(".")[1];
+  if (!payload) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

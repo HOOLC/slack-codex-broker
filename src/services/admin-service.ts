@@ -397,6 +397,55 @@ export class AdminService {
     );
   }
 
+  async startAuthProfileDeviceCode(): Promise<Record<string, unknown>> {
+    const deviceCode = await this.options.authProfiles.requestDeviceCodeAuth();
+    return {
+      ok: true,
+      deviceCode
+    };
+  }
+
+  async completeAuthProfileDeviceCode(options: {
+    readonly name?: string | undefined;
+    readonly deviceAuthId: string;
+    readonly userCode: string;
+    readonly retryAfterSeconds?: number | undefined;
+  }): Promise<Record<string, unknown>> {
+    const result = await this.options.authProfiles.completeDeviceCodeAuth({
+      deviceAuthId: options.deviceAuthId,
+      userCode: options.userCode,
+      retryAfterSeconds: options.retryAfterSeconds
+    });
+
+    if (result.status === "pending") {
+      return {
+        ok: true,
+        deviceCode: result
+      };
+    }
+
+    return await this.#runTrackedOperation(
+      "auth_profile_add",
+      {
+        name: options.name ?? null,
+        source: "device_code"
+      },
+      async () => {
+        const profile = await this.options.authProfiles.addProfile({
+          name: options.name,
+          authJsonContent: result.authJsonContent
+        });
+        return {
+          ok: true,
+          deviceCode: {
+            status: "complete"
+          },
+          profile
+        };
+      }
+    );
+  }
+
   async deleteAuthProfile(options: {
     readonly name: string;
   }): Promise<Record<string, unknown>> {
