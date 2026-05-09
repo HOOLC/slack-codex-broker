@@ -6,11 +6,6 @@ export function renderAdminShellHtml(serviceName: string): string {
         <button class="nav-item" data-view-target="ops">操作</button>
       </nav>
       <div class="topbar-center" id="topbar-quota"></div>
-      <div class="top-actions">
-        <span class="pill">实时</span>
-        <span class="pill" id="last-refresh">就绪</span>
-        <button id="refresh-button" class="secondary">刷新</button>
-      </div>
     </header>
 
     <div class="admin-content">

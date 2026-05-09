@@ -153,6 +153,11 @@ describe("admin routes", () => {
     expect(shell).toContain('data-view-target="sessions"');
     expect(shell).toContain('data-view-target="ops"');
     expect(shell).toContain('id="topbar-quota"');
+    expect(shell).not.toContain("top-actions");
+    expect(shell).not.toContain("refresh-button");
+    expect(shell).not.toContain("last-refresh");
+    expect(shell).not.toContain("实时");
+    expect(shell).not.toContain("刷新");
     expect(shell).toContain("auth-profiles-panel");
     expect(shell).toContain("认证档案");
     expect(shell).toContain("github-authors-panel");
@@ -249,8 +254,13 @@ describe("admin routes", () => {
     expect(adminClientSource).not.toContain('row.addEventListener("toggle"');
     expect(adminClientSource).toContain("sessionSearch.onblur");
     expect(sessionViewSource).toContain("ongoing");
-    expect(adminClientSource).toContain("renderAccountChip");
-    expect(adminClientSource).toContain("账号异常");
+    expect(adminClientSource).toContain("authProfileQuotaItems");
+    expect(adminClientSource).toContain("profileTooltip");
+    expect(adminClientSource).not.toContain("renderAccountChip");
+    expect(adminClientSource).not.toContain("refreshButton");
+    expect(adminClientSource).not.toContain("lastRefresh");
+    expect(adminClientSource).not.toContain(" 活跃 · ");
+    expect(adminClientSource).not.toContain(" 待处理 · ");
     expect(sessionViewSource).toContain("sessionQueueState");
     expect(sessionViewSource).toContain("compareSessionsForMode");
     expect(sessionViewSource).toContain("session-card");
@@ -259,7 +269,8 @@ describe("admin routes", () => {
     expect(sessionViewSource).toContain('mode === "usage"');
     expect(sessionViewSource).toContain("fmtRelativeTime");
     expect(adminCssSource).toContain("text-overflow: ellipsis");
-    expect(adminCssSource).toContain(".quota-account.is-error");
+    expect(adminCssSource).toContain("overflow-x: auto");
+    expect(adminCssSource).toContain("flex: 0 0 auto");
     expect(adminCssSource).toContain("html, body { width: 100%; height: 100%; overflow: hidden; }");
     expect(adminCssSource).toContain(".shell { width: 100%; height: 100dvh;");
     expect(adminCssSource).toContain("grid-template-columns: minmax(320px, 420px)");
@@ -270,6 +281,7 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");
     expect(adminCssSource).toContain(".session-card");
     expect(adminCssSource).toContain(".session-priority-danger");
+    expect(adminCssSource).not.toContain(".top-actions");
     expect(adminCssSource).not.toContain(".admin-nav { grid-template-columns: 1fr; }");
   });
 

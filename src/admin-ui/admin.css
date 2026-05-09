@@ -22,7 +22,6 @@
     .shell { width: 100%; height: 100dvh; min-height: 0; margin: 0; padding: 10px 14px; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
     .topbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
 
-    .top-actions { display: flex; gap: 6px; align-items: center; }
     .pill { padding: 2px 6px; border: 1px solid var(--line); color: var(--muted); font-size: 10px; }
     button { padding: 3px 8px; border: 1px solid var(--line); background: #111820; color: var(--text); font-family: inherit; font-size: 11px; cursor: pointer; }
     button:hover { border-color: var(--cyan); }
@@ -31,10 +30,8 @@
     button.danger { color: var(--red); border-color: var(--red); }
     button:disabled { opacity: 0.4; cursor: default; }
 
-    .topbar-center { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow: hidden; flex-wrap: nowrap; }
-    .quota-account { min-width: 0; max-width: min(520px, 44vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; font-weight: 700; }
-    .quota-account.is-error { color: var(--red); }
-    .quota-pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border: 1px solid var(--line); font-size: 10px; }
+    .topbar-center { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; }
+    .quota-pill { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; padding: 1px 6px; border: 1px solid var(--line); font-size: 10px; }
     .quota-pill strong { color: var(--cyan); font-size: 11px; }
     .quota-pill.danger strong { color: var(--red); }
     .quota-pill.warn strong { color: var(--amber); }
@@ -209,8 +206,6 @@
       .topbar { align-items: flex-start; flex-wrap: wrap; gap: 6px; padding: 4px 0 6px; }
       .admin-nav { max-width: 100%; }
       .topbar-center { order: 3; flex-basis: 100%; width: 100%; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
-      .top-actions { margin-left: auto; max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
-      .quota-account { max-width: 100%; }
       .nav-item { padding: 6px 12px; }
       .admin-content { padding-top: 6px; }
       .panel-head { align-items: flex-start; flex-wrap: wrap; gap: 6px; padding: 5px 6px; }
@@ -244,7 +239,6 @@
     }
     @media (max-width: 520px) {
       .topbar { display: grid; grid-template-columns: 1fr; }
-      .top-actions { width: 100%; margin-left: 0; }
       .topbar-center { order: initial; }
       .session-master-detail { grid-template-rows: minmax(190px, 38dvh) minmax(0, 1fr); }
       .session-list { max-height: 38dvh; }

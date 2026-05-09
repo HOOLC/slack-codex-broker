@@ -2,11 +2,9 @@ import { applyAdminRealtimeEventToStatus, publishTimelineRealtimeEvent } from ".
 
 export function initAdminPage(options = {}) {
     const useReactSessions = options.useReactSessions === true;
-    const refreshButton = document.getElementById("refresh-button");
     const replaceStatus = document.getElementById("replace-status");
     const deployStatus = document.getElementById("deploy-status");
     const githubAuthorsStatus = document.getElementById("github-authors-status");
-    const lastRefresh = document.getElementById("last-refresh");
     const sessionSearch = document.getElementById("session-search");
     const sessionFilter = document.getElementById("session-filter");
     const githubAuthorSearch = document.getElementById("github-author-search");
@@ -177,6 +175,64 @@ export function initAdminPage(options = {}) {
       const score = weightedWeeklyQuotaScore(remaining, daysUntilReset(limit?.resetsAt));
       return Math.round(remaining) + "% | " + formatWeightedWeeklyQuotaScore(score);
     }
+    function weeklyQuotaScore(limit) {
+      const remaining = remainingPercent(limit?.usedPercent);
+      if (remaining == null) return null;
+      return weightedWeeklyQuotaScore(remaining, daysUntilReset(limit?.resetsAt));
+    }
+    function profileAccountLabel(profile) {
+      const accountStatus = profile.account || {};
+      if (accountStatus.ok === false) return "账号不可用";
+      const account = accountStatus.account || {};
+      return account.email || account.name || account.id || "未知账号";
+    }
+    function profilePlanLabel(profile) {
+      const accountStatus = profile.account || {};
+      if (accountStatus.ok === false) return "";
+      const plan = accountStatus.account?.planType || accountStatus.account?.type || "";
+      if (plan === "prolite") return "Pro Lite";
+      if (plan === "pro") return "Pro";
+      if (plan === "chatgpt") return "ChatGPT";
+      return plan;
+    }
+    function profileTooltip(profile, weeklyLabel, secondary) {
+      return [
+        profileAccountLabel(profile),
+        profilePlanLabel(profile),
+        weeklyLabel ? "周额度 " + weeklyLabel : "",
+        secondary ? "周重置 " + formatResetTime(secondary.resetsAt) : "",
+        profile.name ? "内部标识 " + profile.name : ""
+      ].filter(Boolean).join(" · ");
+    }
+    function authProfileQuotaItems(profiles) {
+      return profiles
+        .map((profile) => {
+          const rateLimits = profile.rateLimits || {};
+          if (rateLimits.ok === false) return null;
+          const secondary = rateLimits.rateLimits?.secondary;
+          const label = weeklyQuotaDisplay(secondary);
+          if (!label) return null;
+          const remaining = remainingPercent(secondary?.usedPercent);
+          const score = weeklyQuotaScore(secondary);
+          return {
+            label,
+            title: profileTooltip(profile, label, secondary),
+            score: score ?? -1,
+            remaining: remaining ?? 0
+          };
+        })
+        .filter(Boolean)
+        .sort((left, right) =>
+          (right.score - left.score) ||
+          (right.remaining - left.remaining) ||
+          left.title.localeCompare(right.title)
+        );
+    }
+    function quotaTone(remaining) {
+      if (remaining < 10) return "danger";
+      if (remaining < 30) return "warn";
+      return "";
+    }
     function statusTone(status) {
       const v = String(status || "").toLowerCase();
       if (["succeeded", "running", "active", "ok", "completed", "done"].includes(v)) return "good";
@@ -277,36 +333,17 @@ export function initAdminPage(options = {}) {
       const element = document.getElementById(id);
       if (element) element.textContent = String(value ?? "");
     }
-    function renderAccountChip(account) {
-      const label = account.ok ? (account.account?.email || account.account?.planType || "已登录") : "账号异常";
-      const title = account.ok ? label : (account.error || "账号异常");
-      return '<span class="quota-account' + (account.ok ? "" : " is-error") + '" title="' + esc(title) + '">' + esc(label) + '</span>';
-    }
-
     function renderSummary(data) {
-      const s = data.service || {};
       const st = data.state || {};
-      const a = data.account || {};
       const authProfiles = data.authProfiles || {};
-      const activeProfile = (authProfiles.profiles || []).find((p) => p.active);
-      const rateLimits = activeProfile?.rateLimits;
-      const snapshot = rateLimits?.rateLimits || {};
-      const secondary = snapshot.secondary;
       const topbarQuota = document.getElementById("topbar-quota");
-      const accountChip = renderAccountChip(a);
-      if (rateLimits?.ok && secondary) {
-        const weeklyRemaining = remainingPercent(secondary.usedPercent);
-        const weeklyTone = weeklyRemaining != null ? (weeklyRemaining < 10 ? "danger" : (weeklyRemaining < 30 ? "warn" : "")) : "";
-        const weeklyLabel = weeklyQuotaDisplay(secondary);
-        topbarQuota.innerHTML =
-          accountChip +
-          (weeklyLabel ? '<span class="quota-pill ' + weeklyTone + '"><strong>' + esc(weeklyLabel) + '</strong></span>' : '') +
-          '<span class="quota-pill">周重置 ' + esc(formatResetTime(secondary.resetsAt)) + '</span>' +
-          '<span class="quota-meta">' + (st.activeCount || 0) + " 活跃 · " + (st.openInboundCount || 0) + " 待处理 · " + (st.runningBackgroundJobCount || 0) + " 任务</span>";
-      } else {
-        topbarQuota.innerHTML = accountChip +
-          '<span class="quota-meta">' + (st.activeCount || 0) + " 活跃 · " + (st.openInboundCount || 0) + " 待处理 · " + (st.runningBackgroundJobCount || 0) + " 任务</span>";
-      }
+      const quotaItems = authProfileQuotaItems(authProfiles.profiles || []);
+      const quotaHtml = quotaItems.length
+        ? quotaItems.map((item) => {
+            return '<span class="quota-pill ' + quotaTone(item.remaining) + '" title="' + esc(item.title) + '"><strong>' + esc(item.label) + '</strong></span>';
+          }).join("")
+        : '<span class="quota-meta">账号池额度未知</span>';
+      topbarQuota.innerHTML = quotaHtml;
       setText("session-open-count", st.openInboundCount || 0);
       setText("session-human-count", st.openHumanInboundCount || 0);
       setText("session-system-count", st.openSystemInboundCount || 0);
@@ -869,7 +906,6 @@ export function initAdminPage(options = {}) {
     }
 
     async function refresh() {
-      refreshButton.disabled = true;
       try {
         const status = await requestJson("/admin/api/status");
         const sessionsPayload = await requestJson("/admin/api/sessions");
@@ -878,11 +914,8 @@ export function initAdminPage(options = {}) {
         });
         render(status);
         startRealtime();
-        lastRefresh.textContent = "已同步：" + fmtTime(new Date());
       } catch (error) {
-        lastRefresh.textContent = "错误：" + (error instanceof Error ? error.message : String(error));
-      } finally {
-        refreshButton.disabled = false;
+        console.warn("Admin refresh failed", error);
       }
     }
     function startRealtime() {
@@ -897,9 +930,8 @@ export function initAdminPage(options = {}) {
           latestStatus = applyAdminRealtimeEventToStatus(latestStatus, payload.event);
           publishTimelineRealtimeEvent(payload.event);
           render(latestStatus);
-          lastRefresh.textContent = "实时同步：" + fmtTime(new Date());
         } catch (error) {
-          lastRefresh.textContent = "实时事件错误：" + (error instanceof Error ? error.message : String(error));
+          console.warn("Admin realtime event failed", error);
         }
       });
       source.addEventListener("error", () => {
@@ -1042,7 +1074,6 @@ export function initAdminPage(options = {}) {
         if (target) switchAdminView(target);
       });
     });
-    refreshButton.onclick = refresh;
     if (!useReactSessions && sessionSearch && sessionFilter) {
       sessionSearch.oninput = () => {
         updateUiState({ sessionSearch: sessionSearch.value }, { deferPersist: true });
