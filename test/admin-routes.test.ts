@@ -204,10 +204,15 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin/sessions/${encodeURIComponent("C123:111.222")}`);
     expect(page.status).toBe(200);
     const html = await page.text();
+    const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
     expect(html).toContain('id="admin-root"');
     expect(html).toContain('/admin/assets/admin-ui.js');
+    expect(adminMainSource).toContain("isSessionPermalinkPath");
+    expect(adminMainSource).toContain("session-permalink-page");
+    expect(adminCssSource).toContain("body.session-permalink-page .topbar");
     expect(sessionViewSource).toContain("readPermalinkSessionKey");
     expect(sessionViewSource).toContain("SessionPermalinkView");
     expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/timeline");

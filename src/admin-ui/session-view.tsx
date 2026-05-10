@@ -271,6 +271,7 @@ function SessionDetail({ session, isPermalink = false }: {
   const openInbound = Number(session.openInboundCount || 0);
   const runningJobs = Number(session.runningBackgroundJobCount || 0);
   const totalJobs = Number(session.backgroundJobCount || 0);
+  const currentProfile = authProfiles.find((profile) => profile.name === session.authProfileName);
   return (
     <>
       <div className="selected-session-head session-detail-toolbar">
@@ -281,15 +282,15 @@ function SessionDetail({ session, isPermalink = false }: {
             <span className="session-time" title={fmtDateTime(activityAt)}>{fmtRelativeTime(activityAt)}</span>
           </div>
           <div className="session-detail-subtitle" title={first}>{first}</div>
-          <div className="session-detail-meta-strip">
-            <SessionHeaderPill label={channelLabel} title={session.channelId} />
-            {openInbound > 0 ? <SessionHeaderPill label={"待处理 " + openInbound} tone="warn" /> : null}
-            {totalJobs > 0 ? <SessionHeaderPill label={"Jobs " + totalJobs + (runningJobs ? " / 运行 " + runningJobs : "")} tone={runningJobs ? "good" : undefined} /> : null}
-            <SessionHeaderPill label={"Token " + fmtTokens(usage.totalTokens || 0)} />
-          </div>
         </div>
-        <AuthProfilePanel session={session} profiles={authProfiles} />
+        <div className="session-detail-meta-strip">
+          <SessionHeaderPill label={channelLabel} title={session.channelId} />
+          {openInbound > 0 ? <SessionHeaderPill label={"待处理 " + openInbound} tone="warn" /> : null}
+          {totalJobs > 0 ? <SessionHeaderPill label={"Jobs " + totalJobs + (runningJobs ? " / 运行 " + runningJobs : "")} tone={runningJobs ? "good" : undefined} /> : null}
+          <SessionHeaderPill label={"Token " + fmtTokens(usage.totalTokens || 0)} />
+        </div>
         <div className="session-detail-actions">
+          <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
           {!isPermalink ? (
             <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
           ) : null}
@@ -306,36 +307,18 @@ function SessionDetail({ session, isPermalink = false }: {
               <SessionTimeline session={session} />
             </div>
           </div>
-          <div className="mini-panel">
-            <div className="mini-title">Token 消耗</div>
-            <div className="mini-body">
-              <SessionUsage usage={usage} />
-            </div>
-          </div>
-          <div className="mini-panel">
-            <div className="mini-title">消息 / 任务</div>
-            <div className="mini-body">
-              <InboundTable items={session.openInbound || []} />
-              <JobsTable jobs={session.backgroundJobs || []} />
-            </div>
-          </div>
-          <div className="mini-panel session-meta-panel">
-            <div className="mini-title">会话信息</div>
-            <div className="mini-body">
-              <div className="selected-session-title session-meta-title">
-                <div className="session-detail-title" title={primary}>{primary}</div>
-                <div className="session-detail-subtitle" title={first}>{first}</div>
-                <div className="session-compact-meta">
-                  {shouldShowSessionState(state) ? <Badge label={state.label} tone={state.tone} /> : null}
-                  <span>{fmtRelativeTime(activityAt)}</span>
-                </div>
+          <div className="session-side-column">
+            <div className="mini-panel">
+              <div className="mini-title">Token 消耗</div>
+              <div className="mini-body">
+                <SessionUsage usage={usage} />
               </div>
-              <div className="session-detail-summary">
-                <Kpi label="频道" value={channelLabel} title={session.channelId} />
-                <Kpi label="最近活动" value={fmtRelativeTime(activityAt)} title={fmtDateTime(activityAt)} />
-                <Kpi label="待处理" value={openInbound + " 条"} />
-                <Kpi label="Jobs" value={totalJobs + " / 运行 " + runningJobs} />
-                <Kpi label="Token" value={fmtTokens(usage.totalTokens || 0)} />
+            </div>
+            <div className="mini-panel">
+              <div className="mini-title">消息 / 任务</div>
+              <div className="mini-body">
+                <InboundTable items={session.openInbound || []} />
+                <JobsTable jobs={session.backgroundJobs || []} />
               </div>
             </div>
           </div>
@@ -386,23 +369,46 @@ function SessionTimeline({ session }: {
   return <TimelinePayloadView payload={payload} />;
 }
 
-function AuthProfilePanel({ session, profiles }: {
+function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentProfile }: {
   readonly session: SessionRecord;
   readonly profiles: readonly SessionRecord[];
+  readonly currentProfile?: SessionRecord | undefined;
 }): React.JSX.Element {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [selected, setSelected] = useState(String(session.authProfileName || ""));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const currentProfile = profiles.find((profile) => profile.name === session.authProfileName);
+  const currentProfile = providedCurrentProfile ?? profiles.find((profile) => profile.name === session.authProfileName);
   const currentLabel = currentProfile
     ? profileDisplayLabel(currentProfile)
     : (session.authProfileName ? "账号状态加载中" : "未绑定");
   const blocked = Boolean(session.authBlockedAt);
+  const compactLabel = currentProfile ? profileQuotaLabel(currentProfile) : (blocked ? "账号不可用" : "账号");
 
   useEffect(() => {
     setSelected(String(session.authProfileName || ""));
     setMessage(null);
   }, [session.key, session.authProfileName, session.authBlockedAt]);
+
+  function openDialog(): void {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+      return;
+    }
+    dialog.setAttribute("open", "");
+  }
+
+  function closeDialog(): void {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (typeof dialog.close === "function") {
+      dialog.close();
+      return;
+    }
+    dialog.removeAttribute("open");
+  }
 
   async function switchProfile(): Promise<void> {
     if (!selected || selected === session.authProfileName) {
@@ -429,37 +435,61 @@ function AuthProfilePanel({ session, profiles }: {
 
   return (
     <div className="auth-profile-panel">
-      {blocked ? (
-        <div className="auth-profile-blocked">
-          <Badge label="等待手动切换" tone="danger" />
-          <span>{session.authBlockReasonLabel || session.authBlockReason || "账号不可用"}</span>
+      <button
+        type="button"
+        className={"auth-profile-compact-button " + (blocked ? "danger" : "")}
+        title={currentProfile ? profileTitle(currentProfile) : currentLabel}
+        onClick={openDialog}
+      >
+        {compactLabel}
+      </button>
+      <dialog ref={dialogRef} className="auth-profile-dialog">
+        <div className="modal-content">
+          <div className="modal-heading">
+            <div className="panel-title">账号操作</div>
+            <div className="summary-detail" title={currentProfile ? profileTitle(currentProfile) : currentLabel}>{currentLabel}</div>
+          </div>
+          {currentProfile ? (
+            <div className="auth-profile-dialog-current">
+              <span>周额度</span>
+              <strong>{profileQuotaLabel(currentProfile)}</strong>
+            </div>
+          ) : null}
+          {blocked ? (
+            <div className="auth-profile-blocked">
+              <Badge label="等待手动切换" tone="danger" />
+              <span>{session.authBlockReasonLabel || session.authBlockReason || "账号不可用"}</span>
+            </div>
+          ) : null}
+          <div className="auth-profile-switcher">
+            <span className="auth-profile-label">切换到</span>
+            <select
+              value={selected}
+              title={currentProfile ? profileTitle(currentProfile) : currentLabel}
+              onChange={(event) => setSelected(event.target.value)}
+            >
+              <option value="">选择账号</option>
+              {profiles.map((profile) => (
+                <option key={profile.name} value={profile.name} disabled={!profileIsSelectable(profile)}>
+                  {profileOptionLabel(profile)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="link-button"
+              disabled={busy || !selected || selected === session.authProfileName}
+              onClick={() => { void switchProfile(); }}
+            >
+              切换并继续处理
+            </button>
+          </div>
+          {message ? <div className="summary-detail">{message}</div> : null}
+          <div className="modal-actions">
+            <button type="button" className="secondary" onClick={closeDialog}>关闭</button>
+          </div>
         </div>
-      ) : null}
-      <div className="auth-profile-switcher">
-        <span className="auth-profile-label">账号</span>
-        <select
-          value={selected}
-          title={currentProfile ? profileTitle(currentProfile) : currentLabel}
-          onChange={(event) => setSelected(event.target.value)}
-        >
-          <option value="">选择账号</option>
-          {profiles.map((profile) => (
-            <option key={profile.name} value={profile.name} disabled={!profileIsSelectable(profile)}>
-              {profileOptionLabel(profile)}
-            </option>
-          ))}
-        </select>
-        {currentProfile ? <span className="auth-profile-quota">{profileQuotaLabel(currentProfile)}</span> : null}
-        <button
-          type="button"
-          className="link-button"
-          disabled={busy || !selected || selected === session.authProfileName}
-          onClick={() => { void switchProfile(); }}
-        >
-          切换并继续处理
-        </button>
-      </div>
-      {message ? <div className="summary-detail">{message}</div> : null}
+      </dialog>
     </div>
   );
 }
@@ -557,19 +587,6 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
           </details>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function Kpi({ label, value, title }: {
-  readonly label: string;
-  readonly value: string;
-  readonly title?: string;
-}): React.JSX.Element {
-  return (
-    <div className="session-detail-kpi">
-      <span>{label}</span>
-      <strong title={title}>{value}</strong>
     </div>
   );
 }
