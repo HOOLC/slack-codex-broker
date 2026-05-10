@@ -18,12 +18,8 @@ export async function handleAdminRequest(
     readonly config: AppConfig;
   }
 ): Promise<boolean> {
-  if (method === "GET" && (url.pathname === "/admin" || url.pathname.startsWith("/admin/sessions/"))) {
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    response.end(renderAdminPage({
-      serviceName: options.config.serviceName
-    }));
-    return true;
+  if (method === "GET" && isAdminSpaRoute(url.pathname)) {
+    return serveAdminSpaIndex(response, options.config);
   }
 
   if (method === "GET" && url.pathname.startsWith("/admin/assets/")) {
@@ -309,6 +305,51 @@ export async function handleAdminRequest(
   return false;
 }
 
+async function serveAdminSpaIndex(response: http.ServerResponse, config: AppConfig): Promise<boolean> {
+  if (process.env.ADMIN_UI_DEV_ORIGIN) {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(renderAdminPage({
+      serviceName: config.serviceName
+    }));
+    return true;
+  }
+
+  const indexPath = await findAdminSpaIndex();
+  if (indexPath) {
+    const html = await fs.readFile(indexPath, "utf8");
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(html);
+    return true;
+  }
+
+  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  response.end(renderAdminPage({
+    serviceName: config.serviceName
+  }));
+  return true;
+}
+
+async function findAdminSpaIndex(): Promise<string | null> {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "..", "..", "admin-ui", "index.html"),
+    path.resolve(moduleDir, "..", "..", "dist", "admin-ui", "index.html")
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function serveAdminAsset(url: URL, response: http.ServerResponse): Promise<boolean> {
   const assetName = decodeURIComponent(url.pathname.slice("/admin/assets/".length));
   if (!assetName || assetName.includes("\0")) {
@@ -345,6 +386,10 @@ async function serveAdminAsset(url: URL, response: http.ServerResponse): Promise
   response.writeHead(404, { "content-type": "application/json" });
   response.end(JSON.stringify({ ok: false, error: "admin_asset_not_found" }));
   return true;
+}
+
+function isAdminSpaRoute(pathname: string): boolean {
+  return pathname === "/admin" || pathname === "/admin/" || pathname.startsWith("/admin/sessions/");
 }
 
 function contentTypeForAsset(assetPath: string): string {

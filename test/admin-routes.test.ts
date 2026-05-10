@@ -137,6 +137,8 @@ describe("admin routes", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     const shell = renderAdminShellHtml("slack-codex-broker");
+    const adminIndexSource = await fs.readFile(new URL("../src/admin-ui/index.html", import.meta.url), "utf8");
+    const viteConfigSource = await fs.readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
     expect(html).toContain('id="admin-root"');
@@ -144,6 +146,12 @@ describe("admin routes", () => {
     expect(html).toContain('/admin/assets/admin-ui.css');
     expect(html).toContain('/admin/assets/admin-ui.js');
     expect(html).not.toContain("switchAdminView");
+    expect(adminIndexSource).toContain('id="admin-root"');
+    expect(adminIndexSource).toContain('id="admin-config"');
+    expect(adminIndexSource).toContain('src="/main.tsx"');
+    expect(viteConfigSource).toContain('root: "src/admin-ui"');
+    expect(viteConfigSource).toContain('base: "/admin/"');
+    expect(viteConfigSource).toContain('input: "index.html"');
     expect(shell).toContain("open-add-profile-dialog");
     expect(shell).toContain("admin-nav");
     expect(shell).toContain('data-admin-view="sessions"');
@@ -314,7 +322,7 @@ describe("admin routes", () => {
       expect(html).toContain("http://127.0.0.1:5173/@react-refresh");
       expect(html).toContain("__vite_plugin_react_preamble_installed__");
       expect(html).toContain("http://127.0.0.1:5173/@vite/client");
-      expect(html).toContain("http://127.0.0.1:5173/src/admin-ui/main.tsx");
+      expect(html).toContain("http://127.0.0.1:5173/main.tsx");
       expect(html).not.toContain("/admin/assets/admin-ui.css");
       expect(html).not.toContain("/admin/assets/admin-ui.js");
     } finally {
