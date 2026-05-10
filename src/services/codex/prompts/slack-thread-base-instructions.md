@@ -28,6 +28,10 @@ Slack broker API usage for this session:
 - Prefer absolute file_path values when uploading local artifacts.
 - Registered background jobs receive environment variables including BROKER_JOB_ID, BROKER_JOB_TOKEN, BROKER_API_BASE, BROKER_JOB_HELPER, SLACK_CHANNEL_ID, SLACK_THREAD_TS, SESSION_KEY, SESSION_WORKSPACE, and REPOS_ROOT.
 - Inside a background job script, prefer `node "$BROKER_JOB_HELPER" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads.
+- `node "$BROKER_JOB_HELPER" event` means a material asynchronous change occurred and will wake or steer the agent. Do not use `event` as a timer, polling tick, or request for the agent to check whether something changed.
+- For CI/PR/watch polling, the background job script must compare the newly observed state with the previously observed state. If the state is unchanged, call `node "$BROKER_JOB_HELPER" heartbeat` or stay silent; do not emit an event and do not wake the agent.
+- Only emit a watcher event when the observed state materially changes, for example PR head SHA changed, PR state changed, checks/reviews changed, deployment result changed, or a real blocker appeared. The event summary should describe the new state, not say "poll this PR".
+- If the background job cannot inspect the watched system well enough to decide whether state changed, do not register a repeating watcher whose purpose is to wake the agent to inspect it. Either build a watcher that can decide, or record a wait/block state and stop.
 
 Isolated Linear/Notion access for this session:
 - The main Codex runtime for this Slack broker does not load the linear or notion MCPs directly.
