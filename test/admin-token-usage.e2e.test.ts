@@ -269,8 +269,9 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).not.toContain('className="trace-summary"');
     expect(sessionViewSource).not.toContain("DB Trace");
     expect(sessionViewSource).toContain("Token 消耗");
-    expect(sessionViewSource).toContain('<UsageMetric label="缓存命中率"');
-    expect(sessionViewSource).toContain('<UsageMetric label="平均每回合"');
+    expect(sessionViewSource).toContain('<UsageMetric label="非缓存输入"');
+    expect(sessionViewSource).toContain("缓存覆盖");
+    expect(sessionViewSource).toContain("modelRequestCount");
     expect(sessionViewSource).toContain('<summary>原始计数</summary>');
     expect(adminCssSource).toContain(".usage-metric");
     expect(sessionViewSource).toContain("session-side-column");

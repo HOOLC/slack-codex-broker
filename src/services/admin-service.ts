@@ -316,9 +316,8 @@ export class AdminService {
       });
     }
 
-    const agentEvents = this.options.sessions
-      .listAgentTraceEvents(session.key, 1000)
-      .filter(isVisibleTimelineTraceEvent);
+    const allAgentEvents = this.options.sessions.listAgentTraceEvents(session.key, 1000);
+    const agentEvents = allAgentEvents.filter(isVisibleTimelineTraceEvent);
 
     return {
       ok: true,
@@ -329,7 +328,7 @@ export class AdminService {
         usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
         channelLabels: await this.#buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
       }),
-      trace: summarizeAgentTrace(agentEvents),
+      trace: summarizeAgentTrace(agentEvents, allAgentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
     };
   }
@@ -728,10 +727,9 @@ export class AdminService {
         serialized.timelineEvent = agentTraceEventToTimelineEvent(traceEvent);
       }
       if (event.sessionKey) {
-        const traceEvents = this.options.sessions
-          .listAgentTraceEvents(event.sessionKey, 1000)
-          .filter(isVisibleTimelineTraceEvent);
-        serialized.trace = summarizeAgentTrace(traceEvents);
+        const allTraceEvents = this.options.sessions.listAgentTraceEvents(event.sessionKey, 1000);
+        const traceEvents = allTraceEvents.filter(isVisibleTimelineTraceEvent);
+        serialized.trace = summarizeAgentTrace(traceEvents, allTraceEvents);
       }
     }
 
@@ -1483,16 +1481,21 @@ function compareTimelineEvents(left: Record<string, JsonLike>, right: Record<str
   return leftSequence - rightSequence;
 }
 
-function summarizeAgentTrace(events: readonly PersistedAgentTraceEvent[]): Record<string, JsonLike> {
+function summarizeAgentTrace(
+  events: readonly PersistedAgentTraceEvent[],
+  allEvents: readonly PersistedAgentTraceEvent[] = events
+): Record<string, JsonLike> {
   const categories: Record<string, number> = {};
   const sources: Record<string, number> = {};
   for (const event of events) {
     categories[event.type] = (categories[event.type] ?? 0) + 1;
     sources[event.source] = (sources[event.source] ?? 0) + 1;
   }
+  const modelRequestCount = allEvents.filter((event) => event.type === "agent_token_count").length;
   return {
     source: "broker_db",
     eventCount: events.length,
+    modelRequestCount,
     categories,
     sources
   };

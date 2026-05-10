@@ -326,7 +326,7 @@ function SessionDetail({ session, isPermalink = false }: {
             <div className="mini-panel">
               <div className="mini-title">Token 消耗</div>
               <div className="mini-body">
-                <SessionUsage usage={usage} />
+                <SessionUsagePanel sessionKey={String(session.key || "")} usage={usage} />
               </div>
             </div>
             <div className="mini-panel">
@@ -655,7 +655,24 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
   );
 }
 
-function SessionUsage({ usage }: { readonly usage: Record<string, any> }): React.JSX.Element {
+function SessionUsagePanel({ sessionKey, usage }: {
+  readonly sessionKey: string;
+  readonly usage: Record<string, any>;
+}): React.JSX.Element {
+  const timelineSnapshot = useSyncExternalStore(
+    (listener) => subscribeTimeline(sessionKey, listener),
+    () => getTimelineSnapshot(sessionKey),
+    () => getTimelineSnapshot(sessionKey)
+  );
+  const payload = timelineSnapshot.payload as TimelinePayload | null;
+  const trace = payload && !Array.isArray(payload) ? payload.trace : null;
+  return <SessionUsage usage={usage} modelRequestCount={Number(trace?.modelRequestCount || 0)} />;
+}
+
+function SessionUsage({ usage, modelRequestCount }: {
+  readonly usage: Record<string, any>;
+  readonly modelRequestCount: number;
+}): React.JSX.Element {
   const exact = Number(usage?.exactTurns || 0);
   const total = Number(usage?.turnCount || 0);
   const totalTokens = Number(usage?.totalTokens || 0);
@@ -665,24 +682,27 @@ function SessionUsage({ usage }: { readonly usage: Record<string, any> }): React
   const reasoningTokens = Number(usage?.reasoningTokens || 0);
   const missingTurns = Number(usage?.missingTurns || 0);
   const estimatedTurns = Number(usage?.estimatedTurns || 0);
-  const averageTokens = total > 0 ? totalTokens / total : 0;
   const cacheHitRate = inputTokens > 0 ? cachedInputTokens / inputTokens : null;
+  const uncachedInputTokens = Math.max(0, inputTokens - cachedInputTokens);
   const generatedTokens = outputTokens + reasoningTokens;
-  const generatedShare = totalTokens > 0 ? generatedTokens / totalTokens : null;
   const exactRate = total > 0 ? exact / total : 0;
+  const totalDetail = modelRequestCount > 0
+    ? total + " 个 Slack 回合 · " + modelRequestCount + " 次模型请求"
+    : total + " 个 Slack 回合";
   if (!total) return <div className="summary-detail">这个会话还没有用量记录</div>;
   return (
     <div className="quota-grid">
-      <UsageMetric label="总消耗" value={fmtTokens(totalTokens)} detail={total + " 回合"} />
-      <UsageMetric label="平均每回合" value={fmtTokens(averageTokens)} detail="衡量单轮上下文重量" />
-      <UsageMetric label="缓存命中率" value={cacheHitRate === null ? "无输入" : fmtPercent(cacheHitRate)} detail="输入侧复用比例" />
-      <UsageMetric label="生成占比" value={generatedShare === null ? "无" : fmtPercent(generatedShare)} detail="输出和推理占总量" />
-      <UsageMetric label="记录完整度" value={fmtPercent(exactRate)} detail={missingTurns ? ("缺失 " + missingTurns + " 回合") : "全部精确"} />
-      <UsageMetric label="最近回合" value={fmtRelativeTime(usage.lastTurnAt)} detail={fmtDateTime(usage.lastTurnAt)} />
+      <UsageMetric label="总消耗" value={fmtTokens(totalTokens)} detail={totalDetail} />
+      <UsageMetric label="非缓存输入" value={fmtTokens(uncachedInputTokens)} detail={"缓存覆盖 " + (cacheHitRate === null ? "无输入" : fmtPercent(cacheHitRate))} />
+      <UsageMetric label="生成 Token" value={fmtTokens(generatedTokens)} detail={"输出 " + fmtTokens(outputTokens) + " · 推理 " + fmtTokens(reasoningTokens)} />
+      {missingTurns || estimatedTurns ? (
+        <UsageMetric label="记录完整度" value={fmtPercent(exactRate)} detail={"估算 " + estimatedTurns + " · 缺失 " + missingTurns} />
+      ) : null}
       <details className="usage-raw-details">
         <summary>原始计数</summary>
         <div className="usage-raw-grid">
           <QuotaLine label="输入" value={fmtTokens(inputTokens)} detail={"缓存 " + fmtTokens(cachedInputTokens)} />
+          <QuotaLine label="非缓存" value={fmtTokens(uncachedInputTokens)} detail={"缓存覆盖 " + (cacheHitRate === null ? "无输入" : fmtPercent(cacheHitRate))} />
           <QuotaLine label="输出" value={fmtTokens(outputTokens)} detail={"推理 " + fmtTokens(reasoningTokens)} />
           <QuotaLine label="记录" value={exact + "/" + total} detail={"估算 " + estimatedTurns + " · 缺失 " + missingTurns} />
           {usage.model || usage.effort ? (

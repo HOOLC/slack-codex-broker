@@ -75,6 +75,7 @@ describe("admin control plane e2e", () => {
       trace: {
         source: "broker_db",
         eventCount: 7,
+        modelRequestCount: 1,
         categories: {
           agent_system_prompt: 1,
           agent_memory: 1,

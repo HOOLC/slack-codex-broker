@@ -1146,18 +1146,97 @@ function addCodexTurnUsage(
   if (!current) {
     return next;
   }
-
-  return {
-    source: current.source === "exact" || next.source === "exact" ? "exact" : next.source,
+  const aggregate = {
+    source: current.source === "exact" || next.source === "exact" ? "exact" as const : next.source,
     inputTokens: current.inputTokens + next.inputTokens,
     cachedInputTokens: current.cachedInputTokens + next.cachedInputTokens,
     outputTokens: current.outputTokens + next.outputTokens,
     reasoningTokens: current.reasoningTokens + next.reasoningTokens,
     totalTokens: current.totalTokens + next.totalTokens,
     model: next.model ?? current.model,
-    effort: next.effort ?? current.effort,
-    rawUsage: next.rawUsage ?? current.rawUsage
+    effort: next.effort ?? current.effort
   };
+
+  return {
+    ...aggregate,
+    rawUsage: aggregateRawTokenUsage(current.rawUsage, next.rawUsage, aggregate)
+  };
+}
+
+function aggregateRawTokenUsage(
+  current: JsonLike | undefined,
+  next: JsonLike | undefined,
+  aggregate: Omit<AgentTurnTokenUsage, "rawUsage">
+): JsonLike | undefined {
+  if (current === undefined && next === undefined) {
+    return undefined;
+  }
+
+  const events = [...rawTokenUsageEvents(current), ...rawTokenUsageEvents(next)];
+  return {
+    kind: "aggregated_token_usage",
+    eventCount: rawTokenUsageEventCount(current) + rawTokenUsageEventCount(next),
+    totalTokens: aggregate.totalTokens,
+    inputTokens: aggregate.inputTokens,
+    cachedInputTokens: aggregate.cachedInputTokens,
+    outputTokens: aggregate.outputTokens,
+    reasoningTokens: aggregate.reasoningTokens,
+    latest: next ?? rawTokenUsageLatest(current) ?? null,
+    events: events.slice(-20)
+  };
+}
+
+function rawTokenUsageEvents(value: JsonLike | undefined): JsonLike[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (isAggregatedRawTokenUsage(value)) {
+    const events = value.events;
+    return Array.isArray(events) ? events.filter(isJsonLike) : [];
+  }
+  return [value];
+}
+
+function rawTokenUsageEventCount(value: JsonLike | undefined): number {
+  if (value === undefined) {
+    return 0;
+  }
+  if (isAggregatedRawTokenUsage(value)) {
+    const count = value.eventCount;
+    return typeof count === "number" && Number.isFinite(count) ? count : rawTokenUsageEvents(value).length;
+  }
+  return 1;
+}
+
+function rawTokenUsageLatest(value: JsonLike | undefined): JsonLike | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (isAggregatedRawTokenUsage(value)) {
+    return isJsonLike(value.latest) ? value.latest : undefined;
+  }
+  return value;
+}
+
+function isAggregatedRawTokenUsage(value: JsonLike | undefined): value is Record<string, JsonLike> {
+  return isRecord(value) && value.kind === "aggregated_token_usage";
+}
+
+function isJsonLike(value: unknown): value is JsonLike {
+  if (value === null) {
+    return true;
+  }
+  const type = typeof value;
+  if (type === "string" || type === "number" || type === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonLike);
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  return Object.values(value).every(isJsonLike);
 }
 
 function shouldApplyTokenCountUsage(
