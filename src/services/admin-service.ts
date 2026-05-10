@@ -503,6 +503,30 @@ export class AdminService {
     );
   }
 
+  async resetSession(options: {
+    readonly sessionKey: string;
+  }): Promise<Record<string, unknown>> {
+    return await this.#runTrackedOperation(
+      "session_reset",
+      {
+        sessionKey: options.sessionKey
+      },
+      async () => {
+        const session = this.options.sessions.getSessionByKey(options.sessionKey);
+        if (!session) {
+          throw new Error(`Session not found: ${options.sessionKey}`);
+        }
+
+        const workerReset = await this.#resetWorkerSession(session.key);
+        return {
+          ok: true,
+          session: this.#summarizeSessionByKey(session.key),
+          workerReset
+        };
+      }
+    );
+  }
+
   async deployRelease(options: {
     readonly ref: string;
     readonly allowActive: boolean;
@@ -1237,6 +1261,21 @@ export class AdminService {
     const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok || payload.ok === false) {
       throw new Error(String(payload.error || response.statusText || "worker_resume_failed"));
+    }
+    return payload;
+  }
+
+  async #resetWorkerSession(sessionKey: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/slack/sessions/${encodeURIComponent(sessionKey)}/reset`,
+      this.options.config.workerBaseUrl
+    );
+    const response = await fetch(url, {
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      throw new Error(String(payload.error || response.statusText || "worker_reset_failed"));
     }
     return payload;
   }

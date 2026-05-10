@@ -49,7 +49,7 @@ export interface PersistedState {
 
 export type PersistedInboundMessageStatus = "pending" | "inflight" | "done";
 export type SlackInboundSource = "app_mention" | "direct_message" | "thread_reply";
-export type SyntheticInboundSource = "background_job_event" | "unexpected_turn_stop";
+export type SyntheticInboundSource = "background_job_event" | "unexpected_turn_stop" | "admin_session_reset";
 export type PersistedInboundSource = SlackInboundSource | SyntheticInboundSource;
 export type PersistedSlackEventStatus = "pending" | "done";
 
@@ -142,6 +142,7 @@ export type AdminOperationKind =
   | "auth_profile_add"
   | "auth_profile_delete"
   | "session_auth_profile_switch"
+  | "session_reset"
   | "github_author_upsert"
   | "github_author_delete";
 

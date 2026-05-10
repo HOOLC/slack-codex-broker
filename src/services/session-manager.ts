@@ -161,6 +161,35 @@ export class SessionManager {
     });
   }
 
+  async clearActiveTurnIdIfMatches(
+    channelId: string,
+    rootThreadTs: string,
+    expectedTurnId: string
+  ): Promise<SlackSessionRecord> {
+    const session = this.#requireSession(channelId, rootThreadTs);
+    if (session.activeTurnId !== expectedTurnId) {
+      return session;
+    }
+
+    return await this.#patchSession(channelId, rootThreadTs, {
+      activeTurnId: undefined,
+      activeTurnStartedAt: undefined
+    });
+  }
+
+  async resetSessionRuntimeState(sessionKey: string): Promise<SlackSessionRecord> {
+    return await this.#stateStore.patchSession(sessionKey, {
+      agentSessionId: undefined,
+      activeTurnId: undefined,
+      activeTurnStartedAt: undefined,
+      lastTurnSignalTurnId: undefined,
+      lastTurnSignalKind: undefined,
+      lastTurnSignalReason: undefined,
+      lastTurnSignalAt: undefined,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
   async setLastObservedMessageTs(
     channelId: string,
     rootThreadTs: string,

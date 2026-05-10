@@ -37,6 +37,10 @@ export function formatSlackMessageForAgent(
     return formatUnexpectedTurnStopForAgent(message);
   }
 
+  if (message.source === "admin_session_reset") {
+    return formatAdminSessionResetForAgent(message);
+  }
+
   if (message.batchMessages && message.batchMessages.length > 0) {
     return formatRecoveredSlackBatchForAgent(message);
   }
@@ -160,6 +164,42 @@ function formatUnexpectedTurnStopForAgent(message: SlackInputMessage): string {
     JSON.stringify(payload, null, 2),
     "```"
   ].join("\n");
+}
+
+function formatAdminSessionResetForAgent(message: SlackInputMessage): string {
+  const payload = {
+    source: message.source,
+    message_ts: message.messageTs,
+    reason: message.text.trim() || "The broker admin reset this session."
+  };
+  const sections = [
+    "The broker admin manually reset this Slack session.",
+    "The previous agent thread/history was intentionally discarded. Treat this as a fresh agent session.",
+    "Use the Slack thread context below as the only prior context, continue from the latest user intent, and reply only if the current Slack state requires it."
+  ];
+
+  if (message.contextText?.trim()) {
+    sections.push(
+      "",
+      "Current Slack thread context:",
+      message.contextText.trim()
+    );
+  } else {
+    sections.push(
+      "",
+      "No Slack thread context was available from the broker at reset time."
+    );
+  }
+
+  sections.push(
+    "",
+    "admin_session_reset_json:",
+    "```json",
+    JSON.stringify(payload, null, 2),
+    "```"
+  );
+
+  return sections.join("\n");
 }
 
 function formatRecoveredSlackBatchForAgent(message: SlackInputMessage): string {

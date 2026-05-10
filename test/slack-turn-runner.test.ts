@@ -130,6 +130,10 @@ describe("SlackTurnRunner", () => {
           calls.push(turnId ? "set-active" : "clear-active");
           return turnId ? activeSession : session;
         }),
+        clearActiveTurnIdIfMatches: vi.fn(async () => {
+          calls.push("clear-active");
+          return session;
+        }),
         setAgentSessionId: vi.fn(),
         upsertAgentTurnUsage: vi.fn()
       } as never,

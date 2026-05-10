@@ -112,6 +112,8 @@
     .session-inspector .mini-panel { border: 0; min-width: 0; }
     .session-side-column .mini-panel { min-height: 0; background: var(--panel); overflow: hidden; }
     .side-action-stack { display: grid; gap: 5px; }
+    .session-reset-action { display: grid; gap: 3px; min-width: 0; }
+    .session-reset-action button { width: 100%; }
     .side-link-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
     .side-link-grid .link-button { justify-content: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .side-disclosure { min-width: 0; color: var(--muted); font-size: 10px; }

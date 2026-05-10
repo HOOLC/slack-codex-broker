@@ -65,6 +65,10 @@ function summarizePayload(
     return summarizeUnexpectedTurnStopPayload(payload, source);
   }
 
+  if (kind === "admin_session_reset" || normalizeString(payload.source) === "admin_session_reset") {
+    return summarizeAdminSessionResetPayload(payload, source);
+  }
+
   const slackText = compactText(extractSlackText(payload), 220);
   const sender = summarizeSender(asRecord(payload.sender));
   const imageCount = Array.isArray(payload.images) ? payload.images.length : 0;
@@ -91,7 +95,8 @@ type InputPayloadKind =
   | "structured_message"
   | "recovered_message_batch"
   | "background_job_event"
-  | "unexpected_turn_stop";
+  | "unexpected_turn_stop"
+  | "admin_session_reset";
 
 interface ExtractedInputPayload {
   readonly kind: InputPayloadKind;
@@ -141,6 +146,19 @@ function summarizeUnexpectedTurnStopPayload(payload: Record<string, unknown>, so
   };
 }
 
+function summarizeAdminSessionResetPayload(payload: Record<string, unknown>, source: string): InputTraceDisplaySummary {
+  const reason = normalizeString(payload.reason);
+  return {
+    badgeLabel: "重置",
+    title: "Session 重置",
+    summary: compactText(reason || "已清空 agent history 并重新唤起 bot", 220),
+    metadata: compactMetadataRecord({
+      source: normalizeString(payload.source) || source,
+      messageTs: normalizeString(payload.message_ts)
+    })
+  };
+}
+
 function extractInputPayload(text: string): ExtractedInputPayload | undefined {
   if (!text) {
     return undefined;
@@ -149,7 +167,8 @@ function extractInputPayload(text: string): ExtractedInputPayload | undefined {
   const namedPayload =
     extractNamedJsonPayload(text, "recovered_message_batch_json", "recovered_message_batch") ??
     extractNamedJsonPayload(text, "background_job_event_json", "background_job_event") ??
-    extractNamedJsonPayload(text, "unexpected_turn_stop_json", "unexpected_turn_stop");
+    extractNamedJsonPayload(text, "unexpected_turn_stop_json", "unexpected_turn_stop") ??
+    extractNamedJsonPayload(text, "admin_session_reset_json", "admin_session_reset");
   if (namedPayload) {
     return namedPayload;
   }
@@ -237,7 +256,8 @@ function sourceLabel(source: string): string {
     slack_user: "Slack",
     broker_recovery: "恢复",
     background_job: "后台任务",
-    background_job_event: "后台任务"
+    background_job_event: "后台任务",
+    admin_session_reset: "重置"
   };
   return labels[source] || source;
 }

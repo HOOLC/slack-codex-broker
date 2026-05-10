@@ -279,6 +279,9 @@ describe("admin token usage e2e", () => {
     expect(sessionViewSource).toContain('<summary>原始计数</summary>');
     expect(adminCssSource).toContain(".usage-metric");
     expect(sessionViewSource).toContain("session-side-column");
+    expect(sessionViewSource).toContain("重置 Session");
+    expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/reset");
+    expect(adminCssSource).toContain(".session-reset-action");
     expect(sessionViewSource).not.toContain(`<div className="session-detail-actions">
           <AuthProfilePanel`);
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");

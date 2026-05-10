@@ -98,6 +98,23 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/reset")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice(
+      "/admin/api/sessions/".length,
+      -"/reset".length
+    ));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.resetSession({
+        sessionKey
+      })
+    );
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/preflight") {
     respondJson(response, 200, await options.adminService.getOperationPreflight({
       operation: readString(url.searchParams.get("operation")) ?? "unknown"

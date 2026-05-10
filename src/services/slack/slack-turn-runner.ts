@@ -109,7 +109,11 @@ export class SlackTurnRunner {
         });
         await this.#persistTurnUsage(session, result);
         session = await this.#inboundStore.markTurnBatchDone(session, submitted.receipt.turnId);
-        session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+        session = await this.#sessions.clearActiveTurnIdIfMatches(
+          session.channelId,
+          session.rootThreadTs,
+          submitted.receipt.turnId
+        );
         return {
           session,
           result
@@ -126,7 +130,11 @@ export class SlackTurnRunner {
           });
           await this.#persistTurnUsage(session, recovered);
           session = await this.#inboundStore.markTurnBatchDone(session, submitted.receipt.turnId);
-          session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+          session = await this.#sessions.clearActiveTurnIdIfMatches(
+            session.channelId,
+            session.rootThreadTs,
+            submitted.receipt.turnId
+          );
           return {
             session,
             result: recovered
@@ -139,7 +147,11 @@ export class SlackTurnRunner {
         }
 
         await this.#inboundStore.resetTurnBatchToPending(session, submitted.receipt.turnId);
-        session = await this.#sessions.setActiveTurnId(session.channelId, session.rootThreadTs, undefined);
+        session = await this.#sessions.clearActiveTurnIdIfMatches(
+          session.channelId,
+          session.rootThreadTs,
+          submitted.receipt.turnId
+        );
 
         if (shouldStop) {
           throw error;
@@ -402,7 +414,7 @@ function agentInputSourceForSlackInput(message: SlackInputMessage): "slack_user"
   if (message.source === "background_job_event") {
     return "background_job";
   }
-  if (message.source === "recovered_thread_batch" || message.recoveryKind) {
+  if (message.source === "recovered_thread_batch" || message.source === "admin_session_reset" || message.recoveryKind) {
     return "broker_recovery";
   }
   return "slack_user";

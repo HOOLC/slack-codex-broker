@@ -362,6 +362,7 @@ function SessionActions({ session, profiles, currentProfile, isPermalink }: {
   return (
     <div className="side-action-stack">
       <AuthProfilePanel session={session} profiles={profiles} currentProfile={currentProfile} />
+      <SessionResetButton session={session} />
       <div className="side-link-grid">
         {!isPermalink ? (
           <a className="link-button" href={adminSessionPath(String(session.key || ""))}>打开 Session 页面</a>
@@ -372,6 +373,56 @@ function SessionActions({ session, profiles, currentProfile, isPermalink }: {
           <a className="link-button" href={session.threadUrl} target="_blank" rel="noreferrer">打开 Slack Thread</a>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function SessionResetButton({ session }: {
+  readonly session: SessionRecord;
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const sessionKey = String(session.key || "");
+
+  async function resetSession(): Promise<void> {
+    if (!sessionKey) {
+      return;
+    }
+    const confirmed = window.confirm([
+      "确认重置这个 Session？",
+      "会清空旧 agent history、结束当前回合、丢弃待处理队列，并用当前 Slack thread 上下文重新唤起 bot。"
+    ].join("\n"));
+    if (!confirmed) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      await requestJson("/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/reset", {
+        method: "POST"
+      });
+      const timelinePayload = await requestJson(sessionTimelineApiPath(sessionKey));
+      publishTimelinePayload(sessionKey, timelinePayload as TimelinePayload);
+      setMessage("已重置，正在重新唤起 bot");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="session-reset-action">
+      <button
+        type="button"
+        className="danger"
+        disabled={busy || !sessionKey}
+        onClick={() => { void resetSession(); }}
+      >
+        {busy ? "正在重置" : "重置 Session"}
+      </button>
+      {message ? <div className="summary-detail">{message}</div> : null}
     </div>
   );
 }
@@ -1052,7 +1103,8 @@ function sourceLabel(value: unknown): string {
     direct_message: "私信",
     thread_reply: "线程回复",
     background_job_event: "后台任务事件",
-    unexpected_turn_stop: "异常停止"
+    unexpected_turn_stop: "异常停止",
+    admin_session_reset: "Session 重置"
   };
   return labels[String(value || "")] || String(value || "");
 }

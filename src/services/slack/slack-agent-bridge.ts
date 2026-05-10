@@ -137,6 +137,10 @@ export class SlackAgentBridge {
     return await this.#conversations.resumePendingSession(sessionKey);
   }
 
+  async resetSession(sessionKey: string) {
+    return await this.#conversations.resetSession(sessionKey);
+  }
+
   async acceptBackgroundJobEvent(options: {
     readonly channelId: string;
     readonly rootThreadTs: string;
