@@ -279,12 +279,6 @@ function SessionDetail({ session, isPermalink = false }: {
           </div>
           <div className="session-detail-subtitle" title={first}>{first}</div>
         </div>
-        <div className="session-detail-meta-strip">
-          <SessionHeaderPill label={channelLabel} title={session.channelId} />
-          {openInbound > 0 ? <SessionHeaderPill label={"待处理 " + openInbound} tone="warn" /> : null}
-          {totalJobs > 0 ? <SessionHeaderPill label={"Jobs " + totalJobs + (runningJobs ? " / 运行 " + runningJobs : "")} tone={runningJobs ? "good" : undefined} /> : null}
-          <SessionHeaderPill label={"Token " + fmtTokens(usage.totalTokens || 0)} />
-        </div>
         <div className="session-detail-actions">
           <AuthProfilePanel session={session} profiles={authProfiles} currentProfile={currentProfile} />
           {!isPermalink ? (
@@ -307,6 +301,29 @@ function SessionDetail({ session, isPermalink = false }: {
           </div>
           <div className="session-side-column">
             <div className="mini-panel">
+              <div className="mini-title">会话属性</div>
+              <div className="mini-body">
+                <SessionMetaPanel
+                  channelLabel={channelLabel}
+                  channelTitle={String(session.channelId || "")}
+                  activityAt={activityAt}
+                  state={state}
+                  openInbound={openInbound}
+                  openHumanInbound={Number(session.openHumanInboundCount || 0)}
+                  openSystemInbound={Number(session.openSystemInboundCount || 0)}
+                  totalJobs={totalJobs}
+                  runningJobs={runningJobs}
+                  failedJobs={Number(session.failedBackgroundJobCount || 0)}
+                />
+              </div>
+            </div>
+            <div className="mini-panel">
+              <div className="mini-title">事件统计</div>
+              <div className="mini-body">
+                <SessionTraceStats sessionKey={String(session.key || "")} />
+              </div>
+            </div>
+            <div className="mini-panel">
               <div className="mini-title">Token 消耗</div>
               <div className="mini-body">
                 <SessionUsage usage={usage} />
@@ -326,12 +343,61 @@ function SessionDetail({ session, isPermalink = false }: {
   );
 }
 
-function SessionHeaderPill({ label, title, tone }: {
-  readonly label: string;
+function SessionMetaPanel({ channelLabel, channelTitle, activityAt, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs, failedJobs }: {
+  readonly channelLabel: string;
+  readonly channelTitle: string;
+  readonly activityAt: unknown;
+  readonly state: { readonly label: string; readonly tone: string; readonly rank: number; readonly detail: string };
+  readonly openInbound: number;
+  readonly openHumanInbound: number;
+  readonly openSystemInbound: number;
+  readonly totalJobs: number;
+  readonly runningJobs: number;
+  readonly failedJobs: number;
+}): React.JSX.Element {
+  const pendingDetail = openInbound > 0
+    ? openInbound + " 条（人 " + openHumanInbound + " / 系统 " + openSystemInbound + "）"
+    : "无";
+  const jobDetail = totalJobs > 0
+    ? totalJobs + " 个（运行 " + runningJobs + " / 失败 " + failedJobs + "）"
+    : "无";
+  return (
+    <div className="meta-list">
+      <MetaLine label="频道" value={channelLabel} title={channelTitle} />
+      <MetaLine label="最近活动" value={fmtRelativeTime(activityAt)} title={fmtDateTime(activityAt)} />
+      {shouldShowSessionState(state) ? <MetaLine label="状态" value={state.label} detail={state.detail} tone={state.tone} /> : null}
+      <MetaLine label="待处理" value={pendingDetail} tone={openHumanInbound > 0 ? "warn" : undefined} />
+      <MetaLine label="Jobs" value={jobDetail} tone={failedJobs > 0 ? "danger" : (runningJobs > 0 ? "good" : undefined)} />
+    </div>
+  );
+}
+
+function MetaLine({ label, value, detail, title, tone }: {
   readonly title?: string;
+  readonly label: string;
+  readonly value: string;
+  readonly detail?: string;
   readonly tone?: string;
 }): React.JSX.Element {
-  return <span className={"session-header-pill " + classSafeValue(tone, "")} title={title}>{label}</span>;
+  return (
+    <div className={"meta-line " + classSafeValue(tone, "")}>
+      <span>{label}</span>
+      <strong title={title}>{value}</strong>
+      {detail ? <em title={detail}>{detail}</em> : null}
+    </div>
+  );
+}
+
+function SessionTraceStats({ sessionKey }: { readonly sessionKey: string }): React.JSX.Element {
+  const timelineSnapshot = useSyncExternalStore(
+    (listener) => subscribeTimeline(sessionKey, listener),
+    () => getTimelineSnapshot(sessionKey),
+    () => getTimelineSnapshot(sessionKey)
+  );
+  const payload = timelineSnapshot.payload as TimelinePayload | null;
+  const trace = payload && !Array.isArray(payload) ? payload.trace : null;
+  if (!trace) return <div className="summary-detail">事件统计加载中</div>;
+  return <TraceSummary trace={trace} />;
 }
 
 function SessionTimeline({ session }: {
@@ -494,14 +560,8 @@ function AuthProfilePanel({ session, profiles, currentProfile: providedCurrentPr
 
 function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload }): React.JSX.Element {
   const events = (Array.isArray(payload) ? payload : (payload.events || [])).filter(isTimelineEventVisible);
-  const trace = Array.isArray(payload) ? null : payload.trace;
   if (!events.length) return <div className="summary-detail">暂无时间线事件</div>;
-  return (
-    <>
-      {trace ? <TraceSummary trace={trace} /> : null}
-      <Timeline events={events} />
-    </>
-  );
+  return <Timeline events={events} />;
 }
 
 function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React.JSX.Element {

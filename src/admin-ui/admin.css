@@ -92,7 +92,7 @@
     .session-detail-panel > .panel-body { flex: 1; min-height: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
     .session-detail-empty { min-height: 200px; display: grid; place-items: center; color: var(--muted); }
     .selected-session-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-    .session-detail-toolbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main actions" "meta actions"; gap: 4px 8px; align-items: start; }
+    .session-detail-toolbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main actions"; gap: 8px; align-items: start; }
     .session-detail-toolbar .session-detail-main { grid-area: main; }
     .session-detail-main { min-width: 0; display: grid; gap: 2px; }
     .session-detail-title-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
@@ -100,23 +100,29 @@
     .session-detail-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
     .session-detail-title-row .session-detail-title { flex: 1 1 auto; }
     .session-detail-title-row .badge, .session-detail-title-row .session-time { flex: 0 0 auto; }
-    .session-detail-meta-strip { grid-area: meta; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; min-width: 0; overflow: visible; }
-    .session-header-pill { min-width: 0; display: inline-block; padding: 1px 5px; border: 1px solid var(--line); color: var(--cyan); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .session-header-pill.good { color: var(--green); border-color: rgba(46,204,113,0.45); }
-    .session-header-pill.warn { color: var(--amber); border-color: rgba(245,166,35,0.45); }
     .session-detail-actions { grid-area: actions; display: flex; gap: 6px; align-items: flex-start; justify-content: flex-end; min-width: 0; max-width: min(520px, 48vw); flex-wrap: wrap; }
     .link-button { display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid var(--cyan); color: var(--cyan); background: transparent; font: 11px var(--mono); text-decoration: none; white-space: nowrap; }
     .link-button:hover { background: rgba(61,181,199,0.08); }
     .session-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
     .session-inspector { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 1px; align-items: stretch; background: var(--line); }
     .trace-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
-    .session-side-column { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 1px; align-content: stretch; min-width: 0; min-height: 0; background: var(--line); }
+    .session-side-column { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 1px; align-content: stretch; min-width: 0; min-height: 0; background: var(--line); }
 
     .mini-panel { border: 1px solid var(--line); }
     .session-inspector .mini-panel { border: 0; min-width: 0; }
     .session-side-column .mini-panel { min-height: 0; background: var(--panel); overflow: hidden; }
+    .session-side-column .mini-panel:last-child { display: flex; flex-direction: column; }
+    .session-side-column .mini-panel:last-child .mini-body { min-height: 0; overflow: auto; }
     .mini-title { padding: 3px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .mini-body { padding: 4px 6px; }
+    .meta-list { display: grid; gap: 1px; background: var(--line); }
+    .meta-line { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; align-items: baseline; padding: 3px 5px; background: var(--panel); font-size: 10px; }
+    .meta-line span { color: var(--muted); }
+    .meta-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 700; }
+    .meta-line em { grid-column: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-style: normal; }
+    .meta-line.good strong { color: var(--green); }
+    .meta-line.warn strong { color: var(--amber); }
+    .meta-line.danger strong { color: var(--red); }
     .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
     .auth-profile-compact-button { display: inline-flex; justify-content: center; align-items: center; min-width: 76px; padding: 2px 7px; border-color: var(--cyan); background: transparent; color: var(--cyan); font-weight: 700; white-space: nowrap; }
     .auth-profile-compact-button.danger { border-color: var(--red); color: var(--red); }
@@ -128,8 +134,8 @@
     .auth-profile-switcher { display: grid; grid-template-columns: auto minmax(160px, 1fr) auto; gap: 6px; align-items: center; min-width: 0; }
     .auth-profile-label { color: var(--muted); font-size: 10px; white-space: nowrap; }
 
-    .session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: auto; padding: 0; }
-    .timeline { display: grid; gap: 0; overflow: visible; border: 0; }
+    .session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+    .timeline { height: 100%; display: grid; gap: 0; overflow: auto; border: 0; }
     .timeline-event { display: grid; grid-template-columns: 72px 90px minmax(0, 1fr); gap: 6px; align-items: start; padding: 4px 6px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
     .timeline-event:last-child { border-bottom: 0; }
     .timeline-main { min-width: 0; }
@@ -142,7 +148,7 @@
     .trace-details summary { cursor: pointer; color: var(--cyan); font-size: 9px; }
     .trace-details pre { margin: 4px 0 0; padding: 4px 6px; max-height: 160px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); background: #030508; font: 10px/1.4 var(--mono); }
     .trace-summary { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 4px; color: var(--muted); font-size: 10px; }
-    .session-timeline-panel .trace-summary { margin: 0; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+    .session-side-column .trace-summary { margin: 0; }
 
     .table { width: 100%; border-collapse: collapse; font-size: 11px; }
     .table th { text-align: left; color: var(--muted); font-size: 9px; text-transform: uppercase; padding: 3px 5px; border-bottom: 1px solid var(--line); }
@@ -222,11 +228,12 @@
       .session-list { max-height: 32vh; min-height: 0; }
       .session-line { grid-template-columns: minmax(0, 1fr) auto; }
       .session-time { grid-column: 1 / -1; }
-      .session-detail-toolbar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "meta" "actions"; }
+      .session-detail-toolbar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "actions"; }
       .session-detail-actions { justify-content: flex-start; max-width: none; }
       .session-body { overflow: auto; }
       .session-inspector { height: auto; grid-template-columns: 1fr; align-items: start; }
       .session-timeline-panel .mini-body { overflow: visible; }
+      .timeline { height: auto; overflow: visible; }
       .session-side-column { grid-template-rows: none; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -245,13 +252,11 @@
       .selected-session-head { grid-template-columns: 1fr; align-items: start; gap: 6px; padding: 6px; }
       .session-detail-actions { width: 100%; min-width: 0; overflow-x: auto; padding-bottom: 2px; }
       .session-detail-title, .session-detail-subtitle { white-space: normal; overflow-wrap: anywhere; }
-      .session-detail-meta-strip { overflow: visible; padding-bottom: 0; }
       .auth-profile-switcher { grid-template-columns: minmax(0, 1fr); }
       .auth-profile-label { display: none; }
       .auth-profile-switcher .link-button { justify-content: center; }
       .mini-body { padding: 4px; }
       .trace-summary { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
-      .timeline { overflow: visible; }
       .timeline-event { grid-template-columns: 54px 78px minmax(0, 1fr); gap: 4px; padding: 6px 4px; }
       .timeline-title { display: block; }
       .timeline-title strong,
