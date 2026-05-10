@@ -18,6 +18,8 @@ export function initAdminPage(options = {}) {
     let uiState = loadUiState();
     let uiStatePersistTimer = null;
     let realtimeSource = null;
+    let addProfileDeviceCode = null;
+    let addProfileDeviceCodeTimer = null;
 
     async function requestJson(path, init = {}) {
       const response = await fetch(path, Object.assign({}, init, { headers: authHeaders(init.headers) }));
@@ -82,6 +84,28 @@ export function initAdminPage(options = {}) {
     }
     function authHeaders(extra) {
       return Object.assign({}, extra || {});
+    }
+    function setAddProfileStatus(message, color) {
+      const status = document.getElementById("add-profile-status");
+      status.textContent = message;
+      status.style.color = color ? "var(--" + color + ")" : "";
+    }
+    function clearProfileDeviceCodeTimer() {
+      if (addProfileDeviceCodeTimer != null) {
+        window.clearTimeout(addProfileDeviceCodeTimer);
+        addProfileDeviceCodeTimer = null;
+      }
+    }
+    function resetProfileDeviceCode() {
+      clearProfileDeviceCodeTimer();
+      addProfileDeviceCode = null;
+      document.getElementById("profile-auth-json-fallback").open = false;
+      document.getElementById("profile-device-code-panel").hidden = true;
+      document.getElementById("profile-device-code-link").removeAttribute("href");
+      document.getElementById("profile-device-code-link").textContent = "打开";
+      document.getElementById("profile-device-code-value").textContent = "";
+      document.getElementById("profile-device-code-countdown").textContent = "";
+      document.getElementById("start-profile-device-code").disabled = false;
     }
     function fmtTime(value) {
       if (!value) return "--";
@@ -281,7 +305,7 @@ export function initAdminPage(options = {}) {
         background_job: "后台任务",
         turn_signal: "回合信号",
         not_configured: "未关联",
-        broker_db: "DB Trace",
+        broker_db: "Trace",
         agent_system_prompt: "系统 Prompt",
         agent_memory: "记忆",
         agent_user_message: "用户消息",
@@ -305,9 +329,8 @@ export function initAdminPage(options = {}) {
       const labels = {
         deploy: "发布",
         rollback: "回滚",
-        auth_profile_add: "新增认证档案",
-        auth_profile_delete: "删除认证档案",
-        auth_profile_activate: "切换认证档案",
+        auth_profile_add: "添加账号",
+        auth_profile_delete: "删除账号",
         github_author_upsert: "保存 GitHub 作者",
         github_author_delete: "删除 GitHub 作者"
       };
@@ -489,36 +512,25 @@ export function initAdminPage(options = {}) {
     function renderAuthProfiles(data) {
       const authProfiles = data.authProfiles || {};
       const profiles = [...(authProfiles.profiles || [])].sort((left, right) => {
-        if (left.active !== right.active) return left.active ? -1 : 1;
         return String(right.mtime || "").localeCompare(String(left.mtime || ""));
       });
       const panel = document.getElementById("auth-profiles-panel");
       if (!profiles.length) {
-        panel.innerHTML = '<div class="empty-state">暂无认证档案</div>';
+        panel.innerHTML = '<div class="empty-state">暂无账号</div>';
         return;
       }
       panel.innerHTML = profiles.map((profile) => {
         const account = profile.account || {};
         const email = account.ok ? (account.account?.email || "未知账号") : "账号异常";
         const plan = account.ok ? (account.account?.planType || account.account?.type || "ChatGPT") : (account.error || "账号不可用");
-        return '<div class="profile-row' + (profile.active ? " is-active" : "") + '">' +
-          '<div class="profile-line"><span class="profile-account">' + esc(email) + '</span><span class="profile-plan">' + esc(plan) + '</span>' + (profile.active ? renderBadge("active", "info") : "") + '</div>' +
+        return '<div class="profile-row">' +
+          '<div class="profile-line"><span class="profile-account">' + esc(email) + '</span><span class="profile-plan">' + esc(plan) + '</span></div>' +
           renderProfileQuota(profile.rateLimits) +
           '<div class="profile-actions">' +
-            '<button class="secondary" data-activate-profile="' + esc(profile.name) + '"' + (profile.active ? " disabled" : "") + '>使用</button>' +
-            '<button class="danger" data-delete-profile="' + esc(profile.name) + '"' + (profile.active ? " disabled" : "") + '>删除</button>' +
+            '<button class="danger" data-delete-profile="' + esc(profile.name) + '">删除</button>' +
           '</div>' +
         '</div>';
       }).join("");
-      document.querySelectorAll("[data-activate-profile]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const name = button.getAttribute("data-activate-profile");
-          if (!name) return;
-          const allowActive = await confirmInterruptRisk("auth_profile_activate", "切换认证档案");
-          if (allowActive == null) return;
-          await activateProfile(name, allowActive);
-        });
-      });
       document.querySelectorAll("[data-delete-profile]").forEach((button) => {
         button.addEventListener("click", async () => {
           const name = button.getAttribute("data-delete-profile");
@@ -940,26 +952,12 @@ export function initAdminPage(options = {}) {
         }
       });
     }
-    async function activateProfile(name, allowActive) {
-      replaceStatus.textContent = "正在切换认证档案...";
-      try {
-        const payload = await requestJson("/admin/api/auth-profiles/" + encodeURIComponent(name) + "/activate", {
-          method: "POST",
-          headers: authHeaders({ "content-type": "application/json" }),
-          body: JSON.stringify({ allow_active: allowActive })
-        });
-        render(payload.status);
-        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已切换</span>';
-      } catch (error) {
-        replaceStatus.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
-      }
-    }
     async function deleteProfile(name) {
-      replaceStatus.textContent = "正在删除认证档案...";
+      replaceStatus.textContent = "正在删除账号...";
       try {
         const payload = await requestJson("/admin/api/auth-profiles/" + encodeURIComponent(name), { method: "DELETE", headers: authHeaders() });
         render(payload.status);
-        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已删除</span>';
+        replaceStatus.innerHTML = '<span style="color:var(--green)">账号已删除</span>';
       } catch (error) {
         replaceStatus.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
       }
@@ -969,7 +967,9 @@ export function initAdminPage(options = {}) {
       const fileInput = document.getElementById("profile-auth-file");
       const textArea = document.getElementById("profile-auth-text");
       const submitButton = document.getElementById("submit-add-profile-dialog");
+      clearProfileDeviceCodeTimer();
       status.textContent = "正在保存...";
+      status.style.color = "";
       submitButton.disabled = true;
       try {
         const content = textArea.value.trim() || (fileInput.files[0] ? await fileInput.files[0].text() : "");
@@ -989,6 +989,96 @@ export function initAdminPage(options = {}) {
         status.innerHTML = '<span style="color:var(--red)">' + esc(error instanceof Error ? error.message : String(error)) + '</span>';
       } finally {
         submitButton.disabled = false;
+      }
+    }
+    async function startProfileDeviceCodeAuth() {
+      const startButton = document.getElementById("start-profile-device-code");
+      const panel = document.getElementById("profile-device-code-panel");
+      const link = document.getElementById("profile-device-code-link");
+      const codeValue = document.getElementById("profile-device-code-value");
+      resetProfileDeviceCode();
+      startButton.disabled = true;
+      setAddProfileStatus("正在申请设备码...", "");
+      try {
+        const payload = await requestJson("/admin/api/auth-profiles/device-code/start", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: "{}"
+        });
+        const deviceCode = payload.deviceCode;
+        if (!deviceCode?.deviceAuthId || !deviceCode?.userCode || !deviceCode?.verificationUrl) {
+          throw new Error("设备码响应不完整");
+        }
+        addProfileDeviceCode = deviceCode;
+        panel.hidden = false;
+        link.href = deviceCode.verificationUrl;
+        link.textContent = "打开";
+        codeValue.textContent = deviceCode.userCode;
+        setAddProfileStatus("等待登录确认...", "cyan");
+        updateProfileDeviceCodeCountdown();
+        scheduleProfileDeviceCodePoll(deviceCode.intervalSeconds || 5);
+      } catch (error) {
+        setAddProfileStatus(error instanceof Error ? error.message : String(error), "red");
+        startButton.disabled = false;
+      }
+    }
+    function updateProfileDeviceCodeCountdown() {
+      if (!addProfileDeviceCode) return false;
+      const expiresAt = Date.parse(String(addProfileDeviceCode.expiresAt || ""));
+      const countdown = document.getElementById("profile-device-code-countdown");
+      if (!Number.isFinite(expiresAt)) {
+        countdown.textContent = "";
+        return true;
+      }
+      const remainingSeconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      if (remainingSeconds <= 0) {
+        countdown.textContent = "设备码已过期";
+        setAddProfileStatus("设备码已过期，重新申请一个。", "red");
+        clearProfileDeviceCodeTimer();
+        document.getElementById("start-profile-device-code").disabled = false;
+        return false;
+      }
+      countdown.textContent = "剩余 " + Math.ceil(remainingSeconds / 60) + " 分钟";
+      return true;
+    }
+    function scheduleProfileDeviceCodePoll(intervalSeconds) {
+      clearProfileDeviceCodeTimer();
+      addProfileDeviceCodeTimer = window.setTimeout(pollProfileDeviceCodeAuth, Math.max(1, Number(intervalSeconds) || 5) * 1000);
+    }
+    async function pollProfileDeviceCodeAuth() {
+      const deviceCode = addProfileDeviceCode;
+      if (!deviceCode || !updateProfileDeviceCodeCountdown()) return;
+      try {
+        const payload = await requestJson("/admin/api/auth-profiles/device-code/complete", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({
+            device_auth_id: deviceCode.deviceAuthId,
+            user_code: deviceCode.userCode,
+            retry_after_seconds: deviceCode.intervalSeconds || 5
+          })
+        });
+        if (payload.deviceCode?.status === "pending") {
+          setAddProfileStatus("等待登录确认...", "cyan");
+          updateProfileDeviceCodeCountdown();
+          scheduleProfileDeviceCodePoll(payload.deviceCode.retryAfterSeconds || deviceCode.intervalSeconds || 5);
+          return;
+        }
+        if (payload.deviceCode?.status !== "complete") {
+          throw new Error("设备码确认响应不完整");
+        }
+
+        render(payload.status);
+        setAddProfileStatus("认证档案已保存", "green");
+        replaceStatus.innerHTML = '<span style="color:var(--green)">认证档案已保存</span>';
+        document.getElementById("profile-auth-file").value = "";
+        document.getElementById("profile-auth-text").value = "";
+        resetProfileDeviceCode();
+        addProfileDialog.close();
+      } catch (error) {
+        setAddProfileStatus(error instanceof Error ? error.message : String(error), "red");
+        clearProfileDeviceCodeTimer();
+        document.getElementById("start-profile-device-code").disabled = false;
       }
     }
     async function deployRelease() {
@@ -1088,7 +1178,10 @@ export function initAdminPage(options = {}) {
     githubAuthorSearch.oninput = () => { if (latestStatus) renderGitHubAuthors(latestStatus); };
     document.getElementById("open-add-profile-dialog").onclick = () => {
       document.getElementById("add-profile-status").textContent = "";
+      document.getElementById("add-profile-status").style.color = "";
+      resetProfileDeviceCode();
       addProfileDialog.showModal();
+      document.getElementById("start-profile-device-code").focus();
     };
     document.getElementById("open-github-author-dialog").onclick = () => {
       document.getElementById("github-author-dialog-status").textContent = "";
@@ -1098,11 +1191,21 @@ export function initAdminPage(options = {}) {
     };
     document.getElementById("deploy-release-button").onclick = deployRelease;
     document.getElementById("rollback-release-button").onclick = rollbackRelease;
-    document.getElementById("close-add-profile-dialog").onclick = () => addProfileDialog.close();
+    document.getElementById("close-add-profile-dialog").onclick = () => {
+      resetProfileDeviceCode();
+      addProfileDialog.close();
+    };
     document.getElementById("close-github-author-dialog").onclick = () => githubAuthorDialog.close();
     document.getElementById("submit-add-profile-dialog").onclick = submitAddProfile;
+    document.getElementById("start-profile-device-code").onclick = startProfileDeviceCodeAuth;
     document.getElementById("submit-github-author-dialog").onclick = submitGitHubAuthorMapping;
-    addProfileDialog.onclick = (event) => { if (event.target === addProfileDialog) addProfileDialog.close(); };
+    addProfileDialog.onclick = (event) => {
+      if (event.target === addProfileDialog) {
+        resetProfileDeviceCode();
+        addProfileDialog.close();
+      }
+    };
+    addProfileDialog.addEventListener("close", resetProfileDeviceCode);
     githubAuthorDialog.onclick = (event) => { if (event.target === githubAuthorDialog) githubAuthorDialog.close(); };
     refresh();
 

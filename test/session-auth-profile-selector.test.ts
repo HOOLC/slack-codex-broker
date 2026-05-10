@@ -114,8 +114,6 @@ function profileStatus(profiles: readonly AuthProfileSummary[]): AuthProfilesSta
   return {
     managedRoot: "/tmp/auth-profiles",
     profilesRoot: "/tmp/auth-profiles/docker/profiles",
-    activeProfile: profiles[0]?.name ?? null,
-    activeAuthPath: "/tmp/codex-home/auth.json",
     profiles
   };
 }
@@ -133,7 +131,6 @@ function profile(
   return {
     name,
     path: `/tmp/auth-profiles/docker/profiles/${name}.json`,
-    active: false,
     source: "probe",
     checkedAt: "2026-05-09T00:00:00.000Z",
     account: {

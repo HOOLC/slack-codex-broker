@@ -299,14 +299,7 @@ async function writeTextFile(sourcePath, targetPath, fallback = "") {
   await fs.writeFile(targetPath, content, "utf8");
 }
 
-async function ensureRelativeSymlink(linkPath, targetPath) {
-  await ensureDir(path.dirname(linkPath));
-  await fs.rm(linkPath, { force: true, recursive: true });
-  const relativeTarget = path.relative(path.dirname(linkPath), targetPath);
-  await fs.symlink(relativeTarget, linkPath, "file");
-}
-
-async function buildPortableCodexHome(sourceCodexHome, targetCodexHome, targetDataRoot) {
+async function buildPortableCodexHome(sourceCodexHome, targetCodexHome) {
   await ensureDir(targetCodexHome);
 
   for (const entry of CODEX_HOME_FILE_ENTRIES) {
@@ -326,8 +319,6 @@ async function buildPortableCodexHome(sourceCodexHome, targetCodexHome, targetDa
     await copyDirectoryResolved(path.join(sourceCodexHome, entry), path.join(targetCodexHome, entry));
   }
 
-  const activeAuth = path.join(targetDataRoot, "auth-profiles", "docker", "active.json");
-  await ensureRelativeSymlink(path.join(targetCodexHome, "auth.json"), activeAuth);
 }
 
 async function buildPortableGeminiHome(sourceGeminiHome, targetGeminiHome) {
@@ -551,7 +542,7 @@ async function prepareSharedHomes(paths) {
   await ensureDir(paths.runtimeSupportRoot);
   await ensureDir(paths.dataRoot);
   await initializeRuntimeData(paths.dataRoot);
-  await buildPortableCodexHome(sourceCodexHome, path.join(paths.dataRoot, "codex-home"), paths.dataRoot);
+  await buildPortableCodexHome(sourceCodexHome, path.join(paths.dataRoot, "codex-home"));
   await buildPortableGeminiHome(sourceGeminiHome, paths.geminiSupportHome);
   await buildPortableGhConfigHome(sourceGhConfigHome, path.join(paths.dataRoot, "runtime-home"));
   await copyDirectoryResolved(sourceAgentsHome, paths.agentsSupportHome);

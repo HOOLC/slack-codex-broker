@@ -75,6 +75,7 @@ describe("admin control plane e2e", () => {
       trace: {
         source: "broker_db",
         eventCount: 7,
+        modelRequestCount: 1,
         categories: {
           agent_system_prompt: 1,
           agent_memory: 1,
@@ -248,6 +249,92 @@ describe("admin control plane e2e", () => {
     });
   });
 
+  it("exposes a tracked session reset operation and delegates history clearing to the worker", async () => {
+    const workerPaths: string[] = [];
+    let sessionsRef: SessionManager | undefined;
+    const worker = http.createServer((request, response) => {
+      void (async () => {
+        workerPaths.push(request.url ?? "");
+        const session = sessionsRef?.getSessionByKey("C123:111.222");
+        if (session) {
+          await sessionsRef?.resetSessionRuntimeState(session.key);
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          ok: true,
+          sessionKey: "C123:111.222",
+          reset: {
+            clearedInboundCount: 2,
+            resetMessageTs: "1778316208.809479",
+            resumedCount: 1,
+            interruptedActiveTurn: true,
+            previousAgentSessionId: "old-thread",
+            previousActiveTurnId: "old-turn",
+            historyMessageCount: 4,
+            authBlocked: false
+          }
+        }));
+      })().catch((error) => {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      });
+    });
+    await new Promise<void>((resolve) => worker.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    });
+    const address = worker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start worker fixture");
+    }
+
+    const { baseUrl, sessions } = await startAdminFixture({
+      workerBaseUrl: `http://127.0.0.1:${address.port}`
+    });
+    sessionsRef = sessions;
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "old-thread");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "old-turn");
+
+    const result = await postJson(
+      `${baseUrl}/admin/api/sessions/${encodeURIComponent(session.key)}/reset`,
+      {}
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      operation: {
+        kind: "session_reset",
+        status: "succeeded",
+        request: {
+          sessionKey: session.key
+        }
+      },
+      workerReset: {
+        ok: true,
+        reset: {
+          clearedInboundCount: 2,
+          resumedCount: 1,
+          previousAgentSessionId: "old-thread",
+          previousActiveTurnId: "old-turn"
+        }
+      },
+      session: {
+        key: session.key,
+        agentSessionId: null,
+        activeTurnId: null
+      }
+    });
+    expect(workerPaths).toEqual([
+      `/slack/sessions/${encodeURIComponent(session.key)}/reset`
+    ]);
+  });
+
   it("records deploy requests as durable admin operations with audit events", async () => {
     const { baseUrl, deploymentCalls } = await startAdminFixture();
 
@@ -403,13 +490,10 @@ describe("admin control plane e2e", () => {
         listProfilesStatus: async () => options?.authProfilesStatus ?? ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         }),
         addProfile: async () => ({ name: "profile" }),
-        deleteProfile: async () => {},
-        activateProfile: async (name: string) => ({ name })
+        deleteProfile: async () => {}
       } as never,
       githubAuthorMappings: {
         load: async () => {},
@@ -748,8 +832,6 @@ function authProfilesStatusFixture(): AuthProfilesStatus {
   return {
     managedRoot: "/tmp/auth-profiles",
     profilesRoot: "/tmp/auth-profiles/docker/profiles",
-    activeProfile: "empty-profile",
-    activeAuthPath: "/tmp/codex-home/auth.json",
     profiles: [
       authProfileFixture("empty-profile", 100, 20),
       authProfileFixture("usable-profile", 10, 15)
@@ -761,7 +843,6 @@ function authProfileFixture(name: string, primaryUsed: number, secondaryUsed: nu
   return {
     name,
     path: `/tmp/auth-profiles/docker/profiles/${name}.json`,
-    active: name === "empty-profile",
     source: "probe",
     checkedAt: "2026-05-09T00:00:00.000Z",
     account: {

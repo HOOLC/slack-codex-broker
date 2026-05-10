@@ -83,8 +83,6 @@ describe("admin token usage e2e", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: null,
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         })
       } as never
@@ -137,13 +135,10 @@ describe("admin token usage e2e", () => {
         listProfilesStatus: async () => ({
           managedRoot: path.join(dataRoot, "auth-profiles"),
           profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
-          activeProfile: "primary",
-          activeAuthPath: path.join(config.codexHome, "auth.json"),
           profiles: []
         }),
         addProfile: async () => ({ name: "profile" }),
-        deleteProfile: async () => {},
-        activateProfile: async (name: string) => ({ name })
+        deleteProfile: async () => {}
       } as never,
       githubAuthorMappings: {
         load: async () => {},
@@ -261,13 +256,42 @@ describe("admin token usage e2e", () => {
     const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
     const shell = renderAdminShellHtml("slack-codex-broker");
+    const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
     expect(html).toContain('/admin/assets/admin-ui.js');
     expect(shell).toContain('id="topbar-quota"');
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("会话详情");
+    expect(sessionViewSource).toContain("操作");
+    expect(sessionViewSource).toContain("运行状态");
+    expect(sessionViewSource).toContain("活动构成");
+    expect(sessionViewSource).toContain("调试信息");
+    expect(sessionViewSource).not.toContain("会话属性");
+    expect(sessionViewSource).not.toContain("事件统计");
+    expect(sessionViewSource).toContain("trace-stat-grid");
+    expect(adminCssSource).toContain(".trace-stat-grid { display: grid;");
+    expect(sessionViewSource).not.toContain('className="trace-summary"');
+    expect(sessionViewSource).not.toContain("DB Trace");
     expect(sessionViewSource).toContain("Token 消耗");
-    expect(sessionViewSource).toContain('<Kpi label="Token"');
+    expect(sessionViewSource).toContain('<UsageMetric label="非缓存输入"');
+    expect(sessionViewSource).toContain("缓存覆盖");
+    expect(sessionViewSource).toContain("modelRequestCount");
+    expect(sessionViewSource).toContain('<summary>原始计数</summary>');
+    expect(adminCssSource).toContain(".usage-metric");
+    expect(sessionViewSource).toContain("session-side-column");
+    expect(sessionViewSource).toContain("重置 Session");
+    expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/reset");
+    expect(adminCssSource).toContain(".session-reset-action");
+    expect(sessionViewSource).not.toContain(`<div className="session-detail-actions">
+          <AuthProfilePanel`);
+    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; gap: 0; overflow: auto;");
+    expect(sessionViewSource).not.toContain("SessionHeaderPill");
+    expect(sessionViewSource).not.toContain("session-detail-meta-strip");
+    expect(adminCssSource).not.toContain(".session-permalink-panel .timeline");
+    expect(sessionViewSource).not.toContain("session-detail-summary");
+    expect(sessionViewSource).not.toContain("会话信息");
     expect(sessionViewSource).not.toContain("Token / 轮次");
   });
 });

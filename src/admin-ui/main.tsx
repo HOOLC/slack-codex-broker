@@ -29,12 +29,19 @@ function AdminApp({ serviceName }: { readonly serviceName: string }): React.JSX.
   return <div className="admin-shell-host" dangerouslySetInnerHTML={{ __html: renderAdminShellHtml(serviceName) }} />;
 }
 
+function isSessionPermalinkPath(): boolean {
+  return /^\/admin\/sessions\/[^/]+/.test(window.location.pathname);
+}
+
 const config = readAdminConfig();
 const rootElement = document.getElementById("admin-root");
+const sessionPermalinkPage = isSessionPermalinkPath();
 
 if (!rootElement) {
   throw new Error("missing admin root");
 }
+
+document.body.classList.toggle("session-permalink-page", sessionPermalinkPage);
 
 flushSync(() => {
   createRoot(rootElement).render(<AdminApp serviceName={config.serviceName || "slack-codex-broker"} />);

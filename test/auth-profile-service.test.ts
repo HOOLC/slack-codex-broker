@@ -21,7 +21,7 @@ describe("AuthProfileService", () => {
     );
   });
 
-  it("bootstraps from the current auth file, adds profiles, activates, and deletes", async () => {
+  it("bootstraps from the existing auth file and manages profiles without a global active profile", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "auth-profiles-"));
     tempDirs.push(dataRoot);
 
@@ -86,10 +86,8 @@ describe("AuthProfileService", () => {
     });
 
     const initialStatus = await profileService.listProfilesStatus();
-    expect(initialStatus.activeProfile).toBe("primary");
     expect(initialStatus.profiles).toHaveLength(1);
     expect(initialStatus.profiles[0]?.name).toBe("primary");
-    expect(initialStatus.profiles[0]?.active).toBe(true);
 
     const addedProfile = await profileService.addProfile({
       authJsonContent: JSON.stringify({
@@ -113,27 +111,39 @@ describe("AuthProfileService", () => {
     });
     expect(duplicateProfile.name).toBe("backup-account-2");
 
+    const jwtNamedProfile = await profileService.addProfile({
+      authJsonContent: JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          id_token: jwtWithClaims({
+            "https://api.openai.com/profile": {
+              email: "bot@example.com"
+            }
+          }),
+          access_token: "jwt-access",
+          account_id: "jwt-account"
+        }
+      })
+    });
+    expect(jwtNamedProfile.name).toBe("bot-example.com");
+
     const afterAdd = await profileService.listProfilesStatus();
-    expect(afterAdd.profiles.map((profile) => profile.name).sort()).toEqual(["backup-account", "backup-account-2", "primary"]);
+    expect(afterAdd.profiles.map((profile) => profile.name).sort()).toEqual([
+      "backup-account",
+      "backup-account-2",
+      "bot-example.com",
+      "primary"
+    ]);
 
-    await profileService.activateProfile("backup-account");
-    const activeLinkTarget = await fs.readlink(path.join(config.codexHome, "auth.json"));
-    expect(activeLinkTarget).toContain(path.join("..", "auth-profiles", "docker", "active.json"));
-
-    const afterActivate = await profileService.listProfilesStatus();
-    expect(afterActivate.activeProfile).toBe("backup-account");
-    expect(afterActivate.profiles.find((profile) => profile.name === "backup-account")?.active).toBe(true);
-
-    await expect(profileService.deleteProfile("backup-account")).rejects.toThrow("Cannot delete the active auth profile");
-    await profileService.activateProfile("primary");
     await profileService.deleteProfile("backup-account");
     await profileService.deleteProfile("backup-account-2");
+    await profileService.deleteProfile("bot-example.com");
 
     const afterDelete = await profileService.listProfilesStatus();
     expect(afterDelete.profiles.map((profile) => profile.name).sort()).toEqual(["primary"]);
   });
 
-  it("supports an empty bootstrap and activates the first imported profile", async () => {
+  it("supports an empty bootstrap and imports the first profile without marking it active", async () => {
     const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "auth-profiles-empty-"));
     tempDirs.push(dataRoot);
 
@@ -175,7 +185,6 @@ describe("AuthProfileService", () => {
     });
 
     const initialStatus = await profileService.listProfilesStatus();
-    expect(initialStatus.activeProfile).toBeNull();
     expect(initialStatus.profiles).toEqual([]);
 
     const addedProfile = await profileService.addProfile({
@@ -188,11 +197,18 @@ describe("AuthProfileService", () => {
       })
     });
 
-    expect(addedProfile.active).toBe(true);
+    expect(addedProfile.name).toBe("first-account");
 
     const afterAdd = await profileService.listProfilesStatus();
-    expect(afterAdd.activeProfile).toBe("first-account");
     expect(afterAdd.profiles).toHaveLength(1);
-    expect(afterAdd.profiles[0]?.active).toBe(true);
+    expect(afterAdd.profiles[0]?.name).toBe("first-account");
   });
 });
+
+function jwtWithClaims(claims: Record<string, unknown>): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+    Buffer.from(JSON.stringify(claims)).toString("base64url"),
+    "signature"
+  ].join(".");
+}

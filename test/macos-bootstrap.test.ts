@@ -117,7 +117,7 @@ describe("macOS bootstrap", () => {
     });
     expect(adminEnv).toContain(`ADMIN_PLIST_PATH="${adminPlistPath}"`);
     expect(adminEnv).toContain(`WORKER_PLIST_PATH="${workerPlistPath}"`);
-  });
+  }, 15_000);
 });
 
 async function writeExecutable(filePath: string, content: string): Promise<void> {

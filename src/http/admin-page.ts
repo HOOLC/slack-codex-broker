@@ -13,7 +13,7 @@ export function renderAdminPage(options: {
     window.__vite_plugin_react_preamble_installed__ = true;
   </script>
   <script type="module" src="${escapeHtml(adminUiDevOrigin)}/@vite/client"></script>
-  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/src/admin-ui/main.tsx"></script>`
+  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/main.tsx"></script>`
     : `  <script type="module" src="/admin/assets/admin-ui.js"></script>`;
 
   return `<!doctype html>

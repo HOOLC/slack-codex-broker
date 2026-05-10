@@ -316,9 +316,8 @@ export class AdminService {
       });
     }
 
-    const agentEvents = this.options.sessions
-      .listAgentTraceEvents(session.key, 1000)
-      .filter(isVisibleTimelineTraceEvent);
+    const allAgentEvents = this.options.sessions.listAgentTraceEvents(session.key, 1000);
+    const agentEvents = allAgentEvents.filter(isVisibleTimelineTraceEvent);
 
     return {
       ok: true,
@@ -329,7 +328,7 @@ export class AdminService {
         usage: summarizeUsageBySessionMap(this.#listAgentTurnUsage(1000)).get(session.key),
         channelLabels: await this.#buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
       }),
-      trace: summarizeAgentTrace(agentEvents),
+      trace: summarizeAgentTrace(agentEvents, allAgentEvents),
       events: [...events, ...agentEvents.map(agentTraceEventToTimelineEvent)].sort(compareTimelineEvents)
     };
   }
@@ -397,6 +396,55 @@ export class AdminService {
     );
   }
 
+  async startAuthProfileDeviceCode(): Promise<Record<string, unknown>> {
+    const deviceCode = await this.options.authProfiles.requestDeviceCodeAuth();
+    return {
+      ok: true,
+      deviceCode
+    };
+  }
+
+  async completeAuthProfileDeviceCode(options: {
+    readonly name?: string | undefined;
+    readonly deviceAuthId: string;
+    readonly userCode: string;
+    readonly retryAfterSeconds?: number | undefined;
+  }): Promise<Record<string, unknown>> {
+    const result = await this.options.authProfiles.completeDeviceCodeAuth({
+      deviceAuthId: options.deviceAuthId,
+      userCode: options.userCode,
+      retryAfterSeconds: options.retryAfterSeconds
+    });
+
+    if (result.status === "pending") {
+      return {
+        ok: true,
+        deviceCode: result
+      };
+    }
+
+    return await this.#runTrackedOperation(
+      "auth_profile_add",
+      {
+        name: options.name ?? null,
+        source: "device_code"
+      },
+      async () => {
+        const profile = await this.options.authProfiles.addProfile({
+          name: options.name,
+          authJsonContent: result.authJsonContent
+        });
+        return {
+          ok: true,
+          deviceCode: {
+            status: "complete"
+          },
+          profile
+        };
+      }
+    );
+  }
+
   async deleteAuthProfile(options: {
     readonly name: string;
   }): Promise<Record<string, unknown>> {
@@ -410,28 +458,6 @@ export class AdminService {
         return {
           ok: true,
           deletedProfile: options.name
-        };
-      }
-    );
-  }
-
-  async activateAuthProfile(options: {
-    readonly name: string;
-    readonly allowActive: boolean;
-  }): Promise<Record<string, unknown>> {
-    return await this.#runTrackedOperation(
-      "auth_profile_activate",
-      {
-        name: options.name,
-        allowActive: options.allowActive
-      },
-      async () => {
-        await this.#assertSafeToInterrupt(options.allowActive, "auth profile switch");
-        const activated = await this.options.authProfiles.activateProfile(options.name);
-        await this.options.runtime.restartRuntime(`admin auth profile switch: ${activated.name}`);
-        return {
-          ok: true,
-          activatedProfile: activated.name
         };
       }
     );
@@ -472,6 +498,30 @@ export class AdminService {
           ok: true,
           session: this.#summarizeSessionByKey(switched.key),
           workerResume
+        };
+      }
+    );
+  }
+
+  async resetSession(options: {
+    readonly sessionKey: string;
+  }): Promise<Record<string, unknown>> {
+    return await this.#runTrackedOperation(
+      "session_reset",
+      {
+        sessionKey: options.sessionKey
+      },
+      async () => {
+        const session = this.options.sessions.getSessionByKey(options.sessionKey);
+        if (!session) {
+          throw new Error(`Session not found: ${options.sessionKey}`);
+        }
+
+        const workerReset = await this.#resetWorkerSession(session.key);
+        return {
+          ok: true,
+          session: this.#summarizeSessionByKey(session.key),
+          workerReset
         };
       }
     );
@@ -581,17 +631,7 @@ export class AdminService {
       this.#readAccountRateLimits(),
       this.options.deployment?.getStatus() ?? Promise.resolve(null)
     ]);
-    const authProfiles = await this.options.authProfiles.listProfilesStatus({
-      activeSnapshot:
-        account.ok && rateLimits.ok
-          ? {
-              source: "runtime",
-              checkedAt: new Date().toISOString(),
-              account,
-              rateLimits
-            }
-          : undefined
-    });
+    const authProfiles = await this.options.authProfiles.listProfilesStatus();
     const mappings = this.options.githubAuthorMappings.listMappings();
     return {
       account,
@@ -711,10 +751,9 @@ export class AdminService {
         serialized.timelineEvent = agentTraceEventToTimelineEvent(traceEvent);
       }
       if (event.sessionKey) {
-        const traceEvents = this.options.sessions
-          .listAgentTraceEvents(event.sessionKey, 1000)
-          .filter(isVisibleTimelineTraceEvent);
-        serialized.trace = summarizeAgentTrace(traceEvents);
+        const allTraceEvents = this.options.sessions.listAgentTraceEvents(event.sessionKey, 1000);
+        const traceEvents = allTraceEvents.filter(isVisibleTimelineTraceEvent);
+        serialized.trace = summarizeAgentTrace(traceEvents, allTraceEvents);
       }
     }
 
@@ -1225,6 +1264,21 @@ export class AdminService {
     }
     return payload;
   }
+
+  async #resetWorkerSession(sessionKey: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/slack/sessions/${encodeURIComponent(sessionKey)}/reset`,
+      this.options.config.workerBaseUrl
+    );
+    const response = await fetch(url, {
+      method: "POST"
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      throw new Error(String(payload.error || response.statusText || "worker_reset_failed"));
+    }
+    return payload;
+  }
 }
 
 function summarizeUsageTotals(records: readonly PersistedAgentTurnUsage[]): AgentUsageTotals {
@@ -1466,16 +1520,21 @@ function compareTimelineEvents(left: Record<string, JsonLike>, right: Record<str
   return leftSequence - rightSequence;
 }
 
-function summarizeAgentTrace(events: readonly PersistedAgentTraceEvent[]): Record<string, JsonLike> {
+function summarizeAgentTrace(
+  events: readonly PersistedAgentTraceEvent[],
+  allEvents: readonly PersistedAgentTraceEvent[] = events
+): Record<string, JsonLike> {
   const categories: Record<string, number> = {};
   const sources: Record<string, number> = {};
   for (const event of events) {
     categories[event.type] = (categories[event.type] ?? 0) + 1;
     sources[event.source] = (sources[event.source] ?? 0) + 1;
   }
+  const modelRequestCount = allEvents.filter((event) => event.type === "agent_token_count").length;
   return {
     source: "broker_db",
     eventCount: events.length,
+    modelRequestCount,
     categories,
     sources
   };

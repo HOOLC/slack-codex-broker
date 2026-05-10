@@ -393,7 +393,8 @@ describe("AppServerClient disconnect handling", () => {
       }
     ]);
 
-    await expect(started.completion).resolves.toMatchObject({
+    const result = await started.completion;
+    expect(result).toMatchObject({
       threadId: "thread-1",
       turnId: "turn-token-count",
       finalMessage: "done",
@@ -405,6 +406,15 @@ describe("AppServerClient disconnect handling", () => {
         reasoningTokens: 2,
         totalTokens: 22
       }
+    });
+    expect(result.usage?.rawUsage).toMatchObject({
+      kind: "aggregated_token_usage",
+      eventCount: 2,
+      inputTokens: 17,
+      cachedInputTokens: 7,
+      outputTokens: 5,
+      reasoningTokens: 2,
+      totalTokens: 22
     });
   });
 

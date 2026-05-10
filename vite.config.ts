@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
+  root: "src/admin-ui",
+  base: "/admin/",
   plugins: [react()],
   server: {
     host: "127.0.0.1",
@@ -10,10 +12,10 @@ export default defineConfig({
     cors: true
   },
   build: {
-    outDir: "dist/admin-ui",
+    outDir: "../../dist/admin-ui",
     emptyOutDir: true,
     rollupOptions: {
-      input: "src/admin-ui/main.tsx",
+      input: "index.html",
       output: {
         entryFileNames: "assets/admin-ui.js",
         chunkFileNames: "assets/[name].js",

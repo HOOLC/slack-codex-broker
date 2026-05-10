@@ -61,7 +61,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -130,7 +129,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -139,6 +137,8 @@ describe("admin routes", () => {
     expect(page.status).toBe(200);
     const html = await page.text();
     const shell = renderAdminShellHtml("slack-codex-broker");
+    const adminIndexSource = await fs.readFile(new URL("../src/admin-ui/index.html", import.meta.url), "utf8");
+    const viteConfigSource = await fs.readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
     expect(html).toContain('id="admin-root"');
@@ -146,6 +146,12 @@ describe("admin routes", () => {
     expect(html).toContain('/admin/assets/admin-ui.css');
     expect(html).toContain('/admin/assets/admin-ui.js');
     expect(html).not.toContain("switchAdminView");
+    expect(adminIndexSource).toContain('id="admin-root"');
+    expect(adminIndexSource).toContain('id="admin-config"');
+    expect(adminIndexSource).toContain('src="/main.tsx"');
+    expect(viteConfigSource).toContain('root: "src/admin-ui"');
+    expect(viteConfigSource).toContain('base: "/admin/"');
+    expect(viteConfigSource).toContain('input: "index.html"');
     expect(shell).toContain("open-add-profile-dialog");
     expect(shell).toContain("admin-nav");
     expect(shell).toContain('data-admin-view="sessions"');
@@ -159,12 +165,16 @@ describe("admin routes", () => {
     expect(shell).not.toContain("实时");
     expect(shell).not.toContain("刷新");
     expect(shell).toContain("auth-profiles-panel");
-    expect(shell).toContain("认证档案");
+    expect(shell).toContain("账号池");
     expect(shell).toContain("github-authors-panel");
     expect(shell).toContain("GitHub 作者映射");
     expect(shell).toContain("发布");
     expect(shell).toContain("deploy-release-button");
     expect(shell).toContain("add-profile-dialog");
+    expect(shell).toContain("推荐使用设备码 OAuth");
+    expect(shell).toContain("备用：导入 auth.json");
+    expect(shell).toContain("start-profile-device-code");
+    expect(shell).toContain("profile-auth-json-fallback");
     expect(shell).toContain("session-react-root");
     expect(sessionViewSource).toContain("session-search");
     expect(sessionViewSource).toContain("session-detail-panel");
@@ -195,7 +205,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -203,10 +212,15 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin/sessions/${encodeURIComponent("C123:111.222")}`);
     expect(page.status).toBe(200);
     const html = await page.text();
+    const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
     expect(html).toContain('id="admin-root"');
     expect(html).toContain('/admin/assets/admin-ui.js');
+    expect(adminMainSource).toContain("isSessionPermalinkPath");
+    expect(adminMainSource).toContain("session-permalink-page");
+    expect(adminCssSource).toContain("body.session-permalink-page .topbar");
     expect(sessionViewSource).toContain("readPermalinkSessionKey");
     expect(sessionViewSource).toContain("SessionPermalinkView");
     expect(sessionViewSource).toContain("/admin/api/sessions/\" + encodeURIComponent(sessionKey) + \"/timeline");
@@ -222,7 +236,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -275,7 +288,9 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain(".shell { width: 100%; height: 100dvh;");
     expect(adminCssSource).toContain("grid-template-columns: minmax(320px, 420px)");
     expect(adminCssSource).toContain(".session-detail-panel > .panel-body");
-    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: auto;");
+    expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
+    expect(adminCssSource).toContain(".timeline { height: 100%; display: grid; gap: 0; overflow: auto;");
     expect(adminCssSource).toContain(".session-card { display: block; overflow: hidden; }");
     expect(adminCssSource).toContain(".session-meta-line { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;");
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");
@@ -307,7 +322,7 @@ describe("admin routes", () => {
       expect(html).toContain("http://127.0.0.1:5173/@react-refresh");
       expect(html).toContain("__vite_plugin_react_preamble_installed__");
       expect(html).toContain("http://127.0.0.1:5173/@vite/client");
-      expect(html).toContain("http://127.0.0.1:5173/src/admin-ui/main.tsx");
+      expect(html).toContain("http://127.0.0.1:5173/main.tsx");
       expect(html).not.toContain("/admin/assets/admin-ui.css");
       expect(html).not.toContain("/admin/assets/admin-ui.js");
     } finally {
@@ -333,7 +348,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -356,6 +370,71 @@ describe("admin routes", () => {
     ]);
   });
 
+  it("forwards auth profile device-code start and completion to the admin service", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true, status: "admin-ok" }),
+      addAuthProfile: async () => ({ ok: true }),
+      startAuthProfileDeviceCode: async () => {
+        calls.push({ type: "start" });
+        return {
+          ok: true,
+          deviceCode: {
+            deviceAuthId: "device-1",
+            userCode: "ABCD-EFGH"
+          }
+        };
+      },
+      completeAuthProfileDeviceCode: async (payload: Record<string, unknown>) => {
+        calls.push({ type: "complete", ...payload });
+        return {
+          ok: true,
+          deviceCode: {
+            status: "pending"
+          }
+        };
+      },
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
+    });
+
+    const start = await fetch(`${baseUrl}/admin/api/auth-profiles/device-code/start`, {
+      method: "POST"
+    });
+    expect(start.status).toBe(200);
+
+    const complete = await fetch(`${baseUrl}/admin/api/auth-profiles/device-code/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        device_auth_id: "device-1",
+        user_code: "ABCD-EFGH",
+        retry_after_seconds: 8
+      })
+    });
+    expect(complete.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        type: "start"
+      },
+      {
+        type: "complete",
+        name: undefined,
+        deviceAuthId: "device-1",
+        userCode: "ABCD-EFGH",
+        retryAfterSeconds: 8
+      }
+    ]);
+  });
+
   it("forwards GitHub author mapping upserts to the admin service", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const baseUrl = await startAdminServer({
@@ -370,7 +449,6 @@ describe("admin routes", () => {
       },
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -404,7 +482,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async () => ({ ok: true })
     });
@@ -429,7 +506,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);
         return { ok: true };
@@ -467,7 +543,6 @@ describe("admin routes", () => {
       upsertGitHubAuthorMapping: async () => ({ ok: true }),
       deleteGitHubAuthorMapping: async () => ({ ok: true }),
       deleteAuthProfile: async () => ({ ok: true }),
-      activateAuthProfile: async () => ({ ok: true }),
       deployRelease: async () => ({ ok: true }),
       rollbackRelease: async (payload: Record<string, unknown>) => {
         calls.push(payload);

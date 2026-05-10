@@ -35,6 +35,7 @@ import {
   chunkSlackMessage,
   clampHistoryLimit,
   compareIsoTimestamp,
+  createSyntheticMessageTs,
   createSlackFailureFingerprint,
   formatSlackRunFailureMessage,
   isBeforeSlackTs,
@@ -278,6 +279,103 @@ export class SlackConversationService {
     return await this.#resumePendingDispatch(sessionKey, {
       forceReset: true
     });
+  }
+
+  async resetSession(sessionKey: string): Promise<{
+    readonly clearedInboundCount: number;
+    readonly resetMessageTs: string;
+    readonly resumedCount: number;
+    readonly interruptedActiveTurn: boolean;
+    readonly previousAgentSessionId: string | null;
+    readonly previousActiveTurnId: string | null;
+    readonly historyMessageCount: number;
+    readonly authBlocked: boolean;
+  }> {
+    const session = this.#findSessionByKey(sessionKey);
+    const history = await this.readThreadHistory({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      channelType: session.channelType,
+      limit: this.#config.slackHistoryApiMaxLimit
+    });
+    const previousAgentSessionId = session.agentSessionId ?? null;
+    const previousActiveTurnId = session.activeTurnId ?? null;
+    let interruptedActiveTurn = false;
+
+    this.#resetRuntimeForManualSessionReset(session.key);
+
+    if (session.activeTurnId && session.agentSessionId) {
+      try {
+        await this.#turnRunner.interrupt(session);
+        interruptedActiveTurn = true;
+      } catch (error) {
+        logger.warn("Failed to interrupt active turn during manual session reset", {
+          sessionKey: session.key,
+          agentSessionId: session.agentSessionId,
+          turnId: session.activeTurnId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const openMessages = this.#sessions.listInboundMessages({
+      channelId: session.channelId,
+      rootThreadTs: session.rootThreadTs,
+      status: ["pending", "inflight"]
+    });
+    if (openMessages.length > 0) {
+      await this.#sessions.updateInboundMessagesForBatch(
+        session.channelId,
+        session.rootThreadTs,
+        openMessages.map((message) => message.messageTs),
+        {
+          status: "done",
+          batchId: undefined
+        }
+      );
+    }
+
+    let resetSession = await this.#sessions.resetSessionRuntimeState(session.key);
+    this.#clearAssistantStatus(resetSession.channelId, resetSession.rootThreadTs);
+
+    const resetMessageTs = createSyntheticMessageTs();
+    await this.#inboundStore.recordInboundMessage(resetSession, {
+      source: "admin_session_reset",
+      channelId: resetSession.channelId,
+      channelType: resetSession.channelType,
+      rootThreadTs: resetSession.rootThreadTs,
+      messageTs: resetMessageTs,
+      userId: this.#botUserId || "BROKER_ADMIN",
+      senderKind: "app",
+      text: "管理员已重置这个 session，丢弃旧 agent history 并从当前 Slack thread 重新开始。",
+      contextText: history.formattedText
+    });
+    await this.#appendSessionResetTrace(resetSession, {
+      previousAgentSessionId,
+      previousActiveTurnId,
+      clearedInboundCount: openMessages.length,
+      resetMessageTs,
+      historyMessageCount: history.messages.length
+    });
+
+    resetSession = this.#findSessionByKey(resetSession.key);
+    const authBlocked = Boolean(resetSession.authBlockedAt);
+    const resumedCount = authBlocked
+      ? 0
+      : await this.#resumePendingDispatch(resetSession.key, {
+          forceReset: true
+        });
+
+    return {
+      clearedInboundCount: openMessages.length,
+      resetMessageTs,
+      resumedCount,
+      interruptedActiveTurn,
+      previousAgentSessionId,
+      previousActiveTurnId,
+      historyMessageCount: history.messages.length,
+      authBlocked
+    };
   }
 
   async acceptBackgroundJobEvent(options: {
@@ -1227,6 +1325,21 @@ export class SlackConversationService {
     return runtime;
   }
 
+  #resetRuntimeForManualSessionReset(sessionKey: string): void {
+    const runtime = this.#getRuntimeSession(sessionKey);
+    if (runtime.autoResumeTimer) {
+      clearTimeout(runtime.autoResumeTimer);
+      runtime.autoResumeTimer = undefined;
+    }
+    runtime.queue.length = 0;
+    runtime.processing = false;
+    runtime.generation += 1;
+    runtime.blockedUntilMs = undefined;
+    runtime.blockedFailureFingerprint = undefined;
+    runtime.lastFailureNotificationFingerprint = undefined;
+    runtime.lastFailureNotificationAtMs = undefined;
+  }
+
   #findSessionByKey(sessionKey: string): SlackSessionRecord {
     const session = this.#sessions.listSessions().find((entry) => entry.key === sessionKey);
     if (!session) {
@@ -1246,6 +1359,36 @@ export class SlackConversationService {
     const runtime = this.#getRuntimeSession(sessionKey);
     runtime.blockedUntilMs = undefined;
     runtime.blockedFailureFingerprint = undefined;
+  }
+
+  async #appendSessionResetTrace(
+    session: SlackSessionRecord,
+    detail: {
+      readonly previousAgentSessionId: string | null;
+      readonly previousActiveTurnId: string | null;
+      readonly clearedInboundCount: number;
+      readonly resetMessageTs: string;
+      readonly historyMessageCount: number;
+    }
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const sequence = this.#sessions.listAgentTraceEvents(session.key, 10_000).length + 1;
+    await this.#sessions.upsertAgentTraceEvent({
+      id: randomUUID(),
+      sessionKey: session.key,
+      source: "broker",
+      type: "agent_session_reset",
+      at: now,
+      sequence,
+      title: "Session 已重置",
+      summary: "已清空 agent history 并重新唤起 bot",
+      detail: JSON.stringify(detail, null, 2),
+      status: "completed",
+      role: "system",
+      metadata: detail,
+      createdAt: now,
+      updatedAt: now
+    });
   }
 
   #scheduleAutoResume(sessionKey: string): void {

@@ -18,12 +18,8 @@ export async function handleAdminRequest(
     readonly config: AppConfig;
   }
 ): Promise<boolean> {
-  if (method === "GET" && (url.pathname === "/admin" || url.pathname.startsWith("/admin/sessions/"))) {
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    response.end(renderAdminPage({
-      serviceName: options.config.serviceName
-    }));
-    return true;
+  if (method === "GET" && isAdminSpaRoute(url.pathname)) {
+    return serveAdminSpaIndex(response, options.config);
   }
 
   if (method === "GET" && url.pathname.startsWith("/admin/assets/")) {
@@ -98,6 +94,23 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (method === "POST" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/reset")) {
+    const sessionKey = decodeURIComponent(url.pathname.slice(
+      "/admin/api/sessions/".length,
+      -"/reset".length
+    ));
+    if (!sessionKey || sessionKey.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.resetSession({
+        sessionKey
+      })
+    );
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/preflight") {
     respondJson(response, 200, await options.adminService.getOperationPreflight({
       operation: readString(url.searchParams.get("operation")) ?? "unknown"
@@ -153,6 +166,43 @@ export async function handleAdminRequest(
       options.adminService.addAuthProfile({
         name,
         authJsonContent
+      })
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/admin/api/auth-profiles/device-code/start") {
+    await runAdminOperation(response, () =>
+      options.adminService.startAuthProfileDeviceCode()
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/admin/api/auth-profiles/device-code/complete") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const name = readString(body.name) ?? undefined;
+    const deviceAuthId = readString(body.device_auth_id);
+    const userCode = readString(body.user_code);
+    const retryAfterSeconds = readPositiveNumber(body.retry_after_seconds);
+    if (!deviceAuthId || !userCode) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["device_auth_id", "user_code"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.completeAuthProfileDeviceCode({
+        name,
+        deviceAuthId,
+        userCode,
+        retryAfterSeconds
       })
     );
     return true;
@@ -224,22 +274,6 @@ export async function handleAdminRequest(
     return true;
   }
 
-  if (method === "POST" && url.pathname.startsWith("/admin/api/auth-profiles/") && url.pathname.endsWith("/activate")) {
-    const profileName = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/".length, -"/activate".length));
-    const body = await readAdminBody(request, response);
-    if (!body) {
-      return true;
-    }
-
-    await runAdminOperation(response, () =>
-      options.adminService.activateAuthProfile({
-        name: profileName,
-        allowActive: body.allow_active === true
-      })
-    );
-    return true;
-  }
-
   if (method === "DELETE" && url.pathname.startsWith("/admin/api/auth-profiles/")) {
     const profileName = decodeURIComponent(url.pathname.slice("/admin/api/auth-profiles/".length));
     if (!profileName || profileName.includes("/")) {
@@ -269,6 +303,51 @@ export async function handleAdminRequest(
   }
 
   return false;
+}
+
+async function serveAdminSpaIndex(response: http.ServerResponse, config: AppConfig): Promise<boolean> {
+  if (process.env.ADMIN_UI_DEV_ORIGIN) {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(renderAdminPage({
+      serviceName: config.serviceName
+    }));
+    return true;
+  }
+
+  const indexPath = await findAdminSpaIndex();
+  if (indexPath) {
+    const html = await fs.readFile(indexPath, "utf8");
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(html);
+    return true;
+  }
+
+  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  response.end(renderAdminPage({
+    serviceName: config.serviceName
+  }));
+  return true;
+}
+
+async function findAdminSpaIndex(): Promise<string | null> {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "..", "..", "admin-ui", "index.html"),
+    path.resolve(moduleDir, "..", "..", "dist", "admin-ui", "index.html")
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  return null;
 }
 
 async function serveAdminAsset(url: URL, response: http.ServerResponse): Promise<boolean> {
@@ -309,6 +388,10 @@ async function serveAdminAsset(url: URL, response: http.ServerResponse): Promise
   return true;
 }
 
+function isAdminSpaRoute(pathname: string): boolean {
+  return pathname === "/admin" || pathname === "/admin/" || pathname.startsWith("/admin/sessions/");
+}
+
 function contentTypeForAsset(assetPath: string): string {
   const extension = path.extname(assetPath).toLowerCase();
   if (extension === ".css") return "text/css; charset=utf-8";
@@ -331,6 +414,11 @@ async function readAdminBody(
     });
     return null;
   }
+}
+
+function readPositiveNumber(value: unknown): number | undefined {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
 }
 
 async function runAdminOperation(
