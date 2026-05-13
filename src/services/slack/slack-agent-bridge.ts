@@ -9,7 +9,6 @@ import type {
   SlackUserIdentity
 } from "../../types.js";
 import type { AgentRuntime } from "../agent-runtime/types.js";
-import { GitHubAuthorMappingService } from "../github-author-mapping-service.js";
 import type {
   GitHubPrIdentityService,
   GitHubPrTokenResolution
@@ -47,7 +46,6 @@ export class SlackAgentBridge {
     readonly config: AppConfig;
     readonly sessions: SessionManager;
     readonly agentRuntime: AgentRuntime;
-    readonly mappings: GitHubAuthorMappingService;
     readonly githubPrIdentity: GitHubPrIdentityService;
   }) {
     this.#config = options.config;
@@ -65,7 +63,7 @@ export class SlackAgentBridge {
     this.#coauthors = new SlackCoauthorService({
       sessions: this.#sessions,
       slackApi: this.#slackApi,
-      mappings: options.mappings
+      githubPrIdentity: options.githubPrIdentity
     });
     this.#githubPrIdentity = options.githubPrIdentity;
     this.#conversations = new SlackConversationService({
@@ -191,21 +189,6 @@ export class SlackAgentBridge {
     return await this.#conversations.postSlackFile(options);
   }
 
-  async listGitHubAuthorMappings() {
-    return await this.#coauthors.listMappings();
-  }
-
-  async upsertGitHubAuthorMapping(options: {
-    readonly slackUserId: string;
-    readonly githubAuthor: string;
-  }) {
-    return await this.#coauthors.upsertManualMapping(options);
-  }
-
-  async deleteGitHubAuthorMapping(slackUserId: string): Promise<void> {
-    await this.#coauthors.deleteMapping(slackUserId);
-  }
-
   async getCommitCoauthorStatus(cwd: string) {
     return await this.#coauthors.getCommitCoauthorStatus(cwd);
   }
@@ -215,11 +198,7 @@ export class SlackAgentBridge {
     readonly coauthors?: readonly string[] | undefined;
     readonly userIds?: readonly string[] | undefined;
     readonly ignoreMissing?: boolean | undefined;
-    readonly mappings?: ReadonlyArray<{
-      readonly slackUserId?: string | undefined;
-      readonly slackUser?: string | undefined;
-      readonly githubAuthor: string;
-    }> | undefined;
+    readonly mappings?: ReadonlyArray<unknown> | undefined;
   }) {
     return await this.#coauthors.configureSessionCoauthors(options);
   }

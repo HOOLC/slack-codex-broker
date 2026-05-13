@@ -6,14 +6,14 @@ export function renderAdminPage(options: {
   const styleLink = adminUiDevOrigin ? "" : `  <link rel="stylesheet" href="/admin/assets/admin-ui.css" />\n`;
   const scriptTags = adminUiDevOrigin
     ? `  <script type="module">
-    import RefreshRuntime from "${escapeHtml(adminUiDevOrigin)}/@react-refresh";
+    import RefreshRuntime from "${escapeHtml(adminUiDevOrigin)}/admin/@react-refresh";
     RefreshRuntime.injectIntoGlobalHook(window);
     window.$RefreshReg$ = () => {};
     window.$RefreshSig$ = () => (type) => type;
     window.__vite_plugin_react_preamble_installed__ = true;
   </script>
-  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/@vite/client"></script>
-  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/main.tsx"></script>`
+  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/admin/@vite/client"></script>
+  <script type="module" src="${escapeHtml(adminUiDevOrigin)}/admin/main.tsx"></script>`
     : `  <script type="module" src="/admin/assets/admin-ui.js"></script>`;
 
   return `<!doctype html>

@@ -63,8 +63,6 @@ export async function createGitHubPrIdentity(config: AppConfig): Promise<GitHubP
     stateDir: config.stateDir,
     defaultGitHubLogin: config.defaultGitHubLogin,
     defaultGitHubToken: config.defaultGitHubToken,
-    githubOAuthClientId: config.githubOAuthClientId,
-    githubOAuthBaseUrl: config.githubOAuthBaseUrl,
     githubApiBaseUrl: config.githubApiBaseUrl,
     githubOAuthScopes: config.githubOAuthScopes
   });
@@ -116,14 +114,12 @@ export function createSlackBridge(options: {
   readonly config: AppConfig;
   readonly sessions: SessionManager;
   readonly agentRuntime: AgentRuntime;
-  readonly mappings: GitHubAuthorMappingService;
   readonly githubPrIdentity: GitHubPrIdentityService;
 }): SlackAgentBridge {
   return new SlackAgentBridge({
     config: options.config,
     sessions: options.sessions,
     agentRuntime: options.agentRuntime,
-    mappings: options.mappings,
     githubPrIdentity: options.githubPrIdentity
   });
 }

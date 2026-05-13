@@ -147,7 +147,8 @@ export type AdminOperationKind =
   | "session_auth_profile_switch"
   | "session_reset"
   | "github_author_upsert"
-  | "github_author_delete";
+  | "github_author_delete"
+  | "github_pr_default_set";
 
 export type AdminOperationStatus = "running" | "succeeded" | "failed";
 

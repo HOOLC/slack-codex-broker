@@ -887,10 +887,13 @@ export class SlackConversationService {
   #formatSessionPageLinkMessage(session: SlackSessionRecord, url: string): string {
     const lines = [`<${url}|查看会话活动时间线>`];
     const identity = this.#githubPrIdentity?.getSessionIdentityStatus(session);
-    if (identity?.binding.state === "unbound" && identity.defaultAccount.available) {
+    if (identity?.binding.state === "unbound") {
+      const warning = identity.defaultAccount.available
+        ? `当前发起人还没有绑定 GitHub 账号。不绑定时，后续创建 PR 会使用默认账号 ${identity.defaultAccount.githubLogin}。`
+        : "当前发起人还没有绑定 GitHub 账号。当前没有默认 GitHub PR 账号，创建 PR 前需要先绑定。";
       lines.push(
         "",
-        `当前发起人还没有绑定 GitHub 账号。不绑定时，后续创建 PR 会使用默认账号 ${identity.defaultAccount.githubLogin}。`,
+        warning,
         `<${url}/github/bind|绑定 GitHub>`
       );
     }

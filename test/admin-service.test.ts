@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
 import { AdminService } from "../src/services/admin-service.js";
+import { GitHubAuthorMappingService } from "../src/services/github-author-mapping-service.js";
+import { GitHubPrIdentityService } from "../src/services/github-pr-identity-service.js";
 import { SessionManager } from "../src/services/session-manager.js";
 import { StateStore } from "../src/store/state-store.js";
 
@@ -21,6 +23,202 @@ describe("AdminService", () => {
         })
       )
     );
+  });
+
+  it("exposes GitHub author mappings and OAuth bindings as unified GitHub accounts", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-service-github-accounts-"));
+    tempDirs.push(dataRoot);
+
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot,
+      BROKER_DEFAULT_GITHUB_LOGIN: "legacy-bot",
+      BROKER_DEFAULT_GITHUB_TOKEN: "legacy-token"
+    } as NodeJS.ProcessEnv);
+
+    const githubAuthorMappings = new GitHubAuthorMappingService({ stateDir: config.stateDir });
+    await githubAuthorMappings.load();
+    await githubAuthorMappings.upsertManualMapping({
+      slackUserId: "U_ALICE",
+      githubAuthor: "Alice Example <alice@example.com>",
+      slackIdentity: {
+        userId: "U_ALICE",
+        mention: "<@U_ALICE>",
+        displayName: "Alice",
+        email: "alice@example.com"
+      }
+    });
+
+    const githubPrIdentity = new GitHubPrIdentityService({
+      stateDir: config.stateDir,
+      defaultGitHubLogin: config.defaultGitHubLogin,
+      defaultGitHubToken: config.defaultGitHubToken
+    });
+    await githubPrIdentity.load();
+    await githubPrIdentity.upsertBinding({
+      slackUserId: "U_ALICE",
+      githubLogin: "alice-gh",
+      githubUserId: 101,
+      token: "alice-token",
+      scopes: ["repo", "read:user", "user:email"],
+      githubEmail: "alice@github.example",
+      githubName: "Alice GitHub"
+    });
+    await githubPrIdentity.setDefaultBinding("U_ALICE");
+
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions: {
+        listSessions: () => [
+          {
+            key: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            workspacePath: "/tmp/session",
+            initiatorUserId: "U_BOB",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          }
+        ],
+        listInboundMessages: () => [
+          {
+            key: "m1",
+            sessionKey: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            messageTs: "111.222",
+            source: "app_mention",
+            userId: "U_BOB",
+            text: "@bot hi",
+            senderKind: "user",
+            senderUsername: "bob",
+            mentionedUsers: [],
+            status: "done",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          },
+          {
+            key: "m2",
+            sessionKey: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            messageTs: "111.333",
+            source: "thread_reply",
+            userId: "U_CAROL",
+            text: "please review this too",
+            senderKind: "user",
+            senderUsername: "carol",
+            mentionedUsers: [],
+            status: "done",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          },
+          {
+            key: "m3",
+            sessionKey: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            messageTs: "111.444",
+            source: "thread_reply",
+            userId: "U_BOT",
+            text: "bot message",
+            senderKind: "bot",
+            mentionedUsers: [],
+            status: "done",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          },
+          {
+            key: "m4",
+            sessionKey: "C123:111.222",
+            channelId: "C123",
+            rootThreadTs: "111.222",
+            messageTs: "111.555",
+            source: "thread_reply",
+            userId: "username:legacy-bot",
+            text: "legacy sender",
+            senderKind: "user",
+            mentionedUsers: [],
+            status: "done",
+            createdAt: "2026-03-19T00:00:00.000Z",
+            updatedAt: "2026-03-19T00:00:00.000Z"
+          }
+        ],
+        listBackgroundJobs: () => []
+      } as never,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings,
+      githubPrIdentity,
+      runtime: {
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never
+    });
+
+    const overview = await service.getOverview();
+    expect(overview.githubAccounts).toMatchObject({
+      count: 3,
+      defaultPrAccount: {
+        available: true,
+        source: "bound",
+        slackUserId: "U_ALICE",
+        githubLogin: "alice-gh"
+      },
+      accounts: [
+        {
+          slackUserId: "U_ALICE",
+          isDefaultPrAccount: true,
+          slackIdentity: {
+            userId: "U_ALICE",
+            mention: "<@U_ALICE>"
+          },
+          prBinding: {
+            state: "bound",
+            githubLogin: "alice-gh",
+            githubUserId: 101,
+            githubEmail: "alice@github.example",
+            githubName: "Alice GitHub",
+            scopes: ["repo", "read:user", "user:email"]
+          }
+        },
+        {
+          slackUserId: "U_BOB",
+          slackIdentity: {
+            username: "bob"
+          },
+          prBinding: {
+            state: "unbound"
+          }
+        },
+        {
+          slackUserId: "U_CAROL",
+          slackIdentity: {
+            username: "carol"
+          },
+          prBinding: {
+            state: "unbound"
+          }
+        }
+      ]
+    });
+    expect(JSON.stringify(overview.githubAccounts)).not.toContain("U_BOT");
+    expect(JSON.stringify(overview.githubAccounts)).not.toContain("username:legacy-bot");
+    expect(JSON.stringify(overview.githubAccounts)).not.toContain("githubAuthor");
+    expect(JSON.stringify(overview.githubAccounts)).not.toContain("Alice Example <alice@example.com>");
   });
 
   it("includes account rate limits in status output", async () => {
@@ -300,6 +498,7 @@ describe("AdminService", () => {
       source: "thread_reply",
       userId: "U123",
       text: "<@U234> follow up",
+      senderUsername: "starter",
       mentionedUserIds: ["U234"],
       mentionedUsers: [
         {
@@ -330,9 +529,21 @@ describe("AdminService", () => {
             channelType: "channel",
             channelLabel: "#deep-review",
             firstUserMessage: {
+              userId: "U123",
+              senderUsername: "starter",
+              slackIdentity: {
+                userId: "U123",
+                username: "starter"
+              },
               textPreview: "@Mock Display 234 follow up"
             },
             lastUserMessage: {
+              userId: "U123",
+              senderUsername: "starter",
+              slackIdentity: {
+                userId: "U123",
+                username: "starter"
+              },
               textPreview: "@Mock Display 234 follow up"
             }
           }

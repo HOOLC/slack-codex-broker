@@ -59,9 +59,9 @@
     .toolbar { display: flex; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
     input, textarea, select { width: 100%; padding: 3px 6px; border: 1px solid var(--line); background: #05080c; color: var(--text); font-family: inherit; font-size: 11px; }
     input:focus, textarea:focus, select:focus { outline: 1px solid var(--cyan); border-color: var(--cyan); }
+    input:disabled, select:disabled, button:disabled { opacity: 0.45; cursor: not-allowed; }
     textarea { min-height: 80px; resize: vertical; }
 
-    .session-react-root { height: 100%; min-height: 0; }
     .session-master-detail { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: 1px; align-items: stretch; background: var(--line); }
     .session-master-detail > .panel { display: flex; flex-direction: column; }
     .session-master-detail > * { background: var(--panel); }
@@ -204,6 +204,9 @@
     .usage-row { display: flex; justify-content: space-between; padding: 3px 0; border-top: 1px solid var(--line); }
 
     .maintenance-grid { display: grid; gap: 1px; background: var(--line); }
+    .github-default-control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr); gap: 8px; align-items: end; padding: 6px 8px; border-bottom: 1px solid var(--line); background: #080d13; }
+    .github-default-summary { min-width: 0; display: grid; gap: 2px; }
+    .github-default-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
     .profile-row { display: grid; gap: 4px; padding: 5px 6px; background: var(--panel); }
     .profile-line { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
     .profile-account { font-weight: 700; font-size: 11px; }
@@ -232,8 +235,9 @@
     .usage-raw-details { grid-column: 1 / -1; padding: 4px 6px; background: var(--panel); color: var(--muted); font-size: 9px; }
     .usage-raw-details summary { cursor: pointer; color: var(--cyan); }
     .usage-raw-grid { display: grid; gap: 2px; margin-top: 5px; }
-    .quota-line { display: grid; grid-template-columns: 50px 70px 1fr; gap: 6px; color: var(--muted); font-size: 10px; }
-    .quota-line span, .quota-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .quota-line { min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow-x: auto; overflow-y: hidden; color: var(--muted); font-size: 10px; scrollbar-width: none; }
+    .quota-line::-webkit-scrollbar { display: none; }
+    .quota-line span, .quota-line strong { flex: 0 0 auto; white-space: nowrap; }
     .quota-line strong { color: var(--text); }
     .deploy-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-bottom: 6px; }
     .release-stack { display: grid; gap: 4px; margin-top: 6px; }
@@ -243,6 +247,7 @@
     .log-entry.warn { color: var(--amber); }
     .log-entry.error { color: var(--red); }
     dialog { width: 520px; max-width: 92vw; padding: 0; border: 1px solid var(--cyan); background: var(--panel); color: var(--text); }
+    dialog[open] { position: fixed; inset: 50% auto auto 50%; transform: translate(-50%, -50%); z-index: 1000; margin: 0; max-height: min(86vh, 720px); overflow: auto; box-shadow: 0 18px 48px rgba(0,0,0,0.45); }
     dialog::backdrop { background: rgba(0,0,0,0.7); }
     .modal-content { display: grid; gap: 8px; padding: 12px; }
 
@@ -277,6 +282,8 @@
       .toolbar { gap: 4px; padding: 4px 6px; }
       .toolbar input { min-width: 0; }
       .toolbar select { flex: 0 0 126px; }
+      .github-default-control { grid-template-columns: 1fr; gap: 6px; padding: 6px; }
+      .github-default-actions { grid-template-columns: 1fr; }
       .selected-session-head { grid-template-columns: 1fr; align-items: start; gap: 6px; padding: 6px; }
       .session-detail-actions { width: 100%; min-width: 0; overflow-x: auto; padding-bottom: 2px; }
       .session-detail-title, .session-detail-subtitle { white-space: normal; overflow-wrap: anywhere; }

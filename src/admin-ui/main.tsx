@@ -1,12 +1,7 @@
-import React from "react";
-import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 
 import "./admin.css";
-import { publishAdminStatus } from "./admin-status-store";
-import { initAdminPage } from "./admin-legacy.js";
-import { renderAdminShellHtml } from "./admin-shell";
-import { AdminSessionsView } from "./session-view";
+import { AdminShell } from "./admin-shell";
 
 interface AdminConfig {
   readonly serviceName?: string;
@@ -25,10 +20,6 @@ function readAdminConfig(): AdminConfig {
   }
 }
 
-function AdminApp({ serviceName }: { readonly serviceName: string }): React.JSX.Element {
-  return <div className="admin-shell-host" dangerouslySetInnerHTML={{ __html: renderAdminShellHtml(serviceName) }} />;
-}
-
 function isSessionPermalinkPath(): boolean {
   return /^\/admin\/sessions\/[^/]+/.test(window.location.pathname);
 }
@@ -43,17 +34,4 @@ if (!rootElement) {
 
 document.body.classList.toggle("session-permalink-page", sessionPermalinkPage);
 
-flushSync(() => {
-  createRoot(rootElement).render(<AdminApp serviceName={config.serviceName || "slack-codex-broker"} />);
-});
-
-const sessionRootElement = document.getElementById("session-react-root");
-if (!sessionRootElement) {
-  throw new Error("missing session root");
-}
-
-flushSync(() => {
-  createRoot(sessionRootElement).render(<AdminSessionsView />);
-});
-
-initAdminPage({ useReactSessions: true, onStatus: publishAdminStatus });
+createRoot(rootElement).render(<AdminShell serviceName={config.serviceName || "slack-codex-broker"} />);

@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
-import { renderAdminShellHtml } from "../src/admin-ui/admin-shell.js";
 import { stableSessionOrder } from "../src/admin-ui/session-order.js";
 import { renderAdminPage } from "../src/http/admin-page.js";
 import { deferUntilResponseFinished } from "../src/http/response-deferred-tasks.js";
@@ -136,8 +135,9 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin`);
     expect(page.status).toBe(200);
     const html = await page.text();
-    const shell = renderAdminShellHtml("slack-codex-broker");
     const adminIndexSource = await fs.readFile(new URL("../src/admin-ui/index.html", import.meta.url), "utf8");
+    const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    const adminShellSource = await fs.readFile(new URL("../src/admin-ui/admin-shell.tsx", import.meta.url), "utf8");
     const viteConfigSource = await fs.readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
 
@@ -152,47 +152,47 @@ describe("admin routes", () => {
     expect(viteConfigSource).toContain('root: "src/admin-ui"');
     expect(viteConfigSource).toContain('base: "/admin/"');
     expect(viteConfigSource).toContain('input: "index.html"');
-    expect(shell).toContain("open-add-profile-dialog");
-    expect(shell).toContain("admin-nav");
-    expect(shell).toContain('data-admin-view="sessions"');
-    expect(shell).toContain('data-admin-view="ops"');
-    expect(shell).toContain('data-view-target="sessions"');
-    expect(shell).toContain('data-view-target="ops"');
-    expect(shell).toContain('id="topbar-quota"');
-    expect(shell).not.toContain("top-actions");
-    expect(shell).not.toContain("refresh-button");
-    expect(shell).not.toContain("last-refresh");
-    expect(shell).not.toContain("实时");
-    expect(shell).not.toContain("刷新");
-    expect(shell).toContain("auth-profiles-panel");
-    expect(shell).toContain("账号池");
-    expect(shell).toContain("github-authors-panel");
-    expect(shell).toContain("GitHub 作者映射");
-    expect(shell).toContain("发布");
-    expect(shell).toContain("deploy-release-button");
-    expect(shell).toContain("add-profile-dialog");
-    expect(shell).toContain("推荐使用设备码 OAuth");
-    expect(shell).toContain("备用：导入 auth.json");
-    expect(shell).toContain("start-profile-device-code");
-    expect(shell).toContain("profile-auth-json-fallback");
-    expect(shell).toContain("session-react-root");
+    expect(adminMainSource).toContain("<AdminShell");
+    expect(adminMainSource).not.toContain("initAdminPage");
+    expect(adminMainSource).not.toContain("dangerouslySetInnerHTML");
+    expect(adminShellSource).toContain("export function AdminShell");
+    expect(adminShellSource).toContain("admin-nav");
+    expect(adminShellSource).toContain('data-admin-view="sessions"');
+    expect(adminShellSource).toContain('data-admin-view="ops"');
+    expect(adminShellSource).not.toContain("top-actions");
+    expect(adminShellSource).not.toContain("refresh-button");
+    expect(adminShellSource).not.toContain("last-refresh");
+    expect(adminShellSource).not.toContain("实时");
+    expect(adminShellSource).not.toContain("刷新");
+    expect(adminShellSource).toContain("账号池");
+    expect(adminShellSource).toContain("GitHub 账号");
+    expect(adminShellSource).not.toContain("GitHub 作者映射");
+    expect(adminShellSource).toContain("发布");
+    expect(adminShellSource).toContain("推荐使用设备码 OAuth");
+    expect(adminShellSource).toContain("备用：导入 auth.json");
+    expect(adminShellSource).toContain("绑定 GitHub");
+    expect(adminShellSource).not.toContain("Slack 用户 ID（U123...）");
+    expect(adminShellSource).not.toContain("Commit 作者：姓名 <email@example.com>");
+    expect(adminShellSource).not.toContain("编辑作者");
+    expect(adminShellSource).not.toContain("历史 Commit 作者");
+    expect(adminShellSource).not.toContain("session-react-root");
     expect(sessionViewSource).toContain("session-search");
     expect(sessionViewSource).toContain("session-detail-panel");
     expect(sessionViewSource).toContain("会话详情");
-    expect(shell).not.toContain("Session Inspector");
-    expect(shell).not.toContain("session-table-header");
-    expect(shell).toContain("系统日志");
+    expect(adminShellSource).not.toContain("Session Inspector");
+    expect(sessionViewSource).not.toContain("session-table-header");
+    expect(adminShellSource).toContain("系统日志");
     expect(sessionViewSource).toContain("待处理：");
     expect(sessionViewSource).toContain("人：");
     expect(sessionViewSource).toContain("系统：");
-    expect(shell).not.toContain("status-strip");
-    expect(shell).not.toContain("command-grid");
-    expect(shell).not.toContain("MSG: ");
-    expect(shell).not.toContain("profile-name-input");
-    expect(shell).not.toContain("Account Quota");
-    expect(shell).not.toContain("Control");
-    expect(shell).not.toContain("ADMIN TOKEN");
-    expect(shell).not.toContain("/admin/api/runtime-files");
+    expect(adminShellSource).not.toContain("status-strip");
+    expect(adminShellSource).not.toContain("command-grid");
+    expect(adminShellSource).not.toContain("MSG: ");
+    expect(adminShellSource).not.toContain("profile-name-input");
+    expect(adminShellSource).not.toContain("Account Quota");
+    expect(adminShellSource).not.toContain("Control");
+    expect(adminShellSource).not.toContain("ADMIN TOKEN");
+    expect(adminShellSource).not.toContain("/admin/api/runtime-files");
   });
 
   it("serves a deep-linkable admin session page", async () => {
@@ -302,6 +302,39 @@ describe("admin routes", () => {
     ]);
   });
 
+  it("routes admin GitHub account OAuth start by existing Slack user id", async () => {
+    const calls: string[] = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      startGitHubAccountDeviceAuthorization: async (slackUserId: string) => {
+        calls.push(slackUserId);
+        return {
+          ok: true,
+          device: {
+            id: "device-1",
+            slackUserId,
+            userCode: "ABCD-EFGH"
+          }
+        };
+      }
+    });
+
+    const started = await fetch(`${baseUrl}/admin/api/github-accounts/${encodeURIComponent("U123")}/oauth/device/start`, {
+      method: "POST"
+    });
+    expect(started.status).toBe(200);
+    await expect(started.json()).resolves.toMatchObject({
+      ok: true,
+      device: {
+        id: "device-1",
+        slackUserId: "U123"
+      }
+    });
+    expect(calls).toEqual(["U123"]);
+  });
+
   it("persists session ui state in the admin page script", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
@@ -319,39 +352,34 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin`);
     expect(page.status).toBe(200);
     const html = await page.text();
-    const adminClientSource = await fs.readFile(new URL("../src/admin-ui/admin-legacy.js", import.meta.url), "utf8");
     const adminMainSource = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    const adminShellSource = await fs.readFile(new URL("../src/admin-ui/admin-shell.tsx", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
     const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
 
-    expect(adminClientSource).toContain("admin-ui-state:");
-    expect(adminClientSource).toContain("selectedSessionKey");
+    expect(adminMainSource).not.toContain("admin-legacy");
+    expect(sessionViewSource).toContain("admin-ui-state:");
+    expect(sessionViewSource).toContain("selectedSessionKey");
     expect(sessionViewSource).toContain("data-session-key");
-    expect(adminMainSource).toContain("AdminSessionsView");
-    expect(adminMainSource).toContain("useReactSessions: true");
-    expect(adminMainSource).toContain("publishAdminStatus");
-    expect(adminClientSource).toContain("options.onStatus?.(data)");
+    expect(adminShellSource).toContain("AdminSessionsView");
+    expect(adminShellSource).toContain("publishAdminStatus");
     expect(sessionViewSource).toContain("useSyncExternalStore");
     expect(sessionViewSource).toContain("orderRef");
     expect(sessionViewSource).toContain("key={session.key}");
     expect(sessionViewSource).not.toContain("innerHTML");
     expect(sessionViewSource).not.toContain("dangerouslySetInnerHTML");
-    expect(adminClientSource).toContain("scheduleUiStatePersistence");
-    expect(adminClientSource).toContain("window.localStorage.getItem");
-    expect(adminClientSource).toContain("selectSession(sessionKey");
-    expect(adminClientSource).not.toContain("expandedSessionKeys");
-    expect(adminClientSource).not.toContain('row.addEventListener("toggle"');
-    expect(adminClientSource).toContain("sessionSearch.onblur");
+    expect(adminShellSource).toContain("window.localStorage.getItem");
+    expect(sessionViewSource).not.toContain("expandedSessionKeys");
     expect(sessionViewSource).toContain("ongoing");
-    expect(adminClientSource).toContain("authProfileQuotaItems");
-    expect(adminClientSource).toContain("profileTooltip");
+    expect(adminShellSource).toContain("authProfileQuotaItems");
+    expect(adminShellSource).toContain("profileTitle");
     expect(sessionViewSource).toContain("自动分配");
     expect(sessionViewSource).toContain('mode: "auto"');
-    expect(adminClientSource).not.toContain("renderAccountChip");
-    expect(adminClientSource).not.toContain("refreshButton");
-    expect(adminClientSource).not.toContain("lastRefresh");
-    expect(adminClientSource).not.toContain(" 活跃 · ");
-    expect(adminClientSource).not.toContain(" 待处理 · ");
+    expect(adminShellSource).not.toContain("renderAccountChip");
+    expect(adminShellSource).not.toContain("refreshButton");
+    expect(adminShellSource).not.toContain("lastRefresh");
+    expect(adminShellSource).not.toContain(" 活跃 · ");
+    expect(adminShellSource).not.toContain(" 待处理 · ");
     expect(sessionViewSource).toContain("sessionQueueState");
     expect(sessionViewSource).toContain("compareSessionsForMode");
     expect(sessionViewSource).toContain("session-card");
@@ -376,6 +404,9 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");
     expect(adminCssSource).toContain(".session-card");
     expect(adminCssSource).toContain(".session-priority-danger");
+    expect(adminCssSource).toContain("dialog[open]");
+    expect(adminCssSource).toContain("position: fixed");
+    expect(adminCssSource).toContain("z-index: 1000");
     expect(adminCssSource).not.toContain(".top-actions");
     expect(adminCssSource).not.toContain(".admin-nav { grid-template-columns: 1fr; }");
   });
@@ -399,10 +430,10 @@ describe("admin routes", () => {
     process.env.ADMIN_UI_DEV_ORIGIN = "http://127.0.0.1:5173/";
     try {
       const html = renderAdminPage({ serviceName: "slack-codex-broker" });
-      expect(html).toContain("http://127.0.0.1:5173/@react-refresh");
+      expect(html).toContain("http://127.0.0.1:5173/admin/@react-refresh");
       expect(html).toContain("__vite_plugin_react_preamble_installed__");
-      expect(html).toContain("http://127.0.0.1:5173/@vite/client");
-      expect(html).toContain("http://127.0.0.1:5173/main.tsx");
+      expect(html).toContain("http://127.0.0.1:5173/admin/@vite/client");
+      expect(html).toContain("http://127.0.0.1:5173/admin/main.tsx");
       expect(html).not.toContain("/admin/assets/admin-ui.css");
       expect(html).not.toContain("/admin/assets/admin-ui.js");
     } finally {
@@ -552,6 +583,51 @@ describe("admin routes", () => {
     ]);
   });
 
+  it("forwards default GitHub PR account selection to the admin service", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const baseUrl = await startAdminServer({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test"
+    } as NodeJS.ProcessEnv, {
+      getStatus: async () => ({ ok: true }),
+      addAuthProfile: async () => ({ ok: true }),
+      upsertGitHubAuthorMapping: async () => ({ ok: true }),
+      deleteGitHubAuthorMapping: async () => ({ ok: true }),
+      setDefaultGitHubPrAccount: async (payload: Record<string, unknown>) => {
+        calls.push(payload);
+        return { ok: true, status: { ok: true } };
+      },
+      deleteAuthProfile: async () => ({ ok: true }),
+      deployRelease: async () => ({ ok: true }),
+      rollbackRelease: async () => ({ ok: true })
+    });
+
+    const missing = await fetch(`${baseUrl}/admin/api/github-accounts/default-pr`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({})
+    });
+    expect(missing.status).toBe(400);
+
+    const response = await fetch(`${baseUrl}/admin/api/github-accounts/default-pr`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        slack_user_id: "U123"
+      })
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      {
+        slackUserId: "U123"
+      }
+    ]);
+  });
+
   it("forwards automatic session auth profile switches without requiring a profile name", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const baseUrl = await startAdminServer({
@@ -590,7 +666,7 @@ describe("admin routes", () => {
     ]);
   });
 
-  it("loads the admin client module without syntax errors", async () => {
+  it("serves the React admin client without the legacy inline script", async () => {
     const baseUrl = await startAdminServer({
       SLACK_APP_TOKEN: "xapp-test",
       SLACK_BOT_TOKEN: "xoxb-test"
@@ -607,10 +683,10 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
     expect(html).not.toMatch(/<script>[\s\S]*switchAdminView[\s\S]*<\/script>/);
-    const adminClient = await import(new URL("../src/admin-ui/admin-legacy.js", import.meta.url).href) as {
-      readonly initAdminPage?: unknown;
-    };
-    expect(adminClient.initAdminPage).toBeTypeOf("function");
+    expect(html).toContain('/admin/assets/admin-ui.js');
+    const adminShellSource = await fs.readFile(new URL("../src/admin-ui/admin-shell.tsx", import.meta.url), "utf8");
+    expect(adminShellSource).toContain("export function AdminShell");
+    expect(adminShellSource).not.toContain("initAdminPage");
   });
 
   it("forwards deploy requests to the admin service", async () => {

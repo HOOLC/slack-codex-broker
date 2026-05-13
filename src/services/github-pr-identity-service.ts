@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -9,6 +10,8 @@ export interface GitHubPrBindingRecord {
   readonly slackUserId: string;
   readonly githubLogin: string;
   readonly githubUserId: number;
+  readonly githubEmail?: string | undefined;
+  readonly githubName?: string | undefined;
   readonly token: string;
   readonly scopes: readonly string[];
   readonly createdAt: string;
@@ -28,9 +31,11 @@ export type GitHubPrTokenResolution =
   | {
       readonly ok: true;
       readonly mode: "default";
+      readonly defaultSource: "bound" | "env";
       readonly githubLogin: string;
       readonly token: string;
       readonly reason: "missing_initiator" | "initiator_unbound";
+      readonly slackUserId?: string | undefined;
     }
   | {
       readonly ok: false;
@@ -53,6 +58,8 @@ export interface GitHubPrIdentityStatus {
         readonly state: "bound";
         readonly githubLogin: string;
         readonly githubUserId: number;
+        readonly githubEmail?: string | undefined;
+        readonly githubName?: string | undefined;
         readonly scopes: readonly string[];
         readonly updatedAt: string;
         readonly lastValidatedAt?: string | undefined;
@@ -72,58 +79,83 @@ export interface GitHubPrIdentityStatus {
   readonly defaultAccount:
     | {
         readonly available: true;
+        readonly source: "bound";
+        readonly slackUserId: string;
+        readonly githubLogin: string;
+        readonly githubUserId: number;
+        readonly githubEmail?: string | undefined;
+      }
+    | {
+        readonly available: true;
+        readonly source: "env";
         readonly githubLogin: string;
       }
     | {
         readonly available: false;
+        readonly selectedSlackUserId?: string | undefined;
+        readonly githubLogin?: string | undefined;
+        readonly reason?: "not_configured" | "selected_default_missing" | "selected_default_revoked" | undefined;
       };
 }
 
 interface StoredDeviceAuthorization {
   readonly id: string;
   readonly slackUserId: string;
-  readonly deviceCode: string;
-  readonly userCode: string;
-  readonly verificationUri: string;
-  readonly verificationUriComplete?: string | undefined;
+  readonly ghConfigDir: string;
+  readonly child: ReturnType<typeof spawn>;
+  userCode: string;
+  verificationUri: string;
   readonly expiresAt: number;
   intervalSeconds: number;
+  output: string;
+  processError?: string | undefined;
+}
+
+interface StoredSettings {
+  readonly defaultSlackUserId?: string | undefined;
+  readonly updatedAt?: string | undefined;
 }
 
 export class GitHubPrIdentityService {
   readonly #rootDir: string;
   readonly #bindingsDir: string;
+  readonly #pendingDir: string;
+  readonly #settingsPath: string;
   readonly #defaultGitHubLogin: string | undefined;
   readonly #defaultGitHubToken: string | undefined;
-  readonly #githubOAuthClientId: string | undefined;
-  readonly #githubOAuthBaseUrl: string;
   readonly #githubApiBaseUrl: string;
+  readonly #githubHostname: string;
   readonly #githubOAuthScopes: readonly string[];
+  readonly #ghPath: string;
   readonly #bindings = new Map<string, GitHubPrBindingRecord>();
   readonly #deviceAuthorizations = new Map<string, StoredDeviceAuthorization>();
+  #settings: StoredSettings = {};
 
   constructor(options: {
     readonly stateDir: string;
     readonly defaultGitHubLogin?: string | undefined;
     readonly defaultGitHubToken?: string | undefined;
-    readonly githubOAuthClientId?: string | undefined;
-    readonly githubOAuthBaseUrl?: string | undefined;
     readonly githubApiBaseUrl?: string | undefined;
     readonly githubOAuthScopes?: readonly string[] | undefined;
+    readonly ghPath?: string | undefined;
   }) {
     this.#rootDir = path.join(options.stateDir, "github-pr-identities");
     this.#bindingsDir = path.join(this.#rootDir, "bindings");
+    this.#pendingDir = path.join(this.#rootDir, "pending");
+    this.#settingsPath = path.join(this.#rootDir, "settings.json");
     this.#defaultGitHubLogin = normalizeString(options.defaultGitHubLogin);
     this.#defaultGitHubToken = normalizeString(options.defaultGitHubToken);
-    this.#githubOAuthClientId = normalizeString(options.githubOAuthClientId);
-    this.#githubOAuthBaseUrl = normalizeString(options.githubOAuthBaseUrl) ?? "https://github.com/login/oauth";
     this.#githubApiBaseUrl = normalizeString(options.githubApiBaseUrl) ?? "https://api.github.com";
-    this.#githubOAuthScopes = options.githubOAuthScopes?.length ? options.githubOAuthScopes : ["repo", "read:user"];
+    this.#githubHostname = resolveGitHubHostname(this.#githubApiBaseUrl);
+    this.#githubOAuthScopes = options.githubOAuthScopes?.length ? options.githubOAuthScopes : ["repo", "read:user", "user:email"];
+    this.#ghPath = normalizeString(options.ghPath) ?? "gh";
   }
 
   async load(): Promise<void> {
+    await ensureDir(this.#rootDir);
     await ensureDir(this.#bindingsDir);
     this.#bindings.clear();
+    this.#settings = await this.#readSettings();
 
     const entries = await fs.readdir(this.#bindingsDir, { withFileTypes: true }).catch((error: unknown) => {
       if (isNodeErrno(error, "ENOENT")) {
@@ -150,6 +182,8 @@ export class GitHubPrIdentityService {
     readonly slackUserId: string;
     readonly githubLogin: string;
     readonly githubUserId: number;
+    readonly githubEmail?: string | undefined;
+    readonly githubName?: string | undefined;
     readonly token: string;
     readonly scopes: readonly string[];
     readonly lastValidatedAt?: string | undefined;
@@ -168,6 +202,8 @@ export class GitHubPrIdentityService {
       slackUserId,
       githubLogin,
       githubUserId: options.githubUserId,
+      ...(normalizeString(options.githubEmail) ? { githubEmail: normalizeString(options.githubEmail) } : {}),
+      ...(normalizeString(options.githubName) ? { githubName: normalizeString(options.githubName) } : {}),
       token,
       scopes: [...new Set(options.scopes.map((scope) => scope.trim()).filter(Boolean))],
       createdAt: existing?.createdAt ?? now,
@@ -193,16 +229,34 @@ export class GitHubPrIdentityService {
     return [...this.#bindings.values()].sort((left, right) => left.slackUserId.localeCompare(right.slackUserId));
   }
 
+  getDefaultAccountStatus(): GitHubPrIdentityStatus["defaultAccount"] {
+    return this.#defaultAccountStatus();
+  }
+
+  async setDefaultBinding(slackUserId: string): Promise<GitHubPrIdentityStatus["defaultAccount"]> {
+    await this.load();
+    const normalizedSlackUserId = requiredString(slackUserId, "slackUserId");
+    const binding = this.#bindings.get(normalizedSlackUserId);
+    if (!binding) {
+      throw new Error("Cannot set default GitHub PR account to an unbound Slack user.");
+    }
+    if (binding.revokedAt) {
+      throw new Error("Cannot set default GitHub PR account to a revoked binding.");
+    }
+
+    this.#settings = {
+      defaultSlackUserId: normalizedSlackUserId,
+      updatedAt: new Date().toISOString()
+    };
+    await fs.writeFile(this.#settingsPath, `${JSON.stringify(this.#settings, null, 2)}\n`, {
+      mode: 0o600
+    });
+    return this.#defaultAccountStatus();
+  }
+
   getSessionIdentityStatus(session: SlackSessionRecord): GitHubPrIdentityStatus {
     const initiatorUserId = normalizeString(session.initiatorUserId);
-    const defaultAccount = this.#defaultGitHubLogin && this.#defaultGitHubToken
-      ? {
-          available: true as const,
-          githubLogin: this.#defaultGitHubLogin
-        }
-      : {
-          available: false as const
-        };
+    const defaultAccount = this.#defaultAccountStatus();
 
     if (!initiatorUserId) {
       return {
@@ -244,6 +298,8 @@ export class GitHubPrIdentityService {
         state: "bound",
         githubLogin: binding.githubLogin,
         githubUserId: binding.githubUserId,
+        ...(binding.githubEmail ? { githubEmail: binding.githubEmail } : {}),
+        ...(binding.githubName ? { githubName: binding.githubName } : {}),
         scopes: binding.scopes,
         updatedAt: binding.updatedAt,
         ...(binding.lastValidatedAt ? { lastValidatedAt: binding.lastValidatedAt } : {})
@@ -298,45 +354,77 @@ export class GitHubPrIdentityService {
     readonly intervalSeconds: number;
   }> {
     const slackUserId = requiredString(options.slackUserId, "slackUserId");
-    if (!this.#githubOAuthClientId) {
-      throw new Error("GitHub OAuth client id is not configured.");
-    }
-
-    const body = new URLSearchParams({
-      client_id: this.#githubOAuthClientId,
-      scope: this.#githubOAuthScopes.join(" ")
-    });
-    const response = await fetch(joinOAuthUrl(this.#githubOAuthBaseUrl, "../device/code"), {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body
-    });
-    const raw = await readJsonResponse(response);
-    const parsed = parseDeviceCodeResponse(raw);
     const id = randomUUID();
-    const expiresAt = Date.now() + parsed.expiresInSeconds * 1000;
-    this.#deviceAuthorizations.set(id, {
+    const ghConfigDir = path.join(this.#pendingDir, encodePathPart(id));
+    await ensureDir(ghConfigDir);
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const child = spawn(this.#ghPath, [
+      "auth",
+      "login",
+      "--hostname",
+      this.#githubHostname,
+      "--git-protocol",
+      "https",
+      "--web",
+      "--skip-ssh-key",
+      "--insecure-storage",
+      "--scopes",
+      this.#githubOAuthScopes.join(",")
+    ], {
+      env: {
+        ...process.env,
+        GH_BROWSER: "echo",
+        GH_CONFIG_DIR: ghConfigDir,
+        NO_COLOR: "1"
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const pending: StoredDeviceAuthorization = {
       id,
       slackUserId,
-      deviceCode: parsed.deviceCode,
-      userCode: parsed.userCode,
-      verificationUri: parsed.verificationUri,
-      verificationUriComplete: parsed.verificationUriComplete,
+      ghConfigDir,
+      child,
+      userCode: "",
+      verificationUri: "",
       expiresAt,
-      intervalSeconds: parsed.intervalSeconds
+      intervalSeconds: 2,
+      output: ""
+    };
+    this.#deviceAuthorizations.set(id, pending);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      pending.output += chunk;
     });
+    child.stderr.on("data", (chunk: string) => {
+      pending.output += chunk;
+    });
+    child.on("error", (error: Error) => {
+      pending.processError = error.message;
+    });
+
+    let prompt: {
+      readonly userCode: string;
+      readonly verificationUri: string;
+    };
+    try {
+      prompt = await waitForGhDevicePrompt(pending);
+    } catch (error) {
+      stopPendingGhLogin(pending);
+      this.#deviceAuthorizations.delete(id);
+      await fs.rm(ghConfigDir, { recursive: true, force: true });
+      throw error;
+    }
+    pending.userCode = prompt.userCode;
+    pending.verificationUri = prompt.verificationUri;
 
     return {
       id,
       slackUserId,
-      userCode: parsed.userCode,
-      verificationUri: parsed.verificationUri,
-      ...(parsed.verificationUriComplete ? { verificationUriComplete: parsed.verificationUriComplete } : {}),
+      userCode: prompt.userCode,
+      verificationUri: prompt.verificationUri,
       expiresAt: new Date(expiresAt).toISOString(),
-      intervalSeconds: parsed.intervalSeconds
+      intervalSeconds: pending.intervalSeconds
     };
   }
 
@@ -357,10 +445,6 @@ export class GitHubPrIdentityService {
         readonly binding: GitHubPrBindingRecord;
       }
   > {
-    if (!this.#githubOAuthClientId) {
-      throw new Error("GitHub OAuth client id is not configured.");
-    }
-
     const pending = this.#deviceAuthorizations.get(id);
     if (!pending) {
       return {
@@ -369,48 +453,44 @@ export class GitHubPrIdentityService {
       };
     }
     if (Date.now() >= pending.expiresAt) {
+      stopPendingGhLogin(pending);
       this.#deviceAuthorizations.delete(id);
+      await fs.rm(pending.ghConfigDir, { recursive: true, force: true });
       return {
         status: "expired"
       };
     }
 
-    const body = new URLSearchParams({
-      client_id: this.#githubOAuthClientId,
-      device_code: pending.deviceCode,
-      grant_type: "urn:ietf:params:oauth:grant-type:device_code"
-    });
-    const response = await fetch(joinOAuthUrl(this.#githubOAuthBaseUrl, "access_token"), {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body
-    });
-    const raw = await readJsonResponse(response);
-    if (isRecord(raw) && typeof raw.error === "string") {
-      if (raw.error === "authorization_pending") {
-        return {
-          status: "pending",
-          retryAfterSeconds: pending.intervalSeconds
-        };
-      }
-      if (raw.error === "slow_down") {
-        pending.intervalSeconds += 5;
-        return {
-          status: "pending",
-          retryAfterSeconds: pending.intervalSeconds
-        };
-      }
+    if (pending.processError) {
+      this.#deviceAuthorizations.delete(id);
+      await fs.rm(pending.ghConfigDir, { recursive: true, force: true });
       return {
         status: "failed",
-        error: raw.error
+        error: pending.processError
       };
     }
 
-    const token = isRecord(raw) && typeof raw.access_token === "string" ? raw.access_token.trim() : "";
+    if (pending.child.exitCode === null && pending.child.signalCode === null) {
+      return {
+        status: "pending",
+        retryAfterSeconds: pending.intervalSeconds
+      };
+    }
+
+    if (pending.child.exitCode !== 0) {
+      this.#deviceAuthorizations.delete(id);
+      await fs.rm(pending.ghConfigDir, { recursive: true, force: true });
+      return {
+        status: "failed",
+        error: summarizeGhOutput(pending.output) || `gh auth login exited with status ${pending.child.exitCode ?? pending.child.signalCode ?? "unknown"}`
+      };
+    }
+
+    const account = await this.#readGhAccount(pending.ghConfigDir);
+    const token = await this.#readGhToken(pending.ghConfigDir, account.login);
     if (!token) {
+      this.#deviceAuthorizations.delete(id);
+      await fs.rm(pending.ghConfigDir, { recursive: true, force: true });
       return {
         status: "failed",
         error: "missing_access_token"
@@ -418,17 +498,20 @@ export class GitHubPrIdentityService {
     }
 
     const user = await this.#fetchGitHubUser(token);
-    const scopes = parseScopes(isRecord(raw) && typeof raw.scope === "string" ? raw.scope : "");
+    const githubEmail = await this.#fetchGitHubPrimaryEmail(token, user.email);
     const validatedAt = new Date().toISOString();
     const binding = await this.upsertBinding({
       slackUserId: pending.slackUserId,
       githubLogin: user.login,
       githubUserId: user.id,
+      ...(githubEmail ? { githubEmail } : {}),
+      ...(user.name ? { githubName: user.name } : {}),
       token,
-      scopes,
+      scopes: account.scopes,
       lastValidatedAt: validatedAt
     });
     this.#deviceAuthorizations.delete(id);
+    await fs.rm(pending.ghConfigDir, { recursive: true, force: true });
     return {
       status: "completed",
       binding
@@ -438,6 +521,8 @@ export class GitHubPrIdentityService {
   async #fetchGitHubUser(token: string): Promise<{
     readonly id: number;
     readonly login: string;
+    readonly name?: string | undefined;
+    readonly email?: string | undefined;
   }> {
     const response = await fetch(joinUrl(this.#githubApiBaseUrl, "/user"), {
       headers: {
@@ -452,18 +537,75 @@ export class GitHubPrIdentityService {
     }
     return {
       login: raw.login,
-      id: raw.id
+      id: raw.id,
+      ...(normalizeString(raw.name) ? { name: normalizeString(raw.name) } : {}),
+      ...(normalizeString(raw.email) ? { email: normalizeString(raw.email) } : {})
     };
+  }
+
+  async #fetchGitHubPrimaryEmail(token: string, fallbackEmail?: string | undefined): Promise<string | undefined> {
+    const raw = await readJsonResponse(await fetch(joinUrl(this.#githubApiBaseUrl, "/user/emails"), {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "user-agent": "slack-codex-broker"
+      }
+    }));
+    if (!Array.isArray(raw)) {
+      return normalizeString(fallbackEmail);
+    }
+
+    const emails = raw
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+      .map((entry) => ({
+        email: normalizeString(entry.email),
+        primary: entry.primary === true,
+        verified: entry.verified === true
+      }))
+      .filter((entry): entry is { readonly email: string; readonly primary: boolean; readonly verified: boolean } =>
+        Boolean(entry.email)
+      );
+    return emails.find((entry) => entry.primary && entry.verified)?.email ??
+      emails.find((entry) => entry.verified)?.email ??
+      normalizeString(fallbackEmail);
   }
 
   #resolveDefault(
     reason: "missing_initiator" | "initiator_unbound",
     slackUserId?: string | undefined
   ): GitHubPrTokenResolution {
+    const selectedSlackUserId = normalizeString(this.#settings.defaultSlackUserId);
+    if (selectedSlackUserId) {
+      const selected = this.#bindings.get(selectedSlackUserId);
+      if (selected && !selected.revokedAt) {
+        return {
+          ok: true,
+          mode: "default",
+          defaultSource: "bound",
+          slackUserId: selectedSlackUserId,
+          githubLogin: selected.githubLogin,
+          token: selected.token,
+          reason
+        };
+      }
+
+      return {
+        ok: false,
+        mode: "blocked",
+        reason: "default_account_unavailable",
+        slackUserId: selectedSlackUserId,
+        ...(selected?.githubLogin ? { githubLogin: selected.githubLogin } : {}),
+        message: selected?.revokedAt
+          ? `The selected default GitHub PR account ${selected.githubLogin} is revoked. Open admin and choose another bound GitHub account.`
+          : "The selected default GitHub PR account is missing. Open admin and choose another bound GitHub account."
+      };
+    }
+
     if (this.#defaultGitHubLogin && this.#defaultGitHubToken) {
       return {
         ok: true,
         mode: "default",
+        defaultSource: "env",
         githubLogin: this.#defaultGitHubLogin,
         token: this.#defaultGitHubToken,
         reason
@@ -479,37 +621,236 @@ export class GitHubPrIdentityService {
     };
   }
 
+  #defaultAccountStatus(): GitHubPrIdentityStatus["defaultAccount"] {
+    const selectedSlackUserId = normalizeString(this.#settings.defaultSlackUserId);
+    if (selectedSlackUserId) {
+      const selected = this.#bindings.get(selectedSlackUserId);
+      if (selected && !selected.revokedAt) {
+        return {
+          available: true,
+          source: "bound",
+          slackUserId: selectedSlackUserId,
+          githubLogin: selected.githubLogin,
+          githubUserId: selected.githubUserId,
+          ...(selected.githubEmail ? { githubEmail: selected.githubEmail } : {})
+        };
+      }
+      return {
+        available: false,
+        selectedSlackUserId,
+        ...(selected?.githubLogin ? { githubLogin: selected.githubLogin } : {}),
+        reason: selected?.revokedAt ? "selected_default_revoked" : "selected_default_missing"
+      };
+    }
+
+    if (this.#defaultGitHubLogin && this.#defaultGitHubToken) {
+      return {
+        available: true,
+        source: "env",
+        githubLogin: this.#defaultGitHubLogin
+      };
+    }
+
+    return {
+      available: false,
+      reason: "not_configured"
+    };
+  }
+
+  async #readSettings(): Promise<StoredSettings> {
+    try {
+      const raw = JSON.parse(await fs.readFile(this.#settingsPath, "utf8")) as unknown;
+      if (!isRecord(raw)) {
+        return {};
+      }
+      const defaultSlackUserId = normalizeString(raw.defaultSlackUserId);
+      return {
+        ...(defaultSlackUserId ? { defaultSlackUserId } : {}),
+        ...(normalizeString(raw.updatedAt) ? { updatedAt: normalizeString(raw.updatedAt) } : {})
+      };
+    } catch (error) {
+      if (isNodeErrno(error, "ENOENT")) {
+        return {};
+      }
+      throw error;
+    }
+  }
+
+  async #readGhAccount(ghConfigDir: string): Promise<{
+    readonly login: string;
+    readonly scopes: readonly string[];
+  }> {
+    const output = await this.#runGh([
+      "auth",
+      "status",
+      "--hostname",
+      this.#githubHostname,
+      "--active",
+      "--json",
+      "hosts"
+    ], ghConfigDir);
+    const parsed = JSON.parse(output) as unknown;
+    return parseGhActiveAccount(parsed, this.#githubHostname);
+  }
+
+  async #readGhToken(ghConfigDir: string, login: string): Promise<string> {
+    return (await this.#runGh([
+      "auth",
+      "token",
+      "--hostname",
+      this.#githubHostname,
+      "--user",
+      login
+    ], ghConfigDir)).trim();
+  }
+
+  async #runGh(args: readonly string[], ghConfigDir: string): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
+      const child = spawn(this.#ghPath, [...args], {
+        env: {
+          ...process.env,
+          GH_CONFIG_DIR: ghConfigDir,
+          GH_PROMPT_DISABLED: "1",
+          NO_COLOR: "1"
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let stdout = "";
+      let stderr = "";
+      let timeout: NodeJS.Timeout | undefined = setTimeout(() => {
+        timeout = undefined;
+        child.kill("SIGTERM");
+        reject(new Error(`gh ${args.join(" ")} timed out.`));
+      }, 15_000);
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = undefined;
+        }
+        if (code === 0) {
+          resolve(stdout);
+          return;
+        }
+        reject(new Error(summarizeGhOutput(stderr || stdout) || `gh ${args.join(" ")} exited with status ${code}.`));
+      });
+    });
+  }
+
   #bindingPath(slackUserId: string): string {
     return path.join(this.#bindingsDir, `${encodePathPart(slackUserId)}.json`);
   }
 }
 
-function parseDeviceCodeResponse(raw: unknown): {
-  readonly deviceCode: string;
+async function waitForGhDevicePrompt(pending: StoredDeviceAuthorization): Promise<{
   readonly userCode: string;
   readonly verificationUri: string;
-  readonly verificationUriComplete?: string | undefined;
-  readonly expiresInSeconds: number;
-  readonly intervalSeconds: number;
-} {
-  if (!isRecord(raw)) {
-    throw new Error("GitHub device code response must be an object.");
+}> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 10_000) {
+    if (pending.processError) {
+      throw new Error(pending.processError);
+    }
+
+    const prompt = parseGhDevicePrompt(pending.output);
+    if (prompt) {
+      return prompt;
+    }
+
+    if (pending.child.exitCode !== null || pending.child.signalCode !== null) {
+      throw new Error(summarizeGhOutput(pending.output) || "gh auth login exited before printing a device code.");
+    }
+
+    await sleep(100);
   }
 
-  const deviceCode = requiredString(raw.device_code, "device_code");
-  const userCode = requiredString(raw.user_code, "user_code");
-  const verificationUri = requiredString(raw.verification_uri, "verification_uri");
-  const expiresInSeconds = readPositiveNumber(raw.expires_in, "expires_in");
-  const intervalSeconds = typeof raw.interval === "number" && raw.interval > 0 ? raw.interval : 5;
-  const verificationUriComplete = normalizeString(raw.verification_uri_complete);
+  stopPendingGhLogin(pending);
+  throw new Error("Timed out waiting for gh auth login to print a GitHub device code.");
+}
+
+function parseGhDevicePrompt(output: string): {
+  readonly userCode: string;
+  readonly verificationUri: string;
+} | null {
+  const userCode = output.match(/one-time code:\s*([A-Z0-9-]+)/i)?.[1]?.trim();
+  const verificationUri = output.match(/https:\/\/[^\s]+\/login\/device\b/i)?.[0]?.trim() ??
+    output.match(/https:\/\/github\.com\/login\/device\b/i)?.[0]?.trim();
+  if (!userCode || !verificationUri) {
+    return null;
+  }
   return {
-    deviceCode,
     userCode,
-    verificationUri,
-    ...(verificationUriComplete ? { verificationUriComplete } : {}),
-    expiresInSeconds,
-    intervalSeconds
+    verificationUri
   };
+}
+
+function stopPendingGhLogin(pending: StoredDeviceAuthorization): void {
+  if (pending.child.exitCode === null && pending.child.signalCode === null) {
+    pending.child.kill("SIGTERM");
+  }
+}
+
+function parseGhActiveAccount(raw: unknown, hostname: string): {
+  readonly login: string;
+  readonly scopes: readonly string[];
+} {
+  if (!isRecord(raw) || !isRecord(raw.hosts)) {
+    throw new Error("gh auth status did not return hosts.");
+  }
+
+  const hostEntries = raw.hosts[hostname];
+  const accounts = Array.isArray(hostEntries)
+    ? hostEntries
+    : Object.values(raw.hosts).find((value) => Array.isArray(value));
+  if (!Array.isArray(accounts)) {
+    throw new Error(`gh auth status did not include ${hostname}.`);
+  }
+
+  const active = accounts.find((entry) =>
+    isRecord(entry) &&
+    entry.active === true &&
+    entry.state === "success" &&
+    typeof entry.login === "string" &&
+    entry.login.trim()
+  );
+  if (!isRecord(active) || typeof active.login !== "string") {
+    throw new Error(`gh auth status did not include an active account for ${hostname}.`);
+  }
+
+  return {
+    login: active.login.trim(),
+    scopes: typeof active.scopes === "string" ? parseScopes(active.scopes) : []
+  };
+}
+
+function summarizeGhOutput(output: string): string {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-4)
+    .join("\n");
+}
+
+function resolveGitHubHostname(apiBaseUrl: string): string {
+  try {
+    const hostname = new URL(apiBaseUrl).hostname;
+    return hostname === "api.github.com" ? "github.com" : hostname.replace(/^api\./, "");
+  } catch {
+    return "github.com";
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function readJsonResponse(response: Response): Promise<unknown> {
@@ -532,6 +873,8 @@ function normalizeBinding(raw: unknown): GitHubPrBindingRecord | null {
   const githubUserId = typeof raw.githubUserId === "number" && Number.isInteger(raw.githubUserId)
     ? raw.githubUserId
     : 0;
+  const githubEmail = normalizeString(raw.githubEmail);
+  const githubName = normalizeString(raw.githubName);
   const token = normalizeString(raw.token);
   const createdAt = normalizeString(raw.createdAt);
   const updatedAt = normalizeString(raw.updatedAt);
@@ -548,6 +891,8 @@ function normalizeBinding(raw: unknown): GitHubPrBindingRecord | null {
     slackUserId,
     githubLogin,
     githubUserId,
+    ...(githubEmail ? { githubEmail } : {}),
+    ...(githubName ? { githubName } : {}),
     token,
     scopes,
     createdAt,
@@ -559,10 +904,6 @@ function normalizeBinding(raw: unknown): GitHubPrBindingRecord | null {
 
 function joinUrl(baseUrl: string, pathName: string): string {
   return new URL(pathName.replace(/^\/+/, ""), `${baseUrl.replace(/\/+$/, "")}/`).toString();
-}
-
-function joinOAuthUrl(baseUrl: string, pathName: string): string {
-  return new URL(pathName, `${baseUrl.replace(/\/+$/, "")}/`).toString();
 }
 
 function parseScopes(value: string): string[] {
@@ -586,13 +927,6 @@ function normalizeString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function readPositiveNumber(value: unknown, name: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number.`);
-  }
-  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

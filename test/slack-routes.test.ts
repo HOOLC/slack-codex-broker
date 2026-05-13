@@ -94,6 +94,42 @@ describe("handleSlackRequest", () => {
     expect(response.statusCode).toBe(200);
   });
 
+  it("rejects legacy co-author GitHub author mappings in configure-session", async () => {
+    const configureSessionCoauthors = vi.fn();
+
+    const request = createJsonRequest({
+      cwd: "/tmp/workspace",
+      mappings: [
+        {
+          slack_user: "Alice Example",
+          github_author: "Alice Example <alice@example.com>"
+        }
+      ]
+    });
+    const response = createResponse();
+
+    const handled = await handleSlackRequest(
+      "POST",
+      new URL("http://localhost/slack/git-coauthors/configure-session"),
+      request as never,
+      response as never,
+      {
+        bridge: {
+          configureSessionCoauthors
+        } as never,
+        config: {} as never
+      }
+    );
+
+    expect(handled).toBe(true);
+    expect(configureSessionCoauthors).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.bodyText || "{}")).toMatchObject({
+      ok: false,
+      error: "Manual co-author mappings are no longer supported. Bind GitHub OAuth for Slack users instead."
+    });
+  });
+
   it("resolves GitHub PR tokens through the bridge", async () => {
     const resolveGitHubPrToken = vi.fn(async () => ({
       ok: true,

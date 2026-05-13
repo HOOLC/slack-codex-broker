@@ -43,7 +43,6 @@ export async function startService(): Promise<{
     config,
     sessions: sessionManager,
     agentRuntime,
-    mappings: githubAuthorMappings,
     githubPrIdentity
   });
   const isolatedMcp = createIsolatedMcpService(config);

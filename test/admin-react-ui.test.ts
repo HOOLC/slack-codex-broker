@@ -1,0 +1,100 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const repoRoot = new URL("..", import.meta.url);
+const adminUiRoot = new URL("../src/admin-ui/", import.meta.url);
+
+describe("admin React UI architecture", () => {
+  it("documents the full React ownership target and acceptance criteria", async () => {
+    const doc = await fs.readFile(new URL("../docs/admin-react-ui.md", import.meta.url), "utf8");
+    expect(doc).toContain("Make the admin frontend a single React application.");
+    expect(doc).toContain("No business UI may use `getElementById`, `querySelector`, or `innerHTML`");
+    expect(doc).toContain("GitHub account work continues in React");
+    expect(doc).toContain("`pnpm test` and `pnpm build` pass");
+  });
+
+  it("does not ship or import the legacy imperative admin client", async () => {
+    await expect(fs.access(new URL("../src/admin-ui/admin-legacy.js", import.meta.url))).rejects.toThrow();
+
+    const main = await fs.readFile(new URL("../src/admin-ui/main.tsx", import.meta.url), "utf8");
+    expect(main).not.toContain("admin-legacy");
+    expect(main).not.toContain("initAdminPage");
+    expect(main).not.toContain("dangerouslySetInnerHTML");
+    expect(main).not.toContain("renderAdminShellHtml");
+    expect(main).not.toContain("session-react-root");
+  });
+
+  it("renders the shell as React components instead of an injected HTML string", async () => {
+    const shell = await readAdminShellSource();
+    expect(shell).toContain("export function AdminShell");
+    expect(shell).not.toContain("renderAdminShellHtml");
+    expect(shell).not.toContain("return `");
+    expect(shell).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("binds GitHub OAuth from existing Slack account rows instead of adding Slack ids", async () => {
+    const shell = await readAdminShellSource();
+    expect(shell).toContain("startGitHubAccountDeviceAuthorization");
+    expect(shell).toContain("githubAccountDeviceStartApiPath");
+    expect(shell).toContain("绑定 GitHub");
+    expect(shell).toContain("重新绑定 GitHub");
+    expect(shell).toContain("默认 PR 账号");
+    expect(shell).toContain("选择默认 PR GitHub 账号");
+    expect(shell).toContain("设为默认 PR");
+    expect(shell).toContain("buildFallbackGitHubAccounts");
+    expect(shell).toContain("firstUserMessage");
+    expect(shell).toContain("lastUserMessage");
+    expect(shell).toContain("normalizeSlackIdentity");
+    expect(shell).not.toContain("GitHub 未绑定");
+    expect(shell).not.toContain('onEdit("", "")');
+    expect(shell).not.toContain("Slack 用户 ID（U123...）");
+    expect(shell).not.toContain("GitHubAuthorDialog");
+    expect(shell).not.toContain("编辑作者");
+    expect(shell).not.toContain("Commit 作者：姓名 <email@example.com>");
+    expect(shell).not.toContain("历史 Commit 作者");
+  });
+
+  it("keeps business UI free of imperative DOM rendering and event binding", async () => {
+    const files = await listAdminUiSourceFiles();
+    const offenders: string[] = [];
+    for (const file of files) {
+      const relativePath = path.relative(repoRoot.pathname, file);
+      if (relativePath.endsWith("src/admin-ui/main.tsx")) {
+        continue;
+      }
+      const source = await fs.readFile(file, "utf8");
+      for (const forbidden of ["getElementById", "querySelector", "innerHTML"]) {
+        if (source.includes(forbidden)) {
+          offenders.push(`${relativePath}:${forbidden}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+async function readAdminShellSource(): Promise<string> {
+  for (const candidate of ["admin-shell.tsx", "admin-shell.ts"]) {
+    try {
+      return await fs.readFile(new URL(candidate, adminUiRoot), "utf8");
+    } catch (error) {
+      if (!isEnoent(error)) throw error;
+    }
+  }
+  throw new Error("admin-shell source is missing");
+}
+
+async function listAdminUiSourceFiles(): Promise<string[]> {
+  const entries = await fs.readdir(adminUiRoot, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name))
+    .map((entry) => path.join(adminUiRoot.pathname, entry.name))
+    .sort();
+}
+
+function isEnoent(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}

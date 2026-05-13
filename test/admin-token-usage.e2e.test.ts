@@ -6,7 +6,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
-import { renderAdminShellHtml } from "../src/admin-ui/admin-shell.js";
 import { createHttpHandler } from "../src/http/router.js";
 import { AdminService } from "../src/services/admin-service.js";
 import { createAgentRuntime, createCodexBroker } from "../src/services/service-components.js";
@@ -255,12 +254,13 @@ describe("admin token usage e2e", () => {
 
     const page = await fetch(`${baseUrl}/admin`);
     const html = await page.text();
-    const shell = renderAdminShellHtml("slack-codex-broker");
+    const adminShellSource = await fs.readFile(new URL("../src/admin-ui/admin-shell.tsx", import.meta.url), "utf8");
     const adminCssSource = await fs.readFile(new URL("../src/admin-ui/admin.css", import.meta.url), "utf8");
     const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
     expect(html).toContain('/admin/assets/admin-ui.js');
-    expect(shell).toContain('id="topbar-quota"');
-    expect(shell).toContain("session-react-root");
+    expect(adminShellSource).toContain("TopbarQuota");
+    expect(adminShellSource).toContain("AdminSessionsView");
+    expect(adminShellSource).not.toContain("session-react-root");
     expect(sessionViewSource).toContain("会话详情");
     expect(sessionViewSource).toContain("操作");
     expect(sessionViewSource).toContain("运行状态");

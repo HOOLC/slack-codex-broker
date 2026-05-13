@@ -14,12 +14,13 @@ import type {
   PersistedBackgroundJob,
   PersistedAgentTurnUsage,
   PersistedInboundMessage,
-  SlackSessionRecord
+  SlackSessionRecord,
+  SlackUserIdentity
 } from "../types.js";
 import type { SessionManager } from "./session-manager.js";
 import type { AuthProfileService } from "./auth-profile-service.js";
 import type { GitHubAuthorMappingService } from "./github-author-mapping-service.js";
-import type { GitHubPrIdentityService } from "./github-pr-identity-service.js";
+import type { GitHubPrBindingRecord, GitHubPrIdentityService, GitHubPrIdentityStatus } from "./github-pr-identity-service.js";
 import type { RuntimeControl } from "./runtime-control.js";
 import {
   authProfileReasonLabel,
@@ -75,6 +76,11 @@ interface RuntimeStatus {
   readonly githubPrIdentities: {
     readonly count: number;
     readonly bindings: readonly unknown[];
+  };
+  readonly githubAccounts: {
+    readonly count: number;
+    readonly defaultPrAccount: GitHubPrIdentityStatus["defaultAccount"];
+    readonly accounts: readonly unknown[];
   };
 }
 
@@ -190,6 +196,7 @@ export class AdminService {
         configToml: await this.#fileInfo(path.join(this.options.config.codexHome, "config.toml"))
       },
       authProfiles: runtime.authProfiles,
+      githubAccounts: runtime.githubAccounts,
       githubAuthorMappings: runtime.githubAuthorMappings,
       githubPrIdentities: runtime.githubPrIdentities,
       account: runtime.account,
@@ -217,6 +224,7 @@ export class AdminService {
       ok: true,
       service: this.#serviceInfo(),
       authProfiles: runtime.authProfiles,
+      githubAccounts: runtime.githubAccounts,
       githubAuthorMappings: runtime.githubAuthorMappings,
       githubPrIdentities: runtime.githubPrIdentities,
       account: runtime.account,
@@ -649,6 +657,29 @@ export class AdminService {
     );
   }
 
+  async setDefaultGitHubPrAccount(options: {
+    readonly slackUserId: string;
+  }): Promise<Record<string, unknown>> {
+    const githubPrIdentity = this.options.githubPrIdentity;
+    if (!githubPrIdentity) {
+      throw new Error("GitHub PR identity service is not configured.");
+    }
+
+    return await this.#runTrackedOperation(
+      "github_pr_default_set",
+      {
+        slackUserId: options.slackUserId
+      },
+      async () => {
+        const defaultPrAccount = await githubPrIdentity.setDefaultBinding(options.slackUserId);
+        return {
+          ok: true,
+          defaultPrAccount
+        };
+      }
+    );
+  }
+
   async getSessionGitHubIdentity(sessionKey: string): Promise<Record<string, unknown>> {
     const githubPrIdentity = this.options.githubPrIdentity;
     if (!githubPrIdentity) {
@@ -706,6 +737,47 @@ export class AdminService {
     };
   }
 
+  async startGitHubAccountDeviceAuthorization(slackUserId: string): Promise<Record<string, unknown>> {
+    const githubPrIdentity = this.options.githubPrIdentity;
+    if (!githubPrIdentity) {
+      return {
+        ok: false,
+        error: "github_pr_identity_not_configured"
+      };
+    }
+    const normalizedSlackUserId = typeof slackUserId === "string" && slackUserId.trim()
+      ? slackUserId.trim()
+      : undefined;
+    if (!normalizedSlackUserId) {
+      return {
+        ok: false,
+        error: "missing_slack_user_id"
+      };
+    }
+
+    await this.options.githubAuthorMappings.load();
+    await githubPrIdentity.load();
+    const knownSlackUserIds = collectKnownGitHubAccountSlackUserIds({
+      bindings: githubPrIdentity.listBindings(),
+      sessions: this.options.sessions.listSessions(),
+      inbound: this.options.sessions.listInboundMessages()
+    });
+    if (!knownSlackUserIds.has(normalizedSlackUserId)) {
+      return {
+        ok: false,
+        error: "slack_user_not_found"
+      };
+    }
+
+    const device = await githubPrIdentity.startDeviceAuthorization({
+      slackUserId: normalizedSlackUserId
+    });
+    return {
+      ok: true,
+      device
+    };
+  }
+
   async pollGitHubDeviceAuthorization(deviceAuthorizationId: string): Promise<Record<string, unknown>> {
     const githubPrIdentity = this.options.githubPrIdentity;
     if (!githubPrIdentity) {
@@ -732,11 +804,22 @@ export class AdminService {
     const authProfiles = await this.options.authProfiles.listProfilesStatus();
     const mappings = this.options.githubAuthorMappings.listMappings();
     const prBindings = this.options.githubPrIdentity?.listBindings() ?? [];
+    const defaultPrAccount = this.options.githubPrIdentity?.getDefaultAccountStatus() ?? {
+      available: false as const,
+      reason: "not_configured" as const
+    };
+    const githubAccounts = buildGitHubAccounts({
+      bindings: prBindings,
+      defaultPrAccount,
+      sessions: this.options.sessions.listSessions(),
+      inbound: this.options.sessions.listInboundMessages()
+    });
     return {
       account,
       rateLimits,
       deployment,
       authProfiles,
+      githubAccounts,
       githubAuthorMappings: {
         count: mappings.length,
         mappings
@@ -747,6 +830,8 @@ export class AdminService {
           slackUserId: binding.slackUserId,
           githubLogin: binding.githubLogin,
           githubUserId: binding.githubUserId,
+          githubEmail: binding.githubEmail ?? null,
+          githubName: binding.githubName ?? null,
           scopes: binding.scopes,
           createdAt: binding.createdAt,
           updatedAt: binding.updatedAt,
@@ -1247,12 +1332,15 @@ export class AdminService {
 
   #summarizeInbound(message: PersistedInboundMessage): Record<string, unknown> {
     const text = resolveMentionText(message.text, message.mentionedUsers);
+    const slackIdentity = inboundMessageSlackIdentity(message);
     return {
       sessionKey: message.sessionKey,
       messageTs: message.messageTs,
       source: message.source,
       status: message.status,
       userId: message.userId,
+      senderUsername: message.senderUsername ?? null,
+      slackIdentity,
       textPreview: text.slice(0, 160),
       updatedAt: message.updatedAt,
       batchId: message.batchId ?? null
@@ -1302,6 +1390,7 @@ export class AdminService {
       channelName: session.channelName ?? null,
       channelType: session.channelType ?? related.inbound.find((message) => message.channelType)?.channelType ?? null,
       rootThreadTs: session.rootThreadTs,
+      initiatorUserId: session.initiatorUserId ?? null,
       threadUrl: buildSlackThreadUrl(session.channelId, session.rootThreadTs),
       workspacePath: session.workspacePath,
       agentSessionId: session.agentSessionId ?? null,
@@ -1832,6 +1921,180 @@ function buildChannelLabelLookup(
   return labels;
 }
 
+function buildGitHubAccounts(options: {
+  readonly bindings: readonly GitHubPrBindingRecord[];
+  readonly defaultPrAccount: GitHubPrIdentityStatus["defaultAccount"];
+  readonly sessions?: readonly SlackSessionRecord[] | undefined;
+  readonly inbound?: readonly PersistedInboundMessage[] | undefined;
+}): RuntimeStatus["githubAccounts"] {
+  const rows = new Map<string, {
+    slackUserId: string;
+    slackIdentity?: SlackUserIdentity | undefined;
+    binding?: GitHubPrBindingRecord | undefined;
+  }>();
+  const slackIdentities = collectSlackIdentities(options.sessions ?? [], options.inbound ?? []);
+
+  for (const session of options.sessions ?? []) {
+    const slackUserId = normalizeNonEmptyString(session.initiatorUserId);
+    if (!slackUserId) {
+      continue;
+    }
+    rows.set(slackUserId, {
+      ...(rows.get(slackUserId) ?? { slackUserId }),
+      slackUserId,
+      slackIdentity: slackIdentities.get(slackUserId) ?? fallbackSlackIdentity(slackUserId)
+    });
+  }
+
+  for (const message of options.inbound ?? []) {
+    if (!isUserInboundMessage(message) || isSyntheticSlackUserId(message.userId)) {
+      continue;
+    }
+    const slackUserId = message.userId;
+    rows.set(slackUserId, {
+      ...(rows.get(slackUserId) ?? { slackUserId }),
+      slackUserId,
+      slackIdentity: rows.get(slackUserId)?.slackIdentity ?? slackIdentities.get(slackUserId) ?? fallbackSlackIdentity(slackUserId)
+    });
+  }
+
+  for (const binding of options.bindings) {
+    rows.set(binding.slackUserId, {
+      ...(rows.get(binding.slackUserId) ?? { slackUserId: binding.slackUserId }),
+      slackUserId: binding.slackUserId,
+      slackIdentity: rows.get(binding.slackUserId)?.slackIdentity ?? slackIdentities.get(binding.slackUserId) ?? fallbackSlackIdentity(binding.slackUserId),
+      binding
+    });
+  }
+
+  const defaultSlackUserId = options.defaultPrAccount.available && options.defaultPrAccount.source === "bound"
+    ? options.defaultPrAccount.slackUserId
+    : undefined;
+  const accounts = [...rows.values()]
+    .map((row) => ({
+      slackUserId: row.slackUserId,
+      slackIdentity: row.slackIdentity ?? {
+        userId: row.slackUserId,
+        mention: `<@${row.slackUserId}>`
+      },
+      isDefaultPrAccount: row.slackUserId === defaultSlackUserId,
+      prBinding: row.binding
+        ? {
+            state: row.binding.revokedAt ? "revoked" : "bound",
+            githubLogin: row.binding.githubLogin,
+            githubUserId: row.binding.githubUserId,
+            githubEmail: row.binding.githubEmail ?? null,
+            githubName: row.binding.githubName ?? null,
+            scopes: row.binding.scopes,
+            createdAt: row.binding.createdAt,
+            updatedAt: row.binding.updatedAt,
+            lastValidatedAt: row.binding.lastValidatedAt ?? null,
+            revokedAt: row.binding.revokedAt ?? null
+          }
+        : {
+            state: "unbound"
+          }
+    }))
+    .sort((left, right) => {
+      if (left.isDefaultPrAccount !== right.isDefaultPrAccount) {
+        return left.isDefaultPrAccount ? -1 : 1;
+      }
+      const leftBound = left.prBinding.state === "bound";
+      const rightBound = right.prBinding.state === "bound";
+      if (leftBound !== rightBound) {
+        return leftBound ? -1 : 1;
+      }
+      return left.slackUserId.localeCompare(right.slackUserId);
+    });
+
+  return {
+    count: accounts.length,
+    defaultPrAccount: options.defaultPrAccount,
+    accounts
+  };
+}
+
+function collectKnownGitHubAccountSlackUserIds(options: {
+  readonly bindings: readonly GitHubPrBindingRecord[];
+  readonly sessions: readonly SlackSessionRecord[];
+  readonly inbound?: readonly PersistedInboundMessage[] | undefined;
+}): Set<string> {
+  const ids = new Set<string>();
+  for (const binding of options.bindings) ids.add(binding.slackUserId);
+  for (const session of options.sessions) {
+    const initiatorUserId = normalizeNonEmptyString(session.initiatorUserId);
+    if (initiatorUserId) ids.add(initiatorUserId);
+  }
+  for (const message of options.inbound ?? []) {
+    if (isUserInboundMessage(message) && !isSyntheticSlackUserId(message.userId)) {
+      ids.add(message.userId);
+    }
+  }
+  return ids;
+}
+
+function collectSlackIdentities(
+  sessions: readonly SlackSessionRecord[],
+  inbound: readonly PersistedInboundMessage[]
+): Map<string, SlackUserIdentity> {
+  const identities = new Map<string, SlackUserIdentity>();
+  for (const message of inbound) {
+    for (const user of message.mentionedUsers ?? []) {
+      if (user.userId) identities.set(user.userId, user);
+    }
+    const userId = normalizeNonEmptyString(message.userId);
+    if (userId && !userId.startsWith("username:")) {
+      identities.set(userId, {
+        ...fallbackSlackIdentity(userId),
+        ...(normalizeNonEmptyString(message.senderUsername) ? { username: normalizeNonEmptyString(message.senderUsername) } : {}),
+        ...slackIdentityFromMessagePayload(userId, message.slackMessage)
+      });
+    }
+  }
+  for (const session of sessions) {
+    const initiatorUserId = normalizeNonEmptyString(session.initiatorUserId);
+    if (initiatorUserId && !identities.has(initiatorUserId)) {
+      identities.set(initiatorUserId, fallbackSlackIdentity(initiatorUserId));
+    }
+  }
+  return identities;
+}
+
+function slackIdentityFromMessagePayload(userId: string, payload: JsonLike | undefined): Partial<SlackUserIdentity> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+  const profile = "user_profile" in payload && payload.user_profile && typeof payload.user_profile === "object" && !Array.isArray(payload.user_profile)
+    ? payload.user_profile as Record<string, unknown>
+    : undefined;
+  return {
+    userId,
+    mention: `<@${userId}>`,
+    ...(normalizeNonEmptyString(profile?.display_name) ? { displayName: normalizeNonEmptyString(profile?.display_name) } : {}),
+    ...(normalizeNonEmptyString(profile?.real_name) ? { realName: normalizeNonEmptyString(profile?.real_name) } : {}),
+    ...(normalizeNonEmptyString(profile?.email) ? { email: normalizeNonEmptyString(profile?.email) } : {})
+  };
+}
+
+function inboundMessageSlackIdentity(message: PersistedInboundMessage): SlackUserIdentity {
+  return {
+    ...fallbackSlackIdentity(message.userId),
+    ...(normalizeNonEmptyString(message.senderUsername) ? { username: normalizeNonEmptyString(message.senderUsername) } : {}),
+    ...slackIdentityFromMessagePayload(message.userId, message.slackMessage)
+  };
+}
+
+function fallbackSlackIdentity(userId: string): SlackUserIdentity {
+  return {
+    userId,
+    mention: `<@${userId}>`
+  };
+}
+
+function isSyntheticSlackUserId(userId: string): boolean {
+  return userId.startsWith("username:");
+}
+
 function channelHumanLabelForSession(
   session: SlackSessionRecord,
   inbound: readonly PersistedInboundMessage[]
@@ -1875,4 +2138,8 @@ function readStringField(value: JsonLike | undefined, key: string): string | und
   }
   const candidate = value[key];
   return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

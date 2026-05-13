@@ -12,6 +12,8 @@ import {
   respondJson
 } from "./common.js";
 
+const LEGACY_COAUTHOR_MAPPING_ERROR = "Manual co-author mappings are no longer supported. Bind GitHub OAuth for Slack users instead.";
+
 export async function handleSlackRequest(
   method: string,
   url: URL,
@@ -595,6 +597,13 @@ async function handleConfigureCommitCoauthorsRequest(
     const coauthors = normalizeStringArray(body.coauthors);
     const userIds = normalizeStringArray(body.user_ids);
     const mappings = normalizeMappings(body.mappings);
+    if (mappings) {
+      respondJson(response, 400, {
+        ok: false,
+        error: LEGACY_COAUTHOR_MAPPING_ERROR
+      });
+      return;
+    }
     const ignoreMissing =
       Object.prototype.hasOwnProperty.call(body, "ignore_missing") ||
       Object.prototype.hasOwnProperty.call(body, "ignoreMissing")
@@ -673,29 +682,11 @@ function matchResetSessionPath(pathname: string): { readonly sessionKey: string 
   };
 }
 
-function normalizeMappings(value: unknown):
-  | Array<{
-      slackUserId?: string | undefined;
-      slackUser?: string | undefined;
-      githubAuthor: string;
-    }>
-  | undefined {
+function normalizeMappings(value: unknown): readonly unknown[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
 
-  return value
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-    .map((entry) => {
-      const githubAuthor = readString(entry.github_author ?? entry.githubAuthor);
-      if (!githubAuthor) {
-        throw new Error("Each co-author mapping requires github_author.");
-      }
-
-      return {
-        slackUserId: readString(entry.slack_user_id ?? entry.slackUserId),
-        slackUser: readString(entry.slack_user ?? entry.slackUser),
-        githubAuthor
-      };
-    });
+  const entries = value.filter((entry) => Boolean(entry));
+  return entries.length > 0 ? entries : undefined;
 }

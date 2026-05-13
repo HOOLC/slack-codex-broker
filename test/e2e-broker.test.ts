@@ -177,7 +177,8 @@ describe.sequential("slack-codex-broker e2e", () => {
       message.threadTs === "991.220" && message.text.includes("/admin/sessions/C123%3A991.220")
     );
     expect(postedLinks).toHaveLength(1);
-    expect(postedLinks[0]!.text).toBe("<https://admin.example.test/admin/sessions/C123%3A991.220|查看会话活动时间线>");
+    expect(postedLinks[0]!.text).toContain("<https://admin.example.test/admin/sessions/C123%3A991.220|查看会话活动时间线>");
+    expect(postedLinks[0]!.text).toContain("<https://admin.example.test/admin/sessions/C123%3A991.220/github/bind|绑定 GitHub>");
     expect(postedLinks[0]!.text).not.toContain("已开始处理");
     expect(postedLinks[0]!.text).not.toContain("Bot");
     const startupMessages = mockSlack.postedMessages.filter((message) => message.threadTs === "991.220");
@@ -260,6 +261,63 @@ describe.sequential("slack-codex-broker e2e", () => {
     await expect(readSessionRecord(tempRoot, "C123:992.220")).resolves.toMatchObject({
       initiatorUserId: "U_STARTER",
       initiatorMessageTs: "992.221"
+    });
+  }, 60_000);
+
+  it("asks the session starter to bind GitHub even when no default GitHub account is configured", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-broker-e2e-"));
+    cleanups.push(async () => {
+      await removeTempRoot(tempRoot);
+    });
+
+    const brokerPort = await getFreePort();
+    const mockSlack = new MockSlackServer("UBOT", {
+      botId: "BBOT",
+      appId: "AAPP"
+    });
+    const mockCodex = new MockCodexAppServer();
+    const slackPort = await mockSlack.start();
+    const codexUrl = await mockCodex.start();
+    cleanups.push(async () => {
+      await mockCodex.stop();
+      await mockSlack.stop();
+    });
+
+    const broker = await startBrokerProcess({
+      port: brokerPort,
+      slackPort,
+      codexUrl,
+      tempRoot,
+      extraEnv: {
+        ADMIN_BASE_URL: "https://admin.example.test"
+      }
+    });
+    cleanups.push(() => broker.stop());
+
+    await mockSlack.sendEvent("evt-session-github-no-default", {
+      type: "app_mention",
+      user: "U_STARTER",
+      channel: "C123",
+      thread_ts: "993.220",
+      ts: "993.221",
+      text: "<@UBOT> open a PR"
+    });
+
+    await waitFor(() => mockCodex.turnsStarted.length >= 1, "first turn start");
+    await waitFor(
+      () => mockSlack.postedMessages.some((message) =>
+        message.threadTs === "993.220" &&
+          message.text.includes("查看会话活动时间线") &&
+          message.text.includes("当前发起人还没有绑定 GitHub 账号") &&
+          message.text.includes("当前没有默认 GitHub PR 账号") &&
+          message.text.includes("https://admin.example.test/admin/sessions/C123%3A993.220/github/bind")
+      ),
+      "session permalink GitHub bind message without default"
+    );
+    await waitForSessionIdle(tempRoot, "C123:993.220");
+    await expect(readSessionRecord(tempRoot, "C123:993.220")).resolves.toMatchObject({
+      initiatorUserId: "U_STARTER",
+      initiatorMessageTs: "993.221"
     });
   }, 60_000);
 

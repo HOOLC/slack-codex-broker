@@ -106,6 +106,25 @@ export async function handleAdminRequest(
     return true;
   }
 
+  if (
+    method === "POST" &&
+    url.pathname.startsWith("/admin/api/github-accounts/") &&
+    url.pathname.endsWith("/oauth/device/start")
+  ) {
+    const slackUserId = decodeURIComponent(url.pathname.slice(
+      "/admin/api/github-accounts/".length,
+      -"/oauth/device/start".length
+    ));
+    if (!slackUserId || slackUserId.includes("/")) {
+      return false;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.startGitHubAccountDeviceAuthorization(slackUserId)
+    );
+    return true;
+  }
+
   if (method === "POST" && url.pathname.startsWith("/admin/api/sessions/") && url.pathname.endsWith("/auth-profile")) {
     const sessionKey = decodeURIComponent(url.pathname.slice(
       "/admin/api/sessions/".length,
@@ -276,6 +295,30 @@ export async function handleAdminRequest(
       options.adminService.upsertGitHubAuthorMapping({
         slackUserId,
         githubAuthor
+      })
+    );
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/admin/api/github-accounts/default-pr") {
+    const body = await readAdminBody(request, response);
+    if (!body) {
+      return true;
+    }
+
+    const slackUserId = readString(body.slack_user_id);
+    if (!slackUserId) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["slack_user_id"]
+      });
+      return true;
+    }
+
+    await runAdminOperation(response, () =>
+      options.adminService.setDefaultGitHubPrAccount({
+        slackUserId
       })
     );
     return true;

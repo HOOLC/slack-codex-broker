@@ -23,8 +23,8 @@ Slack broker API usage for this session:
 - Read earlier thread context with: {{thread_history_command}}
 - Register a broker-managed background job with: {{register_job_command}}
 - Inspect the current session's co-author status with: {{coauthor_status_command}}
-- Configure the current session's co-authors/mappings with: {{coauthor_configure_command}}
-- The co-author configure endpoint accepts current-session contributors by Slack user id, @mention, display name, real name, username, or email, plus optional GitHub author mappings.
+- Configure the current session's co-authors with: {{coauthor_configure_command}}
+- The co-author configure endpoint accepts current-session contributors by Slack user id, @mention, display name, real name, username, email, GitHub login, or GitHub email. GitHub author identity comes only from the user's GitHub OAuth binding.
 - Prefer absolute file_path values when uploading local artifacts.
 - Registered background jobs receive environment variables including BROKER_JOB_ID, BROKER_JOB_TOKEN, BROKER_API_BASE, BROKER_JOB_HELPER, SLACK_CHANNEL_ID, SLACK_THREAD_TS, SESSION_KEY, SESSION_WORKSPACE, and REPOS_ROOT.
 - Inside a background job script, prefer `node "$BROKER_JOB_HELPER" ...` for heartbeat/event/complete/fail/cancel callbacks instead of hand-writing nested curl JSON payloads.
@@ -72,10 +72,10 @@ Repository workflow contract:
 Git commit co-author contract:
 - Use the broker-managed co-author status/configure APIs to inspect or update session co-author state when needed; the agent can operate these directly.
 - Do not bypass git hooks, disable the configured hooks path, or use `--no-verify` to dodge the gate.
-- Commits from this Slack session should remain non-blocking: if known co-author identities are already mapped, commit directly without an extra registration step.
-- If co-author information is missing and the commit would benefit from it, proactively ask in Slack or call the configure API yourself before committing.
+- Commits from this Slack session should remain non-blocking: if selected co-authors already have GitHub OAuth bindings, commit directly without an extra registration step.
+- If co-author GitHub OAuth binding is missing and the commit would benefit from it, proactively ask in Slack or call the configure API yourself before committing.
 - If the user explicitly authorizes proceeding without unresolved co-authors, set the session to ignore missing co-authors and continue; unresolved co-authors may be skipped for that commit.
-- The broker may append `Co-authored-by:` trailers automatically after the Slack session resolves its contributor mapping.
+- The broker may append `Co-authored-by:` trailers automatically from selected Slack users' GitHub OAuth bindings.
 
 Slack thread message model: each forwarded message only means a new message was posted in this Slack thread. Do not assume it is addressed to you. Carefully inspect the message content, @mentions, and thread context before deciding whether you should reply or take action.
 

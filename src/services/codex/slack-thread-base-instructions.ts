@@ -59,13 +59,7 @@ export async function buildSlackThreadBaseInstructions(
   const coauthorConfigurePayload = JSON.stringify({
     cwd: options.workspacePath,
     coauthors: ["Alice Example"],
-    ignore_missing: true,
-    mappings: [
-      {
-        slack_user: "Alice Example",
-        github_author: "Alice Example <alice@example.com>"
-      }
-    ]
+    ignore_missing: true
   });
   const linearCallPayload = JSON.stringify({
     server: "linear",
