@@ -103,10 +103,13 @@ deprecated for this admin surface. They must not create GitHub account rows,
 appear as "history" metadata, or provide editable email/account information here.
 
 The session page bind action and the admin row bind action both start a GitHub
-CLI login automatically. A `/github/bind` session deep link should auto-start
-the same flow. The broker must use an isolated `GH_CONFIG_DIR` for each pending
-bind so the login does not read or overwrite the machine's global GitHub CLI
-account.
+CLI login automatically. A `/github/bind` session deep link renders a dedicated
+binding page instead of the full session inspector. That page only handles the
+GitHub binding flow: show the session starter binding status, start device-code
+OAuth, show the verification URL and user code, poll completion, and provide a
+link back to the session page. The broker must use an isolated `GH_CONFIG_DIR`
+for each pending bind so the login does not read or overwrite the machine's
+global GitHub CLI account.
 
 ## Session Link Behavior
 
@@ -144,8 +147,11 @@ Session 页面：https://...
 
 ## Binding Flow
 
-The session page exposes a GitHub identity panel. For an unbound starter it shows
-the starter, the default GitHub account, and a bind action.
+The session detail page may expose a compact GitHub identity action for admins,
+but the user-facing bind link must land on the dedicated bind page. For an
+unbound starter it shows the starter, the default GitHub account, and the binding
+flow without the session timeline, auth profile switcher, reset button, token
+statistics, jobs, or debug panels.
 
 Binding uses GitHub CLI:
 
@@ -162,7 +168,7 @@ Binding uses GitHub CLI:
 9. Persist the token, login, user id, scopes, and email under the Slack starter
    user id.
 10. Delete the temporary `GH_CONFIG_DIR`.
-11. Refresh the session page state.
+11. Refresh the binding page state and show the bound GitHub login.
 
 The broker must never run this flow against the global `gh` config, because
 binding one Slack user must not mutate the server's operator account.
@@ -213,6 +219,8 @@ When a Slack participant is selected as a co-author:
 - A later thread reply from `U_B` does not change the initiator.
 - The session link message includes an unbound GitHub warning and bind link when
   `U_A` has no binding.
+- The bind link opens a dedicated GitHub binding page, not the full session
+  timeline/detail view.
 - The session link message still includes the unbound GitHub warning and bind
   link when no default GitHub account is configured.
 - The session link message does not include the warning when `U_A` is bound.

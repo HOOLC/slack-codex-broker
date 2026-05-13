@@ -295,6 +295,12 @@ describe("admin routes", () => {
     const page = await fetch(`${baseUrl}/admin/sessions/${encodeURIComponent(sessionKey)}/github/bind`);
     expect(page.status).toBe(200);
     await expect(page.text()).resolves.toContain('id="admin-root"');
+    const sessionViewSource = await fs.readFile(new URL("../src/admin-ui/session-view.tsx", import.meta.url), "utf8");
+    expect(sessionViewSource).toContain("function GitHubBindPage");
+    expect(sessionViewSource).toContain("github-bind-page");
+    expect(sessionViewSource).toContain("github-bind-card");
+    expect(sessionViewSource).toContain("GitHubBindingFlow");
+    expect(sessionViewSource).not.toContain('const shouldAutoStart = typeof window !== "undefined" && window.location.pathname.endsWith("/github/bind")');
 
     const identity = await fetch(`${baseUrl}/admin/api/sessions/${encodeURIComponent(sessionKey)}/github-identity`);
     expect(identity.status).toBe(200);

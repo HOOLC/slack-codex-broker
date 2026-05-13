@@ -56,8 +56,13 @@ describe("admin React UI architecture", () => {
 
   it("binds GitHub OAuth from existing Slack account rows instead of adding Slack ids", async () => {
     const shell = await readAdminShellSource();
+    const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
     expect(shell).toContain("startGitHubAccountDeviceAuthorization");
     expect(shell).toContain("githubAccountDeviceStartApiPath");
+    expect(sessionView).toContain("GitHubBindPage");
+    expect(sessionView).toContain("readGitHubBindSessionKey");
+    expect(sessionView).toContain("github-bind-page");
+    expect(sessionView.indexOf("readGitHubBindSessionKey")).toBeLessThan(sessionView.indexOf("readPermalinkSessionKey"));
     expect(shell).toContain("绑定 GitHub");
     expect(shell).toContain("重新绑定 GitHub");
     expect(shell).toContain("默认 PR 账号");

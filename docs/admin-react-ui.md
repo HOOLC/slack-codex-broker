@@ -114,8 +114,10 @@ After the React migration, GitHub account work continues in React:
 - Business UI files do not use `getElementById`, `querySelector`, or
   `innerHTML` for rendering or event binding.
 - `/admin` still serves one app shell and the production Vite assets.
-- `/admin/sessions/:key` and `/admin/sessions/:key/github/bind` still deep link
-  into the session React view.
+- `/admin/sessions/:key` still deep links into the session React view.
+- `/admin/sessions/:key/github/bind` renders a dedicated GitHub binding page
+  that only handles OAuth binding and does not render the session timeline or
+  operation side panels.
 - Session list/detail behavior remains unchanged.
 - Operations page behavior remains unchanged.
 - A slow or stuck runtime status probe returns a bounded error object instead of

@@ -43,6 +43,11 @@ const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues",
 const AUTO_AUTH_PROFILE_VALUE = "__auto_auth_profile__";
 
 export function AdminSessionsView(): React.JSX.Element {
+  const githubBindSessionKey = readGitHubBindSessionKey();
+  if (githubBindSessionKey) {
+    return <GitHubBindPage sessionKey={githubBindSessionKey} />;
+  }
+
   const permalinkSessionKey = readPermalinkSessionKey();
   if (permalinkSessionKey) {
     return <SessionPermalinkView sessionKey={permalinkSessionKey} />;
@@ -157,6 +162,25 @@ export function AdminSessionsView(): React.JSX.Element {
             <div className="empty-state">没有可检查的 session</div>
           )}
         </div>
+      </section>
+    </div>
+  );
+}
+
+function GitHubBindPage({ sessionKey }: { readonly sessionKey: string }): React.JSX.Element {
+  return (
+    <div className="github-bind-page">
+      <section className="github-bind-card">
+        <div className="github-bind-head">
+          <div className="github-bind-copy">
+            <div className="panel-title">绑定 GitHub 账号</div>
+            <div className="summary-detail">
+              这个页面只负责把当前 Slack 发起人绑定到 GitHub。绑定完成后，后续 PR 会使用这个 GitHub 账号。
+            </div>
+          </div>
+          <a className="link-button" href={adminSessionPath(sessionKey)}>返回 Session</a>
+        </div>
+        <GitHubBindingFlow sessionKey={sessionKey} variant="page" autoStart />
       </section>
     </div>
   );
@@ -383,14 +407,22 @@ function GitHubIdentityPanel({ session }: {
   readonly session: SessionRecord;
 }): React.JSX.Element {
   const sessionKey = String(session.key || "");
+  return <GitHubBindingFlow sessionKey={sessionKey} variant="panel" />;
+}
+
+function GitHubBindingFlow({ sessionKey, variant = "panel", autoStart = false }: {
+  readonly sessionKey: string;
+  readonly variant?: "panel" | "page";
+  readonly autoStart?: boolean;
+}): React.JSX.Element {
   const [identity, setIdentity] = useState<Record<string, any> | null>(null);
   const [device, setDevice] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const autoStartRef = useRef(false);
-  const shouldAutoStart = typeof window !== "undefined" && window.location.pathname.endsWith("/github/bind");
   const binding = identity?.binding || {};
   const defaultAccount = identity?.defaultAccount || {};
+  const needsBinding = binding.state === "unbound" || binding.state === "revoked";
 
   async function refreshIdentity(): Promise<Record<string, any> | null> {
     if (!sessionKey) {
@@ -437,12 +469,12 @@ function GitHubIdentityPanel({ session }: {
   }, [sessionKey]);
 
   useEffect(() => {
-    if (!shouldAutoStart || autoStartRef.current || !identity || binding.state !== "unbound") {
+    if (!autoStart || autoStartRef.current || !identity || !needsBinding) {
       return;
     }
     autoStartRef.current = true;
     void startDeviceAuthorization();
-  }, [shouldAutoStart, identity, binding.state]);
+  }, [autoStart, identity, needsBinding]);
 
   useEffect(() => {
     if (!device?.id) {
@@ -486,12 +518,22 @@ function GitHubIdentityPanel({ session }: {
     };
   }, [device?.id]);
 
+  const actionLabel = device ? "重新生成设备码" : (variant === "page" ? "开始绑定 GitHub" : "绑定发起人的 GitHub");
+  const busyLabel = variant === "page" ? "正在发起绑定" : "正在发起绑定";
+  const visibleMessage = message && !device ? message : null;
+
   return (
-    <div className="github-identity-panel">
+    <div className={"github-identity-panel github-binding-flow " + variant}>
+      {variant === "page" ? <GitHubBindingIntro identity={identity} /> : null}
       {identity ? (
         <div className="meta-list">
           {binding.state === "bound" ? (
-            <MetaLine label="PR 账号" value={String(binding.githubLogin || "--")} tone="good" />
+            <MetaLine
+              label="PR 账号"
+              value={String(binding.githubLogin || "--")}
+              detail={binding.githubEmail || binding.githubName ? [binding.githubEmail, binding.githubName].filter(Boolean).join(" · ") : undefined}
+              tone="good"
+            />
           ) : binding.state === "revoked" ? (
             <MetaLine label="PR 账号" value="绑定失效" detail={String(binding.githubLogin || "")} tone="danger" />
           ) : binding.state === "unbound" && defaultAccount.available ? (
@@ -505,28 +547,53 @@ function GitHubIdentityPanel({ session }: {
       ) : (
         <div className="summary-detail">GitHub 绑定状态加载中</div>
       )}
-      {binding.state === "unbound" || binding.state === "revoked" ? (
+      {needsBinding ? (
         <button
           type="button"
           className="link-button github-bind-button"
           disabled={busy || !sessionKey}
           onClick={() => { void startDeviceAuthorization(); }}
         >
-          {busy ? "正在发起绑定" : "绑定发起人的 GitHub"}
+          {busy ? busyLabel : actionLabel}
         </button>
       ) : null}
       {device ? (
         <div className="device-code-panel">
           <div className="device-code-label">GitHub 设备码</div>
           <div className="code-block">{String(device.userCode || "")}</div>
+          <div className="summary-detail">在 GitHub 打开验证页，输入这组代码后本页会自动更新绑定状态。</div>
           <a className="link-button" href={String(device.verificationUriComplete || device.verificationUri || "https://github.com/login/device")} target="_blank" rel="noreferrer">
             打开 GitHub 验证页
           </a>
         </div>
       ) : null}
-      {message ? <div className="summary-detail">{message}</div> : null}
+      {visibleMessage ? <div className="summary-detail">{visibleMessage}</div> : null}
     </div>
   );
+}
+
+function GitHubBindingIntro({ identity }: {
+  readonly identity: Record<string, any> | null;
+}): React.JSX.Element {
+  const binding = identity?.binding || {};
+  const defaultAccount = identity?.defaultAccount || {};
+  if (!identity) {
+    return <div className="github-binding-status">正在读取当前绑定状态。</div>;
+  }
+  if (binding.state === "bound") {
+    return <div className="github-binding-status good">已经绑定 GitHub，后续 PR 会使用这个账号。</div>;
+  }
+  if (binding.state === "revoked") {
+    return <div className="github-binding-status danger">已有绑定不可用，需要重新完成 GitHub 绑定。</div>;
+  }
+  if (defaultAccount.available) {
+    return (
+      <div className="github-binding-status warn">
+        当前发起人未绑定。未绑定时会暂时使用默认账号 {String(defaultAccount.githubLogin || "--")} 创建 PR。
+      </div>
+    );
+  }
+  return <div className="github-binding-status danger">当前发起人未绑定，且没有可用默认 GitHub PR 账号。</div>;
 }
 
 function SessionResetButton({ session }: {
@@ -1201,7 +1268,18 @@ function adminSessionPath(sessionKey: string): string {
   return "/admin/sessions/" + encodeURIComponent(sessionKey);
 }
 
+function readGitHubBindSessionKey(): string | null {
+  const match = window.location.pathname.match(/^\/admin\/sessions\/([^/]+)\/github\/bind\/?$/);
+  if (!match?.[1]) {
+    return null;
+  }
+  return decodePathSegment(match[1]);
+}
+
 function readPermalinkSessionKey(): string | null {
+  if (readGitHubBindSessionKey()) {
+    return null;
+  }
   const prefix = "/admin/sessions/";
   if (!window.location.pathname.startsWith(prefix)) {
     return null;
@@ -1210,6 +1288,10 @@ function readPermalinkSessionKey(): string | null {
   if (!encoded) {
     return null;
   }
+  return decodePathSegment(encoded);
+}
+
+function decodePathSegment(encoded: string): string {
   try {
     return decodeURIComponent(encoded);
   } catch {

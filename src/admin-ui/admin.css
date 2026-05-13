@@ -67,6 +67,11 @@
     .session-master-detail > * { background: var(--panel); }
     .session-permalink-layout { height: 100%; min-height: 0; display: flex; }
     .session-permalink-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); overflow: hidden; }
+    .github-bind-page { height: 100%; min-height: 0; display: grid; place-items: center; padding: 16px; overflow: auto; }
+    .github-bind-card { width: min(720px, 100%); display: grid; gap: 0; border: 1px solid var(--line); background: var(--panel); }
+    .github-bind-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px; border-bottom: 1px solid var(--line); }
+    .github-bind-copy { min-width: 0; display: grid; gap: 4px; }
+    .github-bind-head .link-button { justify-content: center; }
     .session-list { flex: 1; min-height: 0; overflow: auto; }
     .session-row-button { position: relative; display: block; width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
     .session-row-button::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: transparent; }
@@ -131,6 +136,12 @@
     .meta-line.danger strong { color: var(--red); }
     .auth-profile-panel { display: grid; gap: 6px; min-width: 0; }
     .github-identity-panel { display: grid; gap: 5px; min-width: 0; }
+    .github-binding-flow.page { padding: 12px; gap: 10px; }
+    .github-binding-flow.page .meta-line { grid-template-columns: 86px minmax(0, 1fr); }
+    .github-binding-status { padding: 8px 10px; border: 1px solid var(--line); background: #05080c; color: var(--muted); font-size: 11px; }
+    .github-binding-status.good { border-color: rgba(46,204,113,0.45); color: var(--green); }
+    .github-binding-status.warn { border-color: rgba(245,166,35,0.45); color: var(--amber); }
+    .github-binding-status.danger { border-color: rgba(255,107,107,0.45); color: var(--red); }
     .github-bind-button { justify-content: center; width: 100%; min-width: 0; }
     .github-identity-panel .device-code-panel { padding: 6px; }
     .github-identity-panel .device-code-panel .link-button { justify-content: center; }
@@ -295,6 +306,9 @@
       .trace-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .quota-grid { grid-template-columns: minmax(0, 1fr); }
       .timeline-event { grid-template-columns: 54px 78px minmax(0, 1fr); gap: 4px; padding: 6px 4px; }
+      .github-bind-page { padding: 8px; place-items: start stretch; }
+      .github-bind-head { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px; }
+      .github-binding-flow.page { padding: 10px; }
       .timeline-title { display: block; }
       .timeline-title strong,
       .timeline-title span {
