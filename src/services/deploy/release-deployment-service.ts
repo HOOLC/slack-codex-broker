@@ -7,6 +7,7 @@ import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const RELEASE_METADATA_FILENAME = ".broker-release.json";
 const RELEASE_STATE_SCHEMA_VERSION = 1;
+export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 90_000;
 
 export interface ReleaseMetadata {
   readonly revision: string | null;
@@ -384,7 +385,7 @@ export class ReleaseDeploymentService {
   }
 
   async #assertWorkerHealthy(): Promise<void> {
-    const timeoutMs = this.options.healthCheckTimeoutMs ?? 20_000;
+    const timeoutMs = this.options.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
     const intervalMs = this.options.healthCheckIntervalMs ?? 500;
     const deadline = Date.now() + timeoutMs;
     let lastStatus = await this.#readWorkerHealth();
@@ -438,7 +439,7 @@ export class ReleaseDeploymentService {
       return;
     }
 
-    const timeoutMs = this.options.healthCheckTimeoutMs ?? 20_000;
+    const timeoutMs = this.options.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
     const intervalMs = this.options.healthCheckIntervalMs ?? 500;
     const deadline = Date.now() + timeoutMs;
     let lastStatus = await this.#readAdminHealth();

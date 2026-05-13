@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ReleaseDeploymentService } from "../src/services/deploy/release-deployment-service.js";
+import {
+  DEFAULT_HEALTH_CHECK_TIMEOUT_MS,
+  ReleaseDeploymentService
+} from "../src/services/deploy/release-deployment-service.js";
 
 describe("ReleaseDeploymentService", () => {
   const tempDirs: string[] = [];
@@ -19,6 +22,10 @@ describe("ReleaseDeploymentService", () => {
         })
       )
     );
+  });
+
+  it("uses a deploy health window large enough for slow Slack startup recovery", () => {
+    expect(DEFAULT_HEALTH_CHECK_TIMEOUT_MS).toBeGreaterThanOrEqual(90_000);
   });
 
   it("deploys git-backed releases and rolls back to the previous release", async () => {

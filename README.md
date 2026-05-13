@@ -223,7 +223,7 @@ The admin service fetches from the VM's local Git clone and deploys a selected r
   - build there
   - switch `current` to the new release
   - restart the worker launchd service
-  - run worker health + Codex-ready checks
+  - run worker health + Codex-ready checks with a 90s startup window, because worker startup can spend tens of seconds reconciling Slack thread state before `/readyz` answers
   - schedule the admin launchd service restart from the same `current` release
   - auto-rollback on failed cutover
 - rollback:
