@@ -117,7 +117,10 @@ describe("AdminService", () => {
           inboundCalls.push(options);
           return [];
         },
-        listBackgroundJobs: () => []
+        listBackgroundJobs: () => [],
+        listAgentTurnUsage: () => {
+          throw new Error("overview must not aggregate usage");
+        }
       } as never,
       authProfiles: {
         listProfilesStatus: async () => ({
@@ -143,6 +146,7 @@ describe("AdminService", () => {
     });
 
     const overview = await service.getOverview();
+    expect(overview).not.toHaveProperty("usage");
     expect(overview).toMatchObject({
       state: {
         sessionCount: 1,

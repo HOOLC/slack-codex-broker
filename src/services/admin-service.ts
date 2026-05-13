@@ -219,7 +219,6 @@ export class AdminService {
 
   async getOverview(): Promise<Record<string, unknown>> {
     const runtime = await this.#readRuntimeStatus();
-    const usage = this.#readUsageOverview();
     return {
       ok: true,
       service: this.#serviceInfo(),
@@ -231,7 +230,6 @@ export class AdminService {
       rateLimits: runtime.rateLimits,
       deployment: runtime.deployment,
       realtime: this.#realtimeInfo(),
-      usage,
       operations: this.#listAdminOperations(10),
       auditEvents: this.#listAdminAuditEvents({ limit: 10 }),
       state: this.#summarizeCachedStateCounts()

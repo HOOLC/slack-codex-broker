@@ -56,6 +56,8 @@ Status data flows through a React hook backed by `admin-status-store`:
 - `/admin/api/overview` must not scan the full inbound-message history; Slack
   account rows are composed in React from the already loaded session summaries
   plus OAuth bindings;
+- token usage aggregation stays behind the dedicated usage/session resources
+  instead of running during overview bootstrap;
 - recent logs load from `/admin/api/logs` after the first shell state is
   published, so logs cannot block the session index;
 - successful mutating operations publish the returned `status`;
