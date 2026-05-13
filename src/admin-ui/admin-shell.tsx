@@ -803,7 +803,6 @@ function RiskPanel({ state }: {
   const active = Number(state.activeCount || 0);
   const open = Number(state.openInboundCount || 0);
   const running = Number(state.runningBackgroundJobCount || 0);
-  const failed = Number(state.failedBackgroundJobCount || 0);
   const safe = active + open + running === 0;
   return (
     <>
@@ -811,7 +810,6 @@ function RiskPanel({ state }: {
         <RiskCell label="活跃" value={active} />
         <RiskCell label="待处理" value={open} />
         <RiskCell label="运行" value={running} />
-        {failed ? <RiskCell label="失败" value={failed} danger /> : null}
       </div>
       <div className="risk-copy">
         {safe ? "当前没有活跃工作，发布和回滚不需要额外确认。" : "发布和回滚会中断正在进行的管理工作，执行前必须显式确认。"}

@@ -198,6 +198,14 @@ export async function handleAdminRequest(
     return true;
   }
 
+  const sessionJobCancel = matchSessionJobCancelPath(url.pathname);
+  if (method === "POST" && sessionJobCancel) {
+    await runAdminOperation(response, () =>
+      options.adminService.cancelSessionJob(sessionJobCancel)
+    );
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/admin/api/preflight") {
     respondJson(response, 200, await options.adminService.getOperationPreflight({
       operation: readString(url.searchParams.get("operation")) ?? "unknown"
@@ -414,6 +422,33 @@ export async function handleAdminRequest(
   }
 
   return false;
+}
+
+function matchSessionJobCancelPath(pathname: string): {
+  readonly sessionKey: string;
+  readonly jobId: string;
+} | null {
+  const prefix = "/admin/api/sessions/";
+  const suffix = "/cancel";
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) {
+    return null;
+  }
+  const middle = pathname.slice(prefix.length, -suffix.length);
+  const marker = "/jobs/";
+  const markerIndex = middle.indexOf(marker);
+  if (markerIndex <= 0) {
+    return null;
+  }
+  const encodedSessionKey = middle.slice(0, markerIndex);
+  const encodedJobId = middle.slice(markerIndex + marker.length);
+  if (!encodedSessionKey || !encodedJobId || encodedSessionKey.includes("/") || encodedJobId.includes("/")) {
+    return null;
+  }
+
+  return {
+    sessionKey: decodeURIComponent(encodedSessionKey),
+    jobId: decodeURIComponent(encodedJobId)
+  };
 }
 
 async function serveAdminSpaIndex(response: http.ServerResponse, config: AppConfig): Promise<boolean> {

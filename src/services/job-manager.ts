@@ -243,9 +243,13 @@ export class JobManager {
     options?: {
       readonly skipTokenCheck?: boolean | undefined;
       readonly skipEvent?: boolean | undefined;
+      readonly expectedSessionKey?: string | undefined;
     }
   ): Promise<PersistedBackgroundJob> {
     const job = options?.skipTokenCheck ? this.#requireJob(id) : this.#authorizeJob(id, token);
+    if (options?.expectedSessionKey && job.sessionKey !== options.expectedSessionKey) {
+      throw new Error("job_session_mismatch");
+    }
     const now = new Date().toISOString();
     const updated = await this.#persistJob({
       ...job,
@@ -265,6 +269,26 @@ export class JobManager {
 
     await this.#stopRuntimeJob(updated.id);
     return updated;
+  }
+
+  async cancelJobFromAdmin(
+    id: string,
+    options: {
+      readonly sessionKey: string;
+    }
+  ): Promise<PersistedBackgroundJob> {
+    const job = this.#requireJob(id);
+    if (job.sessionKey !== options.sessionKey) {
+      throw new Error("job_session_mismatch");
+    }
+    if (!isCancellableJobStatus(job.status)) {
+      throw new Error(`job_not_cancellable:${job.status}`);
+    }
+    return await this.cancelJob(id, undefined, {
+      skipTokenCheck: true,
+      skipEvent: true,
+      expectedSessionKey: options.sessionKey
+    });
   }
 
   async #startExistingJob(job: PersistedBackgroundJob): Promise<void> {
@@ -516,6 +540,10 @@ function resolveJobCwd(workspacePath: string, cwd?: string | undefined): string 
   return path.isAbsolute(trimmed)
     ? path.resolve(trimmed)
     : path.resolve(workspacePath, trimmed);
+}
+
+function isCancellableJobStatus(status: PersistedBackgroundJob["status"]): boolean {
+  return status === "registered" || status === "running";
 }
 
 async function waitForChildExit(

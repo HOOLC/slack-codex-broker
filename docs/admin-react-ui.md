@@ -85,11 +85,17 @@ Status data flows through a React hook backed by `admin-status-store`:
   present, and completed-turn rows that merely duplicate the assistant message.
   If two runtime sources report the same turn completion, the trace recorder must
   coalesce them into one record and keep the richer final detail;
-- session list and detail status badges must explain abnormal states. A session
-  with failed background jobs must say `任务失败`, not generic `异常`, and expose
-  the latest failed job kind/error/time in the badge title and detail panel. The
-  API must include failed job samples even if the failed job is not one of the
-  latest generic background job rows;
+- session list and detail status badges must reserve high-priority warnings for
+  actionable session states: account unavailable, pending human input, active
+  turn, and running background jobs. Failed background jobs are historical task
+  outcomes, not a session-level problem state; they stay visible in the jobs
+  table/debug data but must not turn the whole session red, enter the `有问题`
+  filter, or create a separate top-level `失败` pill;
+- session detail exposes a cancel action for registered/running background jobs.
+  The browser must call an admin API only; job tokens stay server-side. The admin
+  process validates session/job ownership and delegates cancellation to the
+  worker `JobManager`. Cancelling from admin stops the runtime process and marks
+  the job `cancelled` without waking the agent with a synthetic job event;
 - components read status with `useSyncExternalStore`.
 
 No business UI may use `getElementById`, `querySelector`, or `innerHTML` for
@@ -161,7 +167,9 @@ After the React migration, GitHub account work continues in React:
   `agent_token_count`, completed inbound-message queue rows, completed jobs,
   completed tool-call start rows that have matching results, or final-only turn
   signals. Realtime `trace.append` applies the same visibility rules.
-- Session summaries include `failedBackgroundJobs` for failed-job sessions, and
-  the React session state display uses that data to explain why the session is
-  marked as problematic.
+- Session summaries may include `failedBackgroundJobs`, but the React session
+  state display treats failed jobs as low-priority task history rather than a
+  problematic session state.
+- Registered/running jobs in the session detail can be cancelled. Completed,
+  failed, and already-cancelled jobs do not show a cancel action.
 - `pnpm test` and `pnpm build` pass.

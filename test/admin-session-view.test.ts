@@ -368,9 +368,10 @@ describe("admin session row display", () => {
     expect(shouldShowSessionState({ rank: 50 })).toBe(true);
   });
 
-  it("explains failed session state with the failed job reason", () => {
-    const state = sessionQueueState({
+  it("does not promote failed jobs to the session problem state", () => {
+    const session = {
       failedBackgroundJobCount: 2,
+      backgroundJobCount: 2,
       backgroundJobs: [
         {
           id: "completed-job",
@@ -387,15 +388,21 @@ describe("admin session row display", () => {
           updatedAt: "2026-05-13T05:47:45.765Z"
         }
       ]
-    });
+    };
+    const state = sessionQueueState(session);
+    const meta = renderSessionMeta(session, new Map());
 
     expect(state).toMatchObject({
-      label: "任务失败",
-      tone: "danger",
-      rank: 60,
-      detail: "watch_ci：PR #349 failed: CI Check failed"
+      label: "空闲",
+      tone: "",
+      rank: 0
     });
-    expect(state.detail).not.toBe("2 个失败任务");
+    expect(shouldShowSessionState(state)).toBe(false);
+    expect(meta.map((item) => item.label)).toContain("Jobs 2");
+    expect(meta.map((item) => item.label)).not.toContain("失败 2");
+    expect(meta.find((item) => item.key === "jobs")).toMatchObject({
+      tone: ""
+    });
   });
 
   it("does not show account-switch state when the bound profile quota has recovered", () => {

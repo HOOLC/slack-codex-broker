@@ -25,6 +25,12 @@ export async function handleJobRequest(
     return true;
   }
 
+  const matchedAdminCancel = matchJobAdminCancel(url.pathname);
+  if (method === "POST" && matchedAdminCancel) {
+    await handleJobAdminCancelRequest(request, response, options, matchedAdminCancel);
+    return true;
+  }
+
   const matchedJobAction = matchJobAction(url.pathname);
   if (method === "POST" && matchedJobAction) {
     await handleJobActionRequest(request, response, options, matchedJobAction);
@@ -105,6 +111,62 @@ async function handleJobRegisterRequest(
     respondJson(response, 500, {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleJobAdminCancelRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  options: {
+    readonly jobManager: JobManager;
+  },
+  action: {
+    readonly jobId: string;
+  }
+): Promise<void> {
+  let body: Record<string, unknown>;
+
+  try {
+    body = await readJsonBody(request);
+  } catch (error) {
+    respondJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return;
+  }
+  logger.raw("http-requests", {
+    method: "POST",
+    path: `/jobs/${action.jobId}/admin-cancel`,
+    body
+  }, {
+    jobId: action.jobId
+  });
+
+  const sessionKey = readString(body.session_key);
+  if (!sessionKey) {
+    respondJson(response, 400, {
+      ok: false,
+      error: "missing_required_body",
+      required: ["session_key"]
+    });
+    return;
+  }
+
+  try {
+    const job = await options.jobManager.cancelJobFromAdmin(action.jobId, {
+      sessionKey
+    });
+    respondJson(response, 200, {
+      ok: true,
+      job
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    respondJson(response, message === "job_session_mismatch" ? 400 : 500, {
+      ok: false,
+      error: message
     });
   }
 }
@@ -205,6 +267,19 @@ async function handleJobActionRequest(
       error: message
     });
   }
+}
+
+function matchJobAdminCancel(pathname: string): {
+  readonly jobId: string;
+} | null {
+  const match = pathname.match(/^\/jobs\/([^/]+)\/admin-cancel$/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return {
+    jobId: decodeURIComponent(match[1])
+  };
 }
 
 function matchJobAction(pathname: string): {

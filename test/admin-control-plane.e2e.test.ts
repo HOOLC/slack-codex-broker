@@ -443,6 +443,115 @@ describe("admin control plane e2e", () => {
     ]);
   });
 
+  it("cancels a session background job through the admin control plane", async () => {
+    const workerRequests: Array<{ readonly url: string; readonly body: Record<string, unknown> }> = [];
+    let sessionsRef: SessionManager | undefined;
+    const worker = http.createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const bodyText = Buffer.concat(chunks).toString("utf8");
+        const body = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : {};
+        workerRequests.push({
+          url: request.url ?? "",
+          body
+        });
+
+        const current = sessionsRef?.getBackgroundJob("job-1");
+        const completedAt = "2026-03-19T00:00:05.000Z";
+        if (current) {
+          await sessionsRef?.upsertBackgroundJob({
+            ...current,
+            status: "cancelled",
+            cancelledAt: completedAt,
+            completedAt,
+            updatedAt: completedAt
+          });
+        }
+
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          ok: true,
+          job: sessionsRef?.getBackgroundJob("job-1") ?? {
+            id: "job-1",
+            sessionKey: "C123:111.222",
+            status: "cancelled"
+          }
+        }));
+      })().catch((error) => {
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      });
+    });
+    await new Promise<void>((resolve) => worker.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    });
+    const address = worker.address();
+    if (!address || typeof address === "string") {
+      throw new Error("failed to start worker fixture");
+    }
+
+    const { baseUrl, sessions } = await startAdminFixture({
+      workerBaseUrl: `http://127.0.0.1:${address.port}`
+    });
+    sessionsRef = sessions;
+    const session = await sessions.ensureSession("C123", "111.222");
+    await sessions.upsertBackgroundJob(backgroundJob({
+      sessionKey: session.key,
+      status: "running",
+      updatedAt: "2026-03-19T00:00:02.000Z",
+      startedAt: "2026-03-19T00:00:02.000Z"
+    }));
+
+    const result = await postJson(
+      `${baseUrl}/admin/api/sessions/${encodeURIComponent(session.key)}/jobs/job-1/cancel`,
+      {}
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      operation: {
+        kind: "session_job_cancel",
+        status: "succeeded",
+        request: {
+          sessionKey: session.key,
+          jobId: "job-1"
+        }
+      },
+      job: {
+        id: "job-1",
+        sessionKey: session.key,
+        status: "cancelled"
+      },
+      session: {
+        key: session.key,
+        runningBackgroundJobCount: 0,
+        backgroundJobs: [
+          expect.objectContaining({
+            id: "job-1",
+            status: "cancelled"
+          })
+        ]
+      }
+    });
+    expect(workerRequests).toEqual([
+      {
+        url: `/jobs/job-1/admin-cancel`,
+        body: {
+          session_key: session.key
+        }
+      }
+    ]);
+  });
+
   it("records deploy requests as durable admin operations with audit events", async () => {
     const { baseUrl, deploymentCalls } = await startAdminFixture();
 

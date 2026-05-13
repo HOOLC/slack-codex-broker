@@ -8,6 +8,7 @@ import {
   profileTitle
 } from "./auth-profile-display";
 import {
+  applyAdminRealtimeEvent,
   getAdminStatusSnapshot,
   getTimelineSnapshot,
   publishTimelinePayload,
@@ -22,7 +23,6 @@ import {
   sessionActivityAt,
   sessionActivityMs,
   sessionAuthBlockActive,
-  sessionFailedJobSummary,
   sessionQueueState,
   shouldShowSessionState
 } from "./session-row-display";
@@ -300,7 +300,6 @@ function SessionDetail({ session, isPermalink = false }: {
   const openSystemInbound = Number(session.openSystemInboundCount || 0);
   const runningJobs = Number(session.runningBackgroundJobCount || 0);
   const totalJobs = Number(session.backgroundJobCount || 0);
-  const failedJobs = Number(session.failedBackgroundJobCount || 0);
   const hasMessagesOrJobs = openInbound > 0 || totalJobs > 0;
   return (
     <>
@@ -342,7 +341,6 @@ function SessionDetail({ session, isPermalink = false }: {
               openSystemInbound={openSystemInbound}
               totalJobs={totalJobs}
               runningJobs={runningJobs}
-              failedJobs={failedJobs}
             />
             <div className="mini-panel">
               <div className="mini-title">Token 消耗</div>
@@ -355,7 +353,7 @@ function SessionDetail({ session, isPermalink = false }: {
                 <div className="mini-title">消息 / 任务</div>
                 <div className="mini-body">
                   <InboundTable items={session.openInbound || []} />
-                  <JobsTable jobs={session.backgroundJobs || []} />
+                  <JobsTable session={session} jobs={session.backgroundJobs || []} />
                 </div>
               </div>
             ) : null}
@@ -692,7 +690,7 @@ function SessionResetButton({ session }: {
   );
 }
 
-function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs, failedJobs }: {
+function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, openSystemInbound, totalJobs, runningJobs }: {
   readonly session: SessionRecord;
   readonly state: SessionQueueState;
   readonly openInbound: number;
@@ -700,9 +698,7 @@ function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, op
   readonly openSystemInbound: number;
   readonly totalJobs: number;
   readonly runningJobs: number;
-  readonly failedJobs: number;
 }): React.JSX.Element {
-  const failedJob = sessionFailedJobSummary(session);
   const rows = [
     session.activeTurnId ? {
       label: "回合",
@@ -727,12 +723,6 @@ function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, op
       value: String(runningJobs),
       detail: totalJobs + " 个任务",
       tone: "good"
-    } : null,
-    failedJobs > 0 ? {
-      label: "失败任务",
-      value: String(failedJobs),
-      detail: failedJob?.detail || totalJobs + " 个任务",
-      tone: "danger"
     } : null
   ].filter((row): row is { label: string; value: string; detail?: string; tone?: string } => Boolean(row));
   if (!rows.length) return <></>;
@@ -1179,20 +1169,80 @@ function InboundTable({ items }: { readonly items: readonly Record<string, any>[
   );
 }
 
-function JobsTable({ jobs }: { readonly jobs: readonly Record<string, any>[] }): React.JSX.Element {
+function JobsTable({ session, jobs }: {
+  readonly session: SessionRecord;
+  readonly jobs: readonly Record<string, any>[];
+}): React.JSX.Element {
+  const [busyJobId, setBusyJobId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const sessionKey = String(session.key || "");
+
+  async function cancelJob(job: Record<string, any>): Promise<void> {
+    const jobId = String(job.id || "");
+    if (!sessionKey || !jobId || !jobCancellable(job)) {
+      return;
+    }
+    const confirmed = window.confirm("确认取消这个后台任务？");
+    if (!confirmed) {
+      return;
+    }
+
+    setBusyJobId(jobId);
+    setMessage(null);
+    try {
+      const payload = await requestJson(sessionJobCancelApiPath(sessionKey, jobId)) as Record<string, any>;
+      if (payload.session && typeof payload.session === "object") {
+        applyAdminRealtimeEvent({
+          sequence: 0,
+          kind: "session.update",
+          scope: "session",
+          sessionKey,
+          session: payload.session,
+          createdAt: new Date().toISOString()
+        });
+      }
+      const timelinePayload = await requestJson(sessionTimelineApiPath(sessionKey));
+      publishTimelinePayload(sessionKey, timelinePayload as TimelinePayload);
+      setMessage("已取消 job");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyJobId(null);
+    }
+  }
+
   if (!jobs.length) return <div className="summary-detail">没有任务</div>;
   return (
-    <table className="table" style={{ marginTop: 10 }}>
-      <thead><tr><th>状态</th><th>类型</th></tr></thead>
-      <tbody>
-        {jobs.slice(0, 5).map((job, index) => (
-          <tr key={(job.id || job.kind || "") + ":" + index}>
-            <td><Badge label={job.status || "unknown"} tone={statusTone(job.status)} /></td>
-            <td>{job.kind || ""}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <table className="table" style={{ marginTop: 10 }}>
+        <thead><tr><th>状态</th><th>类型</th><th>操作</th></tr></thead>
+        <tbody>
+          {jobs.slice(0, 5).map((job, index) => {
+            const jobId = String(job.id || "");
+            const cancellable = jobCancellable(job);
+            return (
+              <tr key={(job.id || job.kind || "") + ":" + index}>
+                <td><Badge label={job.status || "unknown"} tone={statusTone(job.status)} /></td>
+                <td>{job.kind || ""}</td>
+                <td>
+                  {cancellable ? (
+                    <button
+                      type="button"
+                      className="danger"
+                      disabled={busyJobId === jobId || !sessionKey || !jobId}
+                      onClick={() => { void cancelJob(job); }}
+                    >
+                      {busyJobId === jobId ? "取消中" : "取消"}
+                    </button>
+                  ) : <span className="summary-detail">-</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {message ? <div className="summary-detail" style={{ marginTop: 8 }}>{message}</div> : null}
+    </>
   );
 }
 
@@ -1207,11 +1257,11 @@ function sessionMatchesFilter(
   authProfileByName?: ReadonlyMap<string, SessionRecord>
 ): boolean {
   const authProfile = session.authProfileName ? authProfileByName?.get(String(session.authProfileName)) : null;
-  if (mode === "ongoing" && !session.activeTurnId && !session.openInboundCount && !session.runningBackgroundJobCount && !session.failedBackgroundJobCount) return false;
+  if (mode === "ongoing" && !session.activeTurnId && !session.openInboundCount && !session.runningBackgroundJobCount) return false;
   if (mode === "active" && !session.activeTurnId) return false;
   if (mode === "inbound" && !session.openInboundCount) return false;
   if (mode === "jobs" && !session.runningBackgroundJobCount) return false;
-  if (mode === "issues" && !session.failedBackgroundJobCount && !sessionAuthBlockActive(session, authProfile)) return false;
+  if (mode === "issues" && !sessionAuthBlockActive(session, authProfile)) return false;
   if (mode === "usage" && !session.usage?.turnCount) return false;
   if (!query) return true;
   return [session.key, session.channelId, session.channelLabel, session.workspacePath, sessionPrimaryText(session), sessionFirstText(session)]
@@ -1236,8 +1286,6 @@ function messagePreview(message: Record<string, any> | undefined): string {
 }
 
 function summarizeSessionLead(session: SessionRecord): string {
-  const failedJob = sessionFailedJobSummary(session);
-  if (failedJob) return "失败任务：" + failedJob.detail;
   if (session.lastUserMessage) return messagePreview(session.lastUserMessage) || "用户消息";
   if (session.openInbound?.length) return session.openInbound[0].textPreview || "新消息";
   if (session.activeTurnId) {
@@ -1285,6 +1333,10 @@ async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
 
 function sessionTimelineApiPath(sessionKey: string): string {
   return "/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/timeline";
+}
+
+function sessionJobCancelApiPath(sessionKey: string, jobId: string): string {
+  return "/admin/api/sessions/" + encodeURIComponent(sessionKey) + "/jobs/" + encodeURIComponent(jobId) + "/cancel";
 }
 
 function slackThreadUrlApiPath(sessionKey: string): string {
@@ -1386,6 +1438,11 @@ function statusTone(status: unknown): string {
   if (value.startsWith("agent_")) return "info";
   if (["deploy", "rollback"].includes(value)) return "info";
   return "";
+}
+
+function jobCancellable(job: Record<string, any>): boolean {
+  const status = String(job.status || "").toLowerCase();
+  return status === "registered" || status === "running";
 }
 
 function sourceLabel(value: unknown): string {

@@ -55,7 +55,6 @@ export function renderSessionMeta(
     : "";
   const authProfile = session.authProfileName ? authProfileByName.get(String(session.authProfileName)) : null;
   const backgroundJobCount = Number(session.backgroundJobCount || 0);
-  const failedJob = sessionFailedJobSummary(session);
   const authBlockActive = sessionAuthBlockActive(session, authProfile);
   return [
     { key: "channel", label: resolveSessionChannelLabel(session, channelLabelById), tone: "info", title: stringOrUndefined(session.channelId || session.key) },
@@ -67,8 +66,7 @@ export function renderSessionMeta(
       title: authProfile ? profileTitle(authProfile) : String(session.authProfileName)
     } : null,
     pendingDetail ? { key: "pending", label: pendingDetail, tone: Number(session.openHumanInboundCount || 0) ? "warn" : "" } : null,
-    backgroundJobCount > 0 ? { key: "jobs", label: "Jobs " + backgroundJobCount, tone: Number(session.failedBackgroundJobCount || 0) ? "danger" : (Number(session.runningBackgroundJobCount || 0) ? "good" : ""), title: failedJob?.detail } : null,
-    Number(session.failedBackgroundJobCount || 0) ? { key: "failed", label: "失败 " + session.failedBackgroundJobCount, tone: "danger", title: failedJob?.detail } : null,
+    backgroundJobCount > 0 ? { key: "jobs", label: "Jobs " + backgroundJobCount, tone: Number(session.runningBackgroundJobCount || 0) ? "good" : "" } : null,
     { key: "tokens", label: "Token " + formatSessionTokens(usage.totalTokens || 0), tone: "info" }
   ].filter((item): item is SessionMetaPill => Boolean(item));
 }
@@ -76,15 +74,6 @@ export function renderSessionMeta(
 export function sessionQueueState(session: SessionRecord, authProfile?: SessionRecord | null | undefined): SessionQueueState {
   if (sessionAuthBlockActive(session, authProfile)) {
     return { label: "账号待切换", tone: "danger", rank: 70, detail: String(session.authBlockReasonLabel || session.authBlockReason || "账号不可用") };
-  }
-  if (Number(session.failedBackgroundJobCount || 0) > 0) {
-    const failedJob = sessionFailedJobSummary(session);
-    return {
-      label: "任务失败",
-      tone: "danger",
-      rank: 60,
-      detail: failedJob?.detail || session.failedBackgroundJobCount + " 个失败任务"
-    };
   }
   if (Number(session.openHumanInboundCount || 0) > 0) {
     return { label: "待人处理", tone: "warn", rank: 50, detail: session.openHumanInboundCount + " 条用户消息" };
@@ -102,26 +91,6 @@ export function sessionQueueState(session: SessionRecord, authProfile?: SessionR
     return { label: "有记录", tone: "info", rank: 10, detail: formatSessionTokens(session.usage?.totalTokens || 0) };
   }
   return { label: "空闲", tone: "", rank: 0, detail: "" };
-}
-
-export function sessionFailedJobSummary(session: SessionRecord): { readonly label: string; readonly detail: string; readonly title: string } | null {
-  const job = firstFailedBackgroundJob(session);
-  if (!job) {
-    const count = Number(session.failedBackgroundJobCount || 0);
-    if (!count) return null;
-    const detail = count + " 个失败任务";
-    return { label: detail, detail, title: detail };
-  }
-  const kind = String(job.kind || job.id || "后台任务");
-  const reason = String(job.error || job.lastEventSummary || job.status || "").trim();
-  const time = String(job.updatedAt || job.completedAt || job.lastEventAt || "").trim();
-  const detail = compactText(kind + (reason ? "：" + reason : " 失败"), 140);
-  const title = [kind, reason, time].filter(Boolean).join(" · ");
-  return {
-    label: kind,
-    detail,
-    title: title || detail
-  };
 }
 
 export function sessionAuthBlockActive(session: SessionRecord, authProfile?: SessionRecord | null | undefined): boolean {
@@ -178,18 +147,6 @@ function formatSessionTokens(value: unknown): string {
   if (count >= 1000000) return (count / 1000000).toFixed(2).replace(/\.00$/, "") + "M";
   if (count >= 1000) return (count / 1000).toFixed(1).replace(/\.0$/, "") + "K";
   return String(Math.round(count));
-}
-
-function firstFailedBackgroundJob(session: SessionRecord): Record<string, any> | null {
-  return (session.failedBackgroundJobs || []).find((job: Record<string, any>) => job.status === "failed") ||
-    (session.backgroundJobs || []).find((job: Record<string, any>) => job.status === "failed") ||
-    null;
-}
-
-function compactText(value: string, maxLength: number): string {
-  const text = value.replace(/\s+/g, " ").trim();
-  if (text.length <= maxLength) return text;
-  return text.slice(0, Math.max(1, maxLength - 1)).trim() + "…";
 }
 
 function shortValue(value: unknown, maxLength: number): string {

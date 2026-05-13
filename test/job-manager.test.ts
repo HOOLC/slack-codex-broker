@@ -168,6 +168,61 @@ describe("JobManager", () => {
     await jobs.stop();
   });
 
+  it("lets admin cancel a session-owned job without exposing the job token", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
+    const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));
+    const sessionsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-sessions-"));
+    const reposRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-repos-"));
+    const store = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore: store,
+      sessionsRoot
+    });
+    await sessions.load();
+    const session = await sessions.ensureSession("C123", "444.555");
+    await fs.mkdir(session.workspacePath, { recursive: true });
+
+    const seenEvents: string[] = [];
+    const jobs = new JobManager({
+      sessions,
+      jobsRoot,
+      reposRoot,
+      brokerHttpBaseUrl: "http://127.0.0.1:3000",
+      onEvent: async (event) => {
+        seenEvents.push(event.payload.eventKind);
+      }
+    });
+
+    const job = await jobs.registerJob({
+      channelId: "C123",
+      rootThreadTs: "444.555",
+      kind: "watch_ci",
+      script: "#!/usr/bin/env bash\nsleep 30"
+    });
+
+    await expect(jobs.cancelJobFromAdmin(job.id, {
+      sessionKey: "C999:000.000"
+    })).rejects.toThrow("job_session_mismatch");
+
+    const cancelled = await jobs.cancelJobFromAdmin(job.id, {
+      sessionKey: session.key
+    });
+
+    expect(cancelled).toMatchObject({
+      id: job.id,
+      sessionKey: session.key,
+      status: "cancelled",
+      cancelledAt: expect.any(String),
+      completedAt: expect.any(String)
+    });
+    expect(seenEvents).toEqual([]);
+    await expect(jobs.cancelJobFromAdmin(job.id, {
+      sessionKey: session.key
+    })).rejects.toThrow("job_not_cancellable:cancelled");
+
+    await jobs.stop();
+  });
+
   it("injects a runtime-relative helper path into background jobs", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-"));
     const jobsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-jobs-"));

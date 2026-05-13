@@ -630,6 +630,45 @@ export class AdminService {
     );
   }
 
+  async cancelSessionJob(options: {
+    readonly sessionKey: string;
+    readonly jobId: string;
+  }): Promise<Record<string, unknown>> {
+    return await this.#runTrackedOperation(
+      "session_job_cancel",
+      {
+        sessionKey: options.sessionKey,
+        jobId: options.jobId
+      },
+      async () => {
+        const session = this.options.sessions.getSessionByKey(options.sessionKey);
+        if (!session) {
+          throw new Error(`Session not found: ${options.sessionKey}`);
+        }
+
+        const job = this.options.sessions.getBackgroundJob(options.jobId);
+        if (!job || job.sessionKey !== session.key) {
+          throw new Error("job_session_mismatch");
+        }
+        if (!isAdminCancellableJob(job)) {
+          throw new Error(`Background job is not cancellable: ${job.status}`);
+        }
+
+        const workerCancel = await this.#cancelWorkerBackgroundJob(session.key, job.id);
+        await this.#refreshSessions();
+        const cancelledJob = this.options.sessions.getBackgroundJob(job.id) ?? job;
+        return {
+          ok: true,
+          session: this.#summarizeSessionByKey(session.key),
+          job: this.#summarizeJob(cancelledJob),
+          workerCancel: {
+            ok: workerCancel.ok !== false
+          }
+        };
+      }
+    );
+  }
+
   async deployRelease(options: {
     readonly ref: string;
     readonly allowActive: boolean;
@@ -1632,6 +1671,27 @@ export class AdminService {
     }
     return payload;
   }
+
+  async #cancelWorkerBackgroundJob(sessionKey: string, jobId: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/jobs/${encodeURIComponent(jobId)}/admin-cancel`,
+      this.options.config.workerBaseUrl
+    );
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        session_key: sessionKey
+      })
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      throw new Error(String(payload.error || response.statusText || "worker_job_cancel_failed"));
+    }
+    return payload;
+  }
 }
 
 function summarizeUsageTotals(records: readonly PersistedAgentTurnUsage[]): AgentUsageTotals {
@@ -2344,6 +2404,10 @@ function readStringField(value: JsonLike | undefined, key: string): string | und
   }
   const candidate = value[key];
   return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+function isAdminCancellableJob(job: PersistedBackgroundJob): boolean {
+  return job.status === "registered" || job.status === "running";
 }
 
 function normalizeNonEmptyString(value: unknown): string | undefined {
