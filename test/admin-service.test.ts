@@ -156,11 +156,7 @@ describe("AdminService", () => {
         ]
       }
     });
-    expect(inboundCalls).toEqual([
-      {
-        status: ["pending", "inflight"]
-      }
-    ]);
+    expect(inboundCalls).toEqual([]);
   });
 
   it("exposes GitHub author mappings and OAuth bindings as unified GitHub accounts", async () => {

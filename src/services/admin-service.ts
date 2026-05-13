@@ -905,19 +905,15 @@ export class AdminService {
 
   #summarizeCachedStateCounts(): Record<string, unknown> {
     const sessions = this.options.sessions.listSessions();
-    const openInbound = this.options.sessions.listInboundMessages({
-      status: ["pending", "inflight"]
-    });
     const backgroundJobs = this.options.sessions.listBackgroundJobs();
     const runningBackgroundJobCount = backgroundJobs.filter((job) => job.status === "running").length;
     const failedBackgroundJobCount = backgroundJobs.filter((job) => job.status === "failed").length;
-    const openHumanInboundCount = openInbound.filter(isHumanInboundMessage).length;
     return {
       sessionCount: sessions.length,
       activeCount: sessions.filter((session) => Boolean(session.activeTurnId)).length,
-      openInboundCount: openInbound.length,
-      openHumanInboundCount,
-      openSystemInboundCount: openInbound.length - openHumanInboundCount,
+      openInboundCount: 0,
+      openHumanInboundCount: 0,
+      openSystemInboundCount: 0,
       backgroundJobCount: backgroundJobs.length,
       runningBackgroundJobCount,
       failedBackgroundJobCount

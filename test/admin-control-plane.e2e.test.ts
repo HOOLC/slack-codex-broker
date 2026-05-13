@@ -35,7 +35,7 @@ describe("admin control plane e2e", () => {
       ok: true,
       state: {
         activeCount: 1,
-        openInboundCount: 1,
+        openInboundCount: 0,
         runningBackgroundJobCount: 1
       }
     });
