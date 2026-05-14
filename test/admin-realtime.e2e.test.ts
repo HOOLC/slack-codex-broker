@@ -138,10 +138,11 @@ describe("admin realtime e2e", () => {
         timelineEvent: {
           type: "agent_tool_call",
           toolName: "exec_command",
-          detail: "{\"cmd\":\"pnpm test\"}"
+          detailAvailable: true
         }
       }
     });
+    expect((message.data.event as Record<string, unknown>).timelineEvent).not.toHaveProperty("detail");
     const event = message.data.event as Record<string, unknown>;
     expect(event.trace).toBeUndefined();
     expect(event.session).toBeUndefined();
