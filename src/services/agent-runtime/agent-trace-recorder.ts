@@ -119,7 +119,7 @@ export class AgentTraceRecorder {
             summary: inputSummary?.summary ?? event.textPreview,
             detail: event.text,
             status: "received",
-            role: event.source === "runtime_reminder" ? "system" : "user",
+            role: inputTraceRole(event.source),
             metadata: {
               inputId: event.inputId,
               source: event.source,
@@ -313,6 +313,19 @@ export class AgentTraceRecorder {
       updatedAt: now
     });
   }
+}
+
+function inputTraceRole(source: unknown): "system" | "user" {
+  const value = String(source || "");
+  return [
+    "background_job",
+    "background_job_event",
+    "runtime_reminder",
+    "unexpected_turn_stop",
+    "admin_session_reset",
+    "broker_recovery",
+    "recovered_thread_batch"
+  ].includes(value) ? "system" : "user";
 }
 
 function agentTraceSource(event: AgentRuntimeEvent): PersistedAgentTraceEvent["source"] {

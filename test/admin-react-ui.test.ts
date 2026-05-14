@@ -109,8 +109,14 @@ describe("admin React UI architecture", () => {
     expect(shell).toContain('body: JSON.stringify({');
     expect(shell).toContain("target: selectedDeployTarget");
     expect(shell).toContain("Package 版本");
-    expect(shell).toContain("releaseRollbackRef");
-    expect(shell).toContain("最近已发布");
+    expect(shell).toContain("部署版本");
+    expect(shell).toContain("当前版本");
+    expect(shell).not.toContain("releaseRollbackRef");
+    expect(shell).not.toContain("buildRollbackReleaseOptions");
+    expect(shell).not.toContain("recentReleases.length ? recentReleases.map");
+    expect(shell).not.toContain("最近已发布");
+    expect(shell).not.toContain("暂无可回滚版本");
+    expect(shell).not.toContain(">回滚<");
     expect(shell).not.toContain("recentMainCommits");
     expect(shell).not.toContain("origin/main");
     expect(shell).not.toContain('placeholder="提交 / 分支 / 标签"');

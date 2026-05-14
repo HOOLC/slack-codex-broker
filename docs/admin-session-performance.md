@@ -86,6 +86,10 @@ The remaining problems are data-contract problems:
 - The React session detail automatically loads older activity when the timeline
   scroll container reaches the top or the first loaded page does not fill the
   visible area.
+- Loading older activity prepends events while preserving the viewer's current
+  visual anchor. The timeline records the previous `scrollHeight` and
+  `scrollTop`, then adds the inserted height delta back to `scrollTop` after the
+  older page renders. The record the user was reading must not jump.
 - The first timeline page does not inline large trace details; details are lazy
   loaded by event id.
 - Timeline, sessions, overview, usage, and status responses expose backend

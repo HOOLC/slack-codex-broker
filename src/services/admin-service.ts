@@ -1717,7 +1717,7 @@ export class AdminService {
       runningBackgroundJobCount,
       failedBackgroundJobCount,
       failedBackgroundJobs: failedBackgroundJobs.slice(0, 3).map((job) => this.#summarizeJob(job)),
-      backgroundJobs: related.jobs.slice(0, 5).map((job) => this.#summarizeJob(job)),
+      backgroundJobs: sortBackgroundJobsForAdminSummary(related.jobs).slice(0, 5).map((job) => this.#summarizeJob(job)),
       usage: related.usage ?? emptySessionUsageSummary(session)
     };
   }
@@ -2118,6 +2118,20 @@ function jobActivityTimestamps(job: PersistedBackgroundJob): Array<string | null
     job.status === "running" ? null : job.updatedAt,
     job.createdAt
   ];
+}
+
+function sortBackgroundJobsForAdminSummary(jobs: readonly PersistedBackgroundJob[]): PersistedBackgroundJob[] {
+  return [...jobs].sort((left, right) => {
+    const rankDelta = backgroundJobDisplayRank(left) - backgroundJobDisplayRank(right);
+    if (rankDelta) return rankDelta;
+    return timestampMs(right.lastEventAt ?? right.updatedAt ?? right.createdAt) - timestampMs(left.lastEventAt ?? left.updatedAt ?? left.createdAt);
+  });
+}
+
+function backgroundJobDisplayRank(job: PersistedBackgroundJob): number {
+  if (isAdminCancellableJob(job)) return 0;
+  if (job.status === "failed") return 2;
+  return 1;
 }
 
 function timestampMs(value: unknown): number {

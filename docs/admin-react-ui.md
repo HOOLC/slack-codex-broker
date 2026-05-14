@@ -121,10 +121,10 @@ The operations page must preserve existing behavior:
   explicit status filters, and account panels show their full bounded lists;
 - publish uses target and package-version selectors instead of a free-form text
   field. Candidates are recent npm package versions reported by the deployment
-  service for the selected admin or worker target.
-  Rollback is not a parallel top-level input; each recent installed package
-  release row exposes its own rollback action. Publish and rollback still show
-  deployment status and run preflight confirmation;
+  service for the selected admin or worker target. That selector is the only
+  day-to-day version switcher: deploying an older npm version is the rollback
+  path. The UI must not render a long `最近已发布` list with one rollback button
+  per installed release;
 - auth profiles list current accounts, quota, and deletion;
 - auth profile rows render as structured account cards: identity and plan first,
   then weekly remaining, weighted score, reset time, and any short-window pressure.
@@ -210,4 +210,8 @@ After the React migration, GitHub account work continues in React:
   selector, and lays out label, selector, and action on one row.
 - The publish control uses selects for target and package versions and does not
   render a free-form `提交 / 分支 / 标签` input or Git ref selector.
+- The operations page does not render `最近已发布`, `暂无可回滚版本`, or per-release
+  `回滚` buttons. Current admin/worker versions stay visible as compact status
+  rows; choosing any npm package version happens through the single package
+  version selector.
 - `pnpm test` and `pnpm build` pass.

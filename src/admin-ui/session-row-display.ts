@@ -54,7 +54,7 @@ export function renderSessionMeta(
     ? "待处理 " + (session.openInboundCount || 0) + "（人 " + (session.openHumanInboundCount || 0) + " / 系统 " + (session.openSystemInboundCount || 0) + "）"
     : "";
   const authProfile = session.authProfileName ? authProfileByName.get(String(session.authProfileName)) : null;
-  const backgroundJobCount = Number(session.backgroundJobCount || 0);
+  const activeJobCount = activeBackgroundJobCount(session);
   const authBlockActive = sessionAuthBlockActive(session, authProfile);
   return [
     { key: "channel", label: resolveSessionChannelLabel(session, channelLabelById), tone: "info", title: stringOrUndefined(session.channelId || session.key) },
@@ -66,7 +66,7 @@ export function renderSessionMeta(
       title: authProfile ? profileTitle(authProfile) : String(session.authProfileName)
     } : null,
     pendingDetail ? { key: "pending", label: pendingDetail, tone: Number(session.openHumanInboundCount || 0) ? "warn" : "" } : null,
-    backgroundJobCount > 0 ? { key: "jobs", label: "Jobs " + backgroundJobCount, tone: Number(session.runningBackgroundJobCount || 0) ? "good" : "" } : null,
+    activeJobCount > 0 ? { key: "jobs", label: "Jobs " + activeJobCount, tone: "good" } : null,
     { key: "tokens", label: "Token " + formatSessionTokens(usage.totalTokens || 0), tone: "info" }
   ].filter((item): item is SessionMetaPill => Boolean(item));
 }
@@ -84,8 +84,9 @@ export function sessionQueueState(session: SessionRecord, authProfile?: SessionR
   if (session.activeTurnId) {
     return { label: "运行中", tone: "good", rank: 30, detail: shortValue(session.activeTurnId, 18) };
   }
-  if (Number(session.runningBackgroundJobCount || 0) > 0) {
-    return { label: "后台任务", tone: "good", rank: 20, detail: session.runningBackgroundJobCount + " 个运行任务" };
+  const activeJobCount = activeBackgroundJobCount(session);
+  if (activeJobCount > 0) {
+    return { label: "后台任务", tone: "good", rank: 20, detail: activeJobCount + " 个运行任务" };
   }
   if (Number(session.usage?.turnCount || 0) > 0) {
     return { label: "有记录", tone: "info", rank: 10, detail: formatSessionTokens(session.usage?.totalTokens || 0) };
@@ -123,6 +124,23 @@ export function sessionActivityAt(session: SessionRecord): unknown {
 
 export function sessionActivityMs(session: SessionRecord): number {
   return timestampMs(sessionActivityAt(session));
+}
+
+export function activeBackgroundJobs(session: SessionRecord): Record<string, any>[] {
+  const jobs = Array.isArray(session.backgroundJobs) ? session.backgroundJobs : null;
+  return jobs ? jobs.filter(isActiveBackgroundJob) : [];
+}
+
+export function activeBackgroundJobCount(session: SessionRecord): number {
+  if (Array.isArray(session.backgroundJobs)) {
+    return activeBackgroundJobs(session).length;
+  }
+  return Math.max(0, Number(session.runningBackgroundJobCount || 0));
+}
+
+export function isActiveBackgroundJob(job: Record<string, any>): boolean {
+  const status = String(job.status || "").toLowerCase();
+  return status === "registered" || status === "running";
 }
 
 function sessionHumanChannelLabel(session: SessionRecord): string | undefined {

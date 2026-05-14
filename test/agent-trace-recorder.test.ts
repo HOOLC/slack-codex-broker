@@ -325,11 +325,77 @@ describe("AgentTraceRecorder", () => {
         type: "agent_input_received",
         title: "@codex-3720 结合 willow repo，分析图中问题",
         summary: "Jc · 提及",
+        role: "user",
         metadata: expect.objectContaining({
           inputId: "input-1",
           source: "app_mention",
           sender: "Jc",
           messageTs: "1778316208.809479"
+        })
+      })
+    ]);
+
+    stateStore.close();
+    await fs.rm(stateDir, {
+      force: true,
+      recursive: true
+    });
+  });
+
+  it("records broker runtime input trace events as system role", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "agent-trace-recorder-runtime-input-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const stateStore = new StateStore(stateDir, sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot
+    });
+
+    await sessions.load();
+    let session = await sessions.ensureSession("C123", "111.222");
+    session = await sessions.setAgentSessionId(session.channelId, session.rootThreadTs, "thread-1");
+    session = await sessions.setActiveTurnId(session.channelId, session.rootThreadTs, "turn-1");
+
+    const recorder = new AgentTraceRecorder({
+      sessions
+    });
+    await recorder.record({
+      type: "agent.input.received",
+      inputId: "input-runtime-1",
+      agentSessionId: "thread-1",
+      brokerSessionKey: session.key,
+      source: "background_job",
+      textPreview: "A broker-managed background job reported a new asynchronous event for this session.",
+      text: [
+        "A broker-managed background job reported a new asynchronous event for this session.",
+        "background_job_event_json:",
+        "```json",
+        JSON.stringify({
+          source: "background_job_event",
+          message_ts: "1778316208.809479",
+          job: {
+            job_id: "job-1",
+            job_kind: "watch_ci",
+            event_kind: "job_completed"
+          },
+          summary: "PR #1873 checks 13 pass."
+        }, null, 2),
+        "```"
+      ].join("\n"),
+      at: "2026-03-19T00:00:03.000Z"
+    });
+
+    expect(sessions.listAgentTraceEvents(session.key)).toEqual([
+      expect.objectContaining({
+        type: "agent_input_received",
+        title: "PR #1873 checks 13 pass.",
+        summary: "watch_ci · job_completed · Job job-1",
+        role: "system",
+        metadata: expect.objectContaining({
+          inputId: "input-runtime-1",
+          source: "background_job_event",
+          jobKind: "watch_ci",
+          eventKind: "job_completed"
         })
       })
     ]);

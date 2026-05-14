@@ -110,8 +110,10 @@ commits.
 - The version selector lists recent package versions returned for the selected
   target.
 - The deploy request sends `{ target, version }`.
-- The recent release list is grouped by target.
-- Each rollback button activates that already-installed target release.
+- The same version selector is used for upgrades and downgrades. Choosing an
+  older npm package version and deploying it is the normal rollback path.
+- The admin UI must not render a long recent-release rollback list with one
+  button per installed release.
 
 ## Acceptance Criteria
 
@@ -123,7 +125,8 @@ commits.
 - `.github/workflows/npm-publish.yml` publishes both scoped packages from
   versioned release tags or manual dispatch using `NPM_TOKEN`.
 - Admin deployment status reports admin and worker package targets separately.
-- Admin publish UI selects target and package version.
+- Admin publish UI selects target and package version as the only day-to-day
+  version switcher.
 - `/admin/api/deploy` requires target and package version.
 - `/admin/api/rollback` requires target and uses an optional package version.
 - `ReleaseDeploymentService.deploy` does not run Git fetch/worktree commands.

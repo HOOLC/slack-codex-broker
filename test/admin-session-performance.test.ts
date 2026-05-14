@@ -374,6 +374,9 @@ describe("admin session performance contract", () => {
     expect(source).toContain("加载更早活动");
     expect(source).toContain("onLoadOlder");
     expect(source).toContain("scrollTop <= TIMELINE_AUTO_LOAD_THRESHOLD");
+    expect(source).toContain("pendingPrependAnchorRef");
+    expect(source).toContain("scrollHeight - anchor.scrollHeight");
+    expect(source).toContain("container.scrollTop = anchor.scrollTop + insertedHeight");
   });
 
   async function startAdminServer(configEnv: NodeJS.ProcessEnv, adminService: Record<string, unknown>): Promise<string> {

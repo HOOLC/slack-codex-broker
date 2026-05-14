@@ -179,10 +179,10 @@ function nonEmptyString(value: unknown): string {
 function assistantMessageContent(event: TimelineEvent, rawSummary: string): string {
   const detail = nonEmptyString(event.detail);
   if (detail && !isGenericAssistantSummary(detail)) {
-    return compactTimelineText(detail, 320);
+    return detail;
   }
   if (rawSummary && !isGenericAssistantSummary(rawSummary)) {
-    return compactTimelineText(rawSummary, 320);
+    return rawSummary;
   }
   return "";
 }
@@ -193,14 +193,6 @@ function isGenericAssistantSummary(value: string): boolean {
     normalized === "replied in slack" ||
     normalized === "sent a slack reply." ||
     normalized === "sent a slack reply";
-}
-
-function compactTimelineText(value: string, maxLength: number): string {
-  const text = value.replace(/\s+/g, " ").trim();
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
 }
 
 function toolTraceKey(event: TimelineEvent): string {

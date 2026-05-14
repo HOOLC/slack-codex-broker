@@ -17,11 +17,20 @@ export function summarizeToolTraceDisplay(options: {
   if (toolName !== "exec_command") {
     return undefined;
   }
+  const payload = asRecord(options.payload);
+  const slackSummary = summarizeSlackBrokerTrace({
+    eventType: options.eventType,
+    status: options.status,
+    payload
+  });
+  if (slackSummary) {
+    return slackSummary;
+  }
 
   return summarizeExecCommandTrace({
     eventType: options.eventType,
     status: options.status,
-    payload: asRecord(options.payload),
+    payload,
     fallbackTitle: toolName,
     fallbackSummary: options.fallbackSummary
   });
@@ -42,6 +51,7 @@ export function parseToolTraceDetail(detail: unknown): Record<string, unknown> |
     return asRecord(parsed);
   } catch {
     const command = extractJsonStringField(text, "command");
+    const cmd = extractJsonStringField(text, "cmd");
     const cwd = extractJsonStringField(text, "cwd");
     const aggregatedOutput = extractJsonStringField(text, "aggregatedOutput");
     const error = extractJsonStringField(text, "error");
@@ -50,6 +60,7 @@ export function parseToolTraceDetail(detail: unknown): Record<string, unknown> |
     const status = extractJsonStringField(text, "status");
     const compact = compactRecord({
       command,
+      cmd,
       cwd,
       aggregatedOutput,
       error,
@@ -75,6 +86,180 @@ export function mergeToolTracePayloads(...payloads: readonly unknown[]): Record<
     }
   }
   return Object.keys(merged).length ? merged : undefined;
+}
+
+function summarizeSlackBrokerTrace(options: {
+  readonly eventType: string;
+  readonly status?: string | undefined;
+  readonly payload?: Record<string, unknown> | undefined;
+}): ToolTraceDisplaySummary | undefined {
+  const payload = options.payload ?? {};
+  const command = normalizeString(payload.command) || normalizeString(payload.cmd);
+  if (!command) {
+    return undefined;
+  }
+  const route = slackBrokerRoute(command);
+  if (!route) {
+    return undefined;
+  }
+
+  const data = extractCurlJsonData(command);
+  const status = normalizeString(options.status ?? payload.status);
+  const isResult = options.eventType === "agent_tool_result";
+  const state = slackDeliveryState(isResult, status);
+
+  if (route === "/slack/post-message") {
+    const text = messageText(data?.text) || "发送 Slack 消息";
+    const kind = normalizeString(data?.kind) || "progress";
+    return {
+      badgeLabel: "Bot",
+      title: text,
+      summary: `Slack ${kind} · ${state}`,
+      metadata: compactMetadataRecord({
+        semanticType: "slack_message",
+        slackKind: kind,
+        slackText: text,
+        command,
+        route
+      })
+    };
+  }
+
+  if (route === "/slack/post-file") {
+    const filePath = normalizeString(data?.file_path);
+    const comment = messageText(data?.initial_comment);
+    const filename = filePath.split("/").filter(Boolean).at(-1) || "文件";
+    return {
+      badgeLabel: "Bot",
+      title: comment || `上传 ${filename}`,
+      summary: `Slack 文件 · ${filename} · ${state}`,
+      metadata: compactMetadataRecord({
+        semanticType: "slack_file",
+        slackFilePath: filePath,
+        slackText: comment,
+        command,
+        route
+      })
+    };
+  }
+
+  if (route === "/slack/post-state") {
+    const kind = normalizeString(data?.kind) || "state";
+    const reason = compactText(normalizeString(data?.reason), 220);
+    return {
+      badgeLabel: "状态",
+      title: `记录 ${kind} 状态`,
+      summary: reason || state,
+      metadata: compactMetadataRecord({
+        semanticType: "slack_state",
+        slackKind: kind,
+        slackText: reason,
+        command,
+        route
+      })
+    };
+  }
+
+  return undefined;
+}
+
+function slackDeliveryState(isResult: boolean, status: string): string {
+  if (!isResult) {
+    return "准备发送";
+  }
+  const normalized = status.toLowerCase();
+  if (normalized === "failed" || normalized === "error") {
+    return "失败";
+  }
+  return "已发送";
+}
+
+function slackBrokerRoute(command: string): "/slack/post-message" | "/slack/post-file" | "/slack/post-state" | undefined {
+  if (command.includes("/slack/post-message")) {
+    return "/slack/post-message";
+  }
+  if (command.includes("/slack/post-file")) {
+    return "/slack/post-file";
+  }
+  if (command.includes("/slack/post-state")) {
+    return "/slack/post-state";
+  }
+  return undefined;
+}
+
+function extractCurlJsonData(command: string): Record<string, unknown> | undefined {
+  const body = unwrapShellCommand(command);
+  const raw =
+    extractCurlDataArgument(body, "'") ??
+    extractCurlDataArgument(body, "\"") ??
+    extractCurlDataBareArgument(body);
+  if (!raw) {
+    return undefined;
+  }
+  return parseCurlJsonData(raw);
+}
+
+function parseCurlJsonData(raw: string): Record<string, unknown> | undefined {
+  const candidates = curlJsonDataCandidates(raw);
+  for (const candidate of candidates) {
+    try {
+      const parsed = asRecord(JSON.parse(candidate));
+      if (parsed) {
+        return parsed;
+      }
+    } catch {}
+  }
+
+  for (const candidate of candidates) {
+    const recovered = compactRecord({
+      channel_id: extractJsonStringField(candidate, "channel_id"),
+      thread_ts: extractJsonStringField(candidate, "thread_ts"),
+      text: extractJsonStringField(candidate, "text"),
+      kind: extractJsonStringField(candidate, "kind"),
+      file_path: extractJsonStringField(candidate, "file_path"),
+      initial_comment: extractJsonStringField(candidate, "initial_comment"),
+      reason: extractJsonStringField(candidate, "reason")
+    });
+    if (Object.keys(recovered).length) {
+      return recovered;
+    }
+  }
+
+  return undefined;
+}
+
+function curlJsonDataCandidates(raw: string): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  let current = raw.trim();
+  for (let index = 0; index < 5; index += 1) {
+    if (!current || seen.has(current)) {
+      break;
+    }
+    seen.add(current);
+    candidates.push(current);
+    const next = unescapeShellQuotedArgument(current).trim();
+    if (next === current) {
+      break;
+    }
+    current = next;
+  }
+  return candidates;
+}
+
+function extractCurlDataArgument(command: string, quote: "'" | "\""): string | undefined {
+  const escapedQuote = quote === "'" ? "'" : "\\\"";
+  const pattern = new RegExp("(?:^|\\s)(?:-d|--data|--data-raw|--data-binary)\\s+" + escapedQuote + "([\\s\\S]*?)" + escapedQuote);
+  return pattern.exec(command)?.[1];
+}
+
+function extractCurlDataBareArgument(command: string): string | undefined {
+  return /(?:^|\s)(?:-d|--data|--data-raw|--data-binary)\s+(\{[\s\S]*\})(?:\s|$)/.exec(command)?.[1];
+}
+
+function unwrapShellCommand(command: string): string {
+  const shell = command.match(/^\/(?:bin|usr\/bin|opt\/homebrew\/bin)\/(?:zsh|bash|sh)\s+-lc\s+"([\s\S]*)"$/);
+  return shell ? unescapeShellQuotedArgument(shell[1] ?? "") : command;
 }
 
 function summarizeExecCommandTrace(options: {
@@ -131,8 +316,7 @@ function summarizeExecCommandTrace(options: {
 }
 
 function simplifyShellCommand(command: string): string {
-  const shell = command.match(/^\/(?:bin|usr\/bin|opt\/homebrew\/bin)\/(?:zsh|bash|sh)\s+-lc\s+"([\s\S]*)"$/);
-  const body = shell ? unescapeShellQuotedArgument(shell[1] ?? "") : command;
+  const body = unwrapShellCommand(command);
   const cdPath = extractShellCdPath(body);
   const cdPrefix = cdPath ? body.match(/^cd\s+.+?\s+&&\s+/)?.[0] : undefined;
   return (cdPrefix ? body.slice(cdPrefix.length) : body).trim();
@@ -237,6 +421,10 @@ function compactText(value: string, maxLength: number): string {
     return text;
   }
   return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
+}
+
+function messageText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function normalizeString(value: unknown): string {

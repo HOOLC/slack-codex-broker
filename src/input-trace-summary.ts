@@ -45,7 +45,7 @@ function summarizePayload(
       .map((entry) => asRecord(entry))
       .filter((entry): entry is Record<string, unknown> => Boolean(entry));
     const first = messages[0];
-    const firstText = compactText(extractSlackText(first), 180);
+    const firstText = messageText(extractSlackText(first));
     return {
       badgeLabel: "恢复",
       title: firstText || `恢复 ${messages.length} 条 Slack 消息`,
@@ -69,7 +69,7 @@ function summarizePayload(
     return summarizeAdminSessionResetPayload(payload, source);
   }
 
-  const slackText = compactText(extractSlackText(payload), 220);
+  const slackText = messageText(extractSlackText(payload));
   const sender = summarizeSender(asRecord(payload.sender));
   const attachmentCount = Array.isArray(payload.attachments)
     ? payload.attachments.length
@@ -283,6 +283,10 @@ function compactText(value: string, maxLength: number): string {
     return text;
   }
   return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
+}
+
+function messageText(value: string): string {
+  return value.trim();
 }
 
 function normalizeString(value: unknown): string {

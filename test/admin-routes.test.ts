@@ -212,7 +212,7 @@ describe("admin routes", () => {
     expect(adminShellSource).not.toContain('type="search"');
     expect(adminShellSource).not.toContain("筛选 Slack / GitHub 账号");
     expect(sessionViewSource).toContain("session-detail-panel");
-    expect(sessionViewSource).toContain("Agent 工作台");
+    expect(sessionViewSource).not.toContain("Agent 工作台");
     expect(adminShellSource).not.toContain("Session Inspector");
     expect(sessionViewSource).not.toContain("session-table-header");
     expect(adminShellSource).toContain("系统日志");
@@ -465,7 +465,10 @@ describe("admin routes", () => {
     expect(adminCssSource).toContain(".session-detail-panel > .panel-body");
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
-    expect(adminCssSource).toContain(".timeline { flex: 1; min-height: 0; display: grid; grid-auto-rows: max-content; align-content: start;");
+    expect(adminCssSource).toContain(".timeline { flex: 1; min-height: 0; display: flex; flex-direction: column;");
+    expect(adminCssSource).toContain(".agent-transcript");
+    expect(adminCssSource).toContain(".agent-message-body");
+    expect(adminCssSource).toContain(".agent-tool-step");
     expect(adminCssSource).toContain(".session-card { display: block; overflow: hidden; }");
     expect(adminCssSource).toContain(".session-meta-line { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap;");
     expect(adminCssSource).toContain(".session-meta-pill { min-width: 0; max-width: 100%; flex: 0 1 auto;");

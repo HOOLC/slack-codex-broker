@@ -16,8 +16,11 @@ import {
   subscribeAdminStatus,
   subscribeTimeline
 } from "./admin-status-store";
+import { agentTranscriptAvatar, agentTranscriptKind, agentTranscriptSpeaker } from "./agent-transcript-display";
 import { stableSessionOrder } from "./session-order";
 import {
+  activeBackgroundJobCount,
+  activeBackgroundJobs,
   buildChannelLabelById,
   renderSessionMeta,
   resolveSessionChannelLabel,
@@ -47,6 +50,35 @@ type TimelinePayload = {
     readonly nextBeforeSequence?: number | null;
   };
 } | TimelineEvent[];
+
+function timelinePayloadSession(payload: TimelinePayload | null): SessionRecord | null {
+  return payload && !Array.isArray(payload) && payload.session ? payload.session : null;
+}
+
+function mergeSessionRecords(
+  base: SessionRecord | null | undefined,
+  detail: SessionRecord | null | undefined
+): SessionRecord | null {
+  if (!base) return detail || null;
+  if (!detail) return base;
+  return {
+    ...detail,
+    ...base,
+    usage: {
+      ...(detail.usage || {}),
+      ...(base.usage || {})
+    },
+    openInbound: Array.isArray(detail.openInbound) ? detail.openInbound : base.openInbound,
+    backgroundJobs: Array.isArray(detail.backgroundJobs) ? detail.backgroundJobs : base.backgroundJobs,
+    failedBackgroundJobs: Array.isArray(detail.failedBackgroundJobs) ? detail.failedBackgroundJobs : base.failedBackgroundJobs,
+    workspacePath: detail.workspacePath ?? base.workspacePath,
+    agentSessionId: detail.agentSessionId ?? base.agentSessionId,
+    sessionPageLinkPostedAt: detail.sessionPageLinkPostedAt ?? base.sessionPageLinkPostedAt,
+    authProfileBoundAt: detail.authProfileBoundAt ?? base.authProfileBoundAt,
+    lastObservedMessageTs: detail.lastObservedMessageTs ?? base.lastObservedMessageTs,
+    lastDeliveredMessageTs: detail.lastDeliveredMessageTs ?? base.lastDeliveredMessageTs
+  };
+}
 
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
 const AUTO_AUTH_PROFILE_VALUE = "__auto_auth_profile__";
@@ -155,9 +187,6 @@ export function AdminSessionsView(): React.JSX.Element {
       </section>
 
       <section className="panel session-detail-panel">
-        <div className="panel-head">
-          <div className="panel-title">Agent 工作台</div>
-        </div>
         <div id="session-detail-panel" className="panel-body">
           {selectedSession ? (
             <SessionDetail key={selectedSession.key} session={selectedSession} />
@@ -199,9 +228,10 @@ function SessionPermalinkView({ sessionKey }: { readonly sessionKey: string }): 
     () => getTimelineSnapshot(sessionKey)
   );
   const timelinePayload = timelineSnapshot.payload as TimelinePayload | null;
+  const timelineSession = timelinePayloadSession(timelinePayload);
   const [fetchedSession, setFetchedSession] = useState<SessionRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const session = realtimeSession || fetchedSession || (Array.isArray(timelinePayload) ? null : timelinePayload?.session) || null;
+  const session = mergeSessionRecords(realtimeSession || fetchedSession || timelineSession, fetchedSession || timelineSession);
 
   useEffect(() => {
     let cancelled = false;
@@ -279,10 +309,17 @@ function SessionRow({ session, selected, authProfileByName, channelLabelById, on
   );
 }
 
-function SessionDetail({ session, isPermalink = false }: {
+function SessionDetail({ session: providedSession, isPermalink = false }: {
   readonly session: SessionRecord;
   readonly isPermalink?: boolean;
 }): React.JSX.Element {
+  const sessionKey = String(providedSession.key || "");
+  const timelineSnapshot = useSyncExternalStore(
+    (listener) => subscribeTimeline(sessionKey, listener),
+    () => getTimelineSnapshot(sessionKey),
+    () => getTimelineSnapshot(sessionKey)
+  );
+  const session = mergeSessionRecords(providedSession, timelinePayloadSession(timelineSnapshot.payload as TimelinePayload | null)) || providedSession;
   const snapshot = useSyncExternalStore(subscribeAdminStatus, getAdminStatusSnapshot, getAdminStatusSnapshot);
   const authProfiles = (((snapshot.status || {}) as Record<string, any>).authProfiles?.profiles || []) as SessionRecord[];
   const sessions = (((snapshot.status || {}) as Record<string, any>).state?.sessions || []) as SessionRecord[];
@@ -297,9 +334,10 @@ function SessionDetail({ session, isPermalink = false }: {
   const openInbound = Number(session.openInboundCount || 0);
   const openHumanInbound = Number(session.openHumanInboundCount || 0);
   const openSystemInbound = Number(session.openSystemInboundCount || 0);
-  const runningJobs = Number(session.runningBackgroundJobCount || 0);
-  const totalJobs = Number(session.backgroundJobCount || 0);
-  const hasMessagesOrJobs = openInbound > 0 || totalJobs > 0;
+  const currentJobs = activeBackgroundJobs(session);
+  const runningJobs = activeBackgroundJobCount(session);
+  const totalJobs = Number(session.backgroundJobCount || (Array.isArray(session.backgroundJobs) ? session.backgroundJobs.length : 0));
+  const hasMessagesOrJobs = openInbound > 0 || runningJobs > 0;
   return (
     <>
       <AgentSessionHero
@@ -352,8 +390,8 @@ function SessionDetail({ session, isPermalink = false }: {
               <div className="mini-panel">
                 <div className="mini-title">等待输入 / 后台任务</div>
                 <div className="mini-body">
-                  <InboundTable items={session.openInbound || []} />
-                  <JobsTable session={session} jobs={session.backgroundJobs || []} />
+                  {openInbound > 0 ? <InboundTable items={session.openInbound || []} /> : null}
+                  {runningJobs > 0 ? <JobsTable session={session} jobs={currentJobs} expectedCount={runningJobs} /> : null}
                 </div>
               </div>
             ) : null}
@@ -397,13 +435,10 @@ function AgentSessionHero({ title, request, state, channelLabel, activityAt, usa
     ? { label: state.label, tone: state.tone, title: state.detail }
     : { label: "空闲", tone: "", title: "当前没有待处理输入或运行任务" };
   const stats = [
-    { label: "状态", value: visibleState.label, tone: visibleState.tone, title: visibleState.title },
     { label: "频道", value: channelLabel, title: channelLabel },
     { label: "最近", value: fmtRelativeTime(activityAt), detail: fmtDateTime(activityAt), title: fmtDateTime(activityAt) },
     tokenCount > 0 ? { label: "Token", value: fmtTokens(tokenCount), detail: Number(usage?.turnCount || 0) + " 回合" } : null,
-    runningJobs > 0 ? { label: "任务", value: runningJobs + " 运行", detail: totalJobs + " 个总任务", tone: "good" } : (
-      totalJobs > 0 ? { label: "任务", value: String(totalJobs), detail: "无运行任务" } : null
-    ),
+    runningJobs > 0 ? { label: "任务", value: runningJobs + " 运行", detail: totalJobs > runningJobs ? "历史共 " + totalJobs : undefined, tone: "good" } : null,
     openInbound > 0 ? { label: "待处理", value: openInbound + " 条", tone: "warn" } : null
   ].filter((item): item is { label: string; value: string; detail?: string; tone?: string; title?: string } => Boolean(item));
 
@@ -770,7 +805,7 @@ function SessionRuntimePanel({ session, state, openInbound, openHumanInbound, op
     runningJobs > 0 ? {
       label: "运行任务",
       value: String(runningJobs),
-      detail: totalJobs + " 个任务",
+      detail: totalJobs > runningJobs ? "历史共 " + totalJobs : undefined,
       tone: "good"
     } : null
   ].filter((row): row is { label: string; value: string; detail?: string; tone?: string } => Boolean(row));
@@ -910,16 +945,6 @@ function SessionTimeline({ session }: {
   const page = !Array.isArray(payload) ? payload.page : null;
   return (
     <div className="timeline-shell">
-      {page?.hasMore ? (
-        <button
-          type="button"
-          className="timeline-load-older"
-          disabled={olderBusy}
-          onClick={() => { void loadOlder(); }}
-        >
-          {olderBusy ? "正在加载" : "加载更早活动"}
-        </button>
-      ) : null}
       <TimelinePayloadView
         payload={payload}
         hasMore={Boolean(page?.hasMore)}
@@ -1153,16 +1178,60 @@ function Timeline({ events, hasMore = false, olderBusy = false, onLoadOlder }: {
 }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
+  const olderLoadInFlightRef = useRef(false);
+  const firstEventKey = events.length ? timelineEventIdentity(events[0]) : "";
+  const pendingPrependAnchorRef = useRef<{
+    readonly scrollHeight: number;
+    readonly scrollTop: number;
+    readonly firstEventKey: string;
+  } | null>(null);
+
+  const loadOlderWithAnchor = useCallback(() => {
+    if (!hasMore || olderBusy || olderLoadInFlightRef.current || !onLoadOlder) {
+      return;
+    }
+    const container = containerRef.current;
+    if (container) {
+      pendingPrependAnchorRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+        firstEventKey
+      };
+    }
+    shouldFollowRef.current = false;
+    olderLoadInFlightRef.current = true;
+    void onLoadOlder().finally(() => {
+      olderLoadInFlightRef.current = false;
+    });
+  }, [firstEventKey, hasMore, olderBusy, onLoadOlder]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!container || !shouldFollowRef.current) {
+    if (!container) {
+      return;
+    }
+    const anchor = pendingPrependAnchorRef.current;
+    if (anchor && firstEventKey && firstEventKey !== anchor.firstEventKey) {
+      const insertedHeight = container.scrollHeight - anchor.scrollHeight;
+      container.scrollTop = anchor.scrollTop + insertedHeight;
+      pendingPrependAnchorRef.current = null;
+      updateFollowState();
+      return;
+    }
+    if (!shouldFollowRef.current) {
       updateFollowState();
       return;
     }
     container.scrollTop = container.scrollHeight;
     updateFollowState();
-  }, [events.length]);
+  }, [events.length, firstEventKey]);
+
+  useEffect(() => {
+    const anchor = pendingPrependAnchorRef.current;
+    if (!olderBusy && anchor && firstEventKey === anchor.firstEventKey) {
+      pendingPrependAnchorRef.current = null;
+    }
+  }, [firstEventKey, olderBusy]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -1170,9 +1239,9 @@ function Timeline({ events, hasMore = false, olderBusy = false, onLoadOlder }: {
       return;
     }
     if (container.scrollHeight <= container.clientHeight + TIMELINE_AUTO_LOAD_THRESHOLD) {
-      void onLoadOlder();
+      loadOlderWithAnchor();
     }
-  }, [events.length, hasMore, olderBusy, onLoadOlder]);
+  }, [events.length, hasMore, loadOlderWithAnchor, olderBusy, onLoadOlder]);
 
   function updateFollowState(): void {
     const container = containerRef.current;
@@ -1180,16 +1249,28 @@ function Timeline({ events, hasMore = false, olderBusy = false, onLoadOlder }: {
       return;
     }
     if (container.scrollTop <= TIMELINE_AUTO_LOAD_THRESHOLD && hasMore && !olderBusy && onLoadOlder) {
-      void onLoadOlder();
+      loadOlderWithAnchor();
     }
     shouldFollowRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 24;
   }
 
   return (
     <div className="timeline" ref={containerRef} onScroll={updateFollowState} onMouseEnter={updateFollowState}>
-      {events.map((event, index) => (
-        <TimelineRow key={timelineEventKey(event, index)} event={event} />
-      ))}
+      {hasMore ? (
+        <button
+          type="button"
+          className="timeline-load-older"
+          disabled={olderBusy}
+          onClick={loadOlderWithAnchor}
+        >
+          {olderBusy ? "正在加载" : "加载更早活动"}
+        </button>
+      ) : null}
+      <div className="agent-transcript">
+        {events.map((event, index) => (
+          <TimelineRow key={timelineEventKey(event, index)} event={event} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -1199,11 +1280,15 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
   const [detailStatus, setDetailStatus] = useState<string | null>(null);
   const display = getTimelineEventDisplay(event);
   const badgeTone = statusTone(event.status === "failed" || event.status === "error" ? event.status : event.type);
+  const kind = agentTranscriptKind(event);
+  const toolTone = kind === "tool" ? statusTone(event.status || event.type) || badgeTone || "info" : "";
+  const rowTone = kind === "tool" ? toolTone : badgeTone;
+  const speaker = agentTranscriptSpeaker(kind, event);
+  const isNotice = kind === "system" || kind === "session";
   const isCommandEvent = event.toolName === "exec_command";
   const canLoadDetail = Boolean(event.detailAvailable && event.id && event.sessionKey);
   const meta = [
-    event.status ? ("状态 " + statusLabel(event.status)) : "",
-    !isCommandEvent && event.role ? ("角色 " + event.role) : "",
+    kind !== "tool" && kind !== "user" && kind !== "assistant" && kind !== "bot" && event.status ? statusLabel(event.status) : "",
     !isCommandEvent && event.toolName ? ("工具 " + event.toolName) : "",
     event.detailTruncated ? "内容已截断" : ""
   ].filter(Boolean).join(" · ");
@@ -1228,27 +1313,63 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
     }
   }
 
+  function renderTraceDetails(): React.JSX.Element | null {
+    if (!detail && !canLoadDetail) {
+      return null;
+    }
+    return (
+      <details className="trace-details" onToggle={(toggleEvent) => {
+        if ((toggleEvent.currentTarget as HTMLDetailsElement).open) {
+          void loadDetail();
+        }
+      }}>
+        <summary aria-label="查看详情" title="查看详情">
+          <span aria-hidden="true" className="trace-details-icon">i</span>
+        </summary>
+        <pre>{detail || (detailStatus === "loading" ? "正在加载" : detailStatus || "")}</pre>
+      </details>
+    );
+  }
+
   return (
-    <div className="timeline-event">
-      <span>{fmtTime(event.at)}</span>
-      <Badge label={display.badgeLabel} tone={badgeTone} />
-      <div className="timeline-main">
-        <div className={"timeline-title" + (display.summary ? "" : " timeline-title-single")}>
-          <strong title={display.title}>{display.title}</strong>
-          {display.summary ? <span title={display.summary}>{display.summary}</span> : null}
-        </div>
-        {meta ? <div className="trace-meta">{meta}</div> : null}
-        {detail || canLoadDetail ? (
-          <details className="trace-details" onToggle={(toggleEvent) => {
-            if ((toggleEvent.currentTarget as HTMLDetailsElement).open) {
-              void loadDetail();
-            }
-          }}>
-            <summary>查看详情</summary>
-            <pre>{detail || (detailStatus === "loading" ? "正在加载" : detailStatus || "")}</pre>
-          </details>
+    <div className={"agent-message agent-message-" + kind + " " + rowTone}>
+      <div className="agent-message-avatar" aria-hidden="true">{agentTranscriptAvatar(kind)}</div>
+      <article className="agent-message-body">
+        {isNotice ? (
+          <div className="agent-notice">
+            <span className="agent-notice-kind">{speaker}</span>
+            <time dateTime={String(event.at || "")} title={fmtDateTime(event.at)}>{fmtTime(event.at)}</time>
+            <Badge label={display.badgeLabel} tone={badgeTone} />
+            <strong title={display.title}>{display.title}</strong>
+            {display.summary ? <span title={display.summary}>{display.summary}</span> : null}
+            {meta ? <em className="trace-meta" title={meta}>{meta}</em> : null}
+            {renderTraceDetails()}
+          </div>
+        ) : (
+          <div className="agent-message-head">
+            <strong className="agent-speaker">{speaker}</strong>
+            <time dateTime={String(event.at || "")} title={fmtDateTime(event.at)}>{fmtTime(event.at)}</time>
+            {kind === "tool" ? <Badge label={display.badgeLabel} tone={badgeTone} /> : null}
+            {meta ? <span className="trace-meta" title={meta}>{meta}</span> : null}
+            {kind === "tool" ? null : renderTraceDetails()}
+          </div>
+        )}
+        {!isNotice && kind === "tool" ? (
+          <div className={"agent-tool-step " + toolTone}>
+            <div>
+              <strong title={display.title}>{display.title}</strong>
+              {display.summary ? <em title={display.summary}>{display.summary}</em> : null}
+            </div>
+            <span className="agent-tool-status">{toolTimelineStatusLabel(event)}</span>
+            {renderTraceDetails()}
+          </div>
+        ) : !isNotice ? (
+          <div className="agent-message-content">
+            <p title={display.title}>{display.title}</p>
+            {display.summary ? <span title={display.summary}>{display.summary}</span> : null}
+          </div>
         ) : null}
-      </div>
+      </article>
     </div>
   );
 }
@@ -1357,9 +1478,10 @@ function InboundTable({ items }: { readonly items: readonly Record<string, any>[
   );
 }
 
-function JobsTable({ session, jobs }: {
+function JobsTable({ session, jobs, expectedCount }: {
   readonly session: SessionRecord;
   readonly jobs: readonly Record<string, any>[];
+  readonly expectedCount?: number;
 }): React.JSX.Element {
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -1399,7 +1521,7 @@ function JobsTable({ session, jobs }: {
     }
   }
 
-  if (!jobs.length) return <div className="summary-detail">没有任务</div>;
+  if (!jobs.length) return <div className="summary-detail">{expectedCount ? "任务明细加载中" : "没有运行任务"}</div>;
   return (
     <>
       <table className="table" style={{ marginTop: 10 }}>
@@ -1444,10 +1566,10 @@ function sessionMatchesFilter(
   authProfileByName?: ReadonlyMap<string, SessionRecord>
 ): boolean {
   const authProfile = session.authProfileName ? authProfileByName?.get(String(session.authProfileName)) : null;
-  if (mode === "ongoing" && !session.activeTurnId && !session.openInboundCount && !session.runningBackgroundJobCount) return false;
+  if (mode === "ongoing" && !session.activeTurnId && !session.openInboundCount && !activeBackgroundJobCount(session)) return false;
   if (mode === "active" && !session.activeTurnId) return false;
   if (mode === "inbound" && !session.openInboundCount) return false;
-  if (mode === "jobs" && !session.runningBackgroundJobCount) return false;
+  if (mode === "jobs" && !activeBackgroundJobCount(session)) return false;
   if (mode === "issues" && !sessionAuthBlockActive(session, authProfile)) return false;
   if (mode === "usage" && !session.usage?.turnCount) return false;
   return true;
@@ -1477,8 +1599,9 @@ function summarizeSessionLead(session: SessionRecord): string {
     const signal = session.lastTurnSignalKind ? statusLabel(session.lastTurnSignalKind) + (session.lastTurnSignalReason ? "：" + session.lastTurnSignalReason : "") : "正在运行";
     return "当前回合：" + shortValue(session.activeTurnId, 18) + " · " + signal;
   }
-  if (session.backgroundJobs?.length) {
-    const running = session.backgroundJobs.find((job: Record<string, any>) => job.status === "running") || session.backgroundJobs[0];
+  const activeJob = activeBackgroundJobs(session)[0];
+  if (activeJob) {
+    const running = activeJob;
     return (running.kind || "任务") + "（" + statusLabel(running.status || "?") + "）";
   }
   if (session.lastTurnSignalKind) return statusLabel(session.lastTurnSignalKind) + (session.lastTurnSignalReason ? "：" + session.lastTurnSignalReason : "");
@@ -1637,6 +1760,20 @@ function statusTone(status: unknown): string {
   if (value.startsWith("agent_")) return "info";
   if (["deploy", "rollback"].includes(value)) return "info";
   return "";
+}
+
+function toolTimelineStatusLabel(event: TimelineEvent): string {
+  if (event.status) {
+    return statusLabel(event.status);
+  }
+  const type = String(event.type || "").toLowerCase();
+  if (type === "agent_tool_call") {
+    return "运行中";
+  }
+  if (type === "agent_tool_result") {
+    return "完成";
+  }
+  return "工具";
 }
 
 function jobCancellable(job: Record<string, any>): boolean {

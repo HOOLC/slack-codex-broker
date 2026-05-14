@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  activeBackgroundJobCount,
   renderSessionMeta,
   sessionActivityAt,
   sessionQueueState,
@@ -113,6 +114,117 @@ describe("admin session timeline display", () => {
       badgeLabel: "Assistant",
       title: "已经合并并部署，线上健康检查正常。",
       summary: ""
+    });
+  });
+
+  it("shows Slack post-message tool calls as bot messages", () => {
+    const command = "/bin/zsh -lc \"curl -sS -X POST http://127.0.0.1:3001/slack/post-message -H 'content-type: application/json' -d '{\\\"channel_id\\\":\\\"C123\\\",\\\"thread_ts\\\":\\\"111.222\\\",\\\"text\\\":\\\"已经合并并部署。\\\",\\\"kind\\\":\\\"final\\\"}'\"";
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      title: "工具结果",
+      summary: "exec_command",
+      status: "completed",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command,
+        exitCode: 0,
+        durationMs: 810,
+        aggregatedOutput: "{\"ok\":true}"
+      })
+    })).toEqual({
+      badgeLabel: "Bot",
+      title: "已经合并并部署。",
+      summary: "Slack final · 已发送"
+    });
+  });
+
+  it("shows Slack post-message text from deeply escaped curl payloads", () => {
+    const command = "/bin/zsh -lc \"curl -sS -X POST http://127.0.0.1:3001/slack/post-message -H 'content-type: application/json' -d '{\\\\\\\"channel_id\\\\\\\":\\\\\\\"C123\\\\\\\",\\\\\\\"thread_ts\\\\\\\":\\\\\\\"111.222\\\\\\\",\\\\\\\"text\\\\\\\":\\\\\\\"我会 re-review PR #246 latest head，然后把结果提交到 GitHub。\\\\\\\",\\\\\\\"kind\\\\\\\":\\\\\\\"progress\\\\\\\"}'\"";
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      title: "工具结果",
+      summary: "exec_command",
+      status: "completed",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command,
+        exitCode: 0,
+        durationMs: 810,
+        aggregatedOutput: "{\"ok\":true}"
+      })
+    })).toEqual({
+      badgeLabel: "Bot",
+      title: "我会 re-review PR #246 latest head，然后把结果提交到 GitHub。",
+      summary: "Slack progress · 已发送"
+    });
+  });
+
+  it("keeps message bodies intact instead of truncating by character count", () => {
+    const longMessage = "这是一段需要靠布局省略而不是按字符硬切的消息正文。".repeat(32);
+    expect(longMessage.length).toBeGreaterThan(320);
+
+    expect(getTimelineEventDisplay({
+      type: "agent_assistant_message",
+      title: "Assistant 消息",
+      summary: "Replied in Slack.",
+      detail: longMessage
+    }).title).toBe(longMessage);
+
+    expect(getTimelineEventDisplay({
+      type: "agent_input_received",
+      title: "用户消息",
+      metadata: {
+        source: "slack_user"
+      },
+      detail: [
+        "structured_message_json:",
+        "```json",
+        JSON.stringify({
+          source: "app_mention",
+          sender: {
+            display_name: "User"
+          },
+          text_with_resolved_mentions: longMessage
+        }),
+        "```"
+      ].join("\n")
+    }).title).toBe(longMessage);
+
+    const command = "/bin/zsh -lc \"curl -sS -X POST http://127.0.0.1:3001/slack/post-message -H 'content-type: application/json' -d '" +
+      JSON.stringify({
+        channel_id: "C123",
+        thread_ts: "111.222",
+        text: longMessage,
+        kind: "progress"
+      }).replace(/"/g, "\\\"") +
+      "'\"";
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      title: "工具结果",
+      summary: "exec_command",
+      status: "completed",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command,
+        exitCode: 0
+      })
+    }).title).toBe(longMessage);
+  });
+
+  it("shows Slack post-state tool calls as session state instead of bot messages", () => {
+    const command = "curl -sS -X POST http://127.0.0.1:3001/slack/post-state -H 'content-type: application/json' -d '{\"channel_id\":\"C123\",\"thread_ts\":\"111.222\",\"kind\":\"wait\",\"reason\":\"等待 CI\"}'";
+    expect(getTimelineEventDisplay({
+      type: "agent_tool_result",
+      status: "completed",
+      toolName: "exec_command",
+      detail: JSON.stringify({
+        command,
+        exitCode: 0
+      })
+    })).toEqual({
+      badgeLabel: "状态",
+      title: "记录 wait 状态",
+      summary: "等待 CI"
     });
   });
 
@@ -358,7 +470,7 @@ describe("admin session row display", () => {
     expect(shouldShowSessionState({ rank: 10 })).toBe(false);
   });
 
-  it("only shows job count when jobs exist and keeps distinct states visible", () => {
+  it("only shows active job count and keeps distinct states visible", () => {
     const meta = renderSessionMeta({
       key: "C123:111.222",
       channelId: "C123",
@@ -382,14 +494,16 @@ describe("admin session row display", () => {
     const labels = meta.map((item) => item.label);
 
     expect(labels).toContain("#deep-review");
-    expect(labels).toContain("Jobs 2");
+    expect(labels).toContain("Jobs 1");
+    expect(labels).not.toContain("Jobs 2");
     expect(shouldShowSessionState({ rank: 50 })).toBe(true);
   });
 
-  it("does not promote failed jobs to the session problem state", () => {
+  it("does not promote historical jobs to current session state", () => {
     const session = {
       failedBackgroundJobCount: 2,
       backgroundJobCount: 2,
+      runningBackgroundJobCount: 2,
       backgroundJobs: [
         {
           id: "completed-job",
@@ -410,16 +524,47 @@ describe("admin session row display", () => {
     const state = sessionQueueState(session);
     const meta = renderSessionMeta(session, new Map());
 
+    expect(activeBackgroundJobCount(session)).toBe(0);
     expect(state).toMatchObject({
       label: "空闲",
       tone: "",
       rank: 0
     });
     expect(shouldShowSessionState(state)).toBe(false);
-    expect(meta.map((item) => item.label)).toContain("Jobs 2");
+    expect(meta.find((item) => item.key === "jobs")).toBeUndefined();
+    expect(meta.map((item) => item.label)).not.toContain("Jobs 2");
     expect(meta.map((item) => item.label)).not.toContain("失败 2");
+  });
+
+  it("treats registered and running jobs as active work", () => {
+    const session = {
+      backgroundJobCount: 3,
+      runningBackgroundJobCount: 0,
+      backgroundJobs: [
+        {
+          id: "registered-job",
+          kind: "watch_ci",
+          status: "registered"
+        },
+        {
+          id: "completed-job",
+          kind: "watch_ci",
+          status: "completed"
+        }
+      ]
+    };
+    const state = sessionQueueState(session);
+    const meta = renderSessionMeta(session, new Map());
+
+    expect(activeBackgroundJobCount(session)).toBe(1);
+    expect(state).toMatchObject({
+      label: "后台任务",
+      tone: "good",
+      detail: "1 个运行任务"
+    });
     expect(meta.find((item) => item.key === "jobs")).toMatchObject({
-      tone: ""
+      label: "Jobs 1",
+      tone: "good"
     });
   });
 

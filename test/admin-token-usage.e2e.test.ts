@@ -261,7 +261,7 @@ describe("admin token usage e2e", () => {
     expect(adminShellSource).toContain("TopbarQuota");
     expect(adminShellSource).toContain("AdminSessionsView");
     expect(adminShellSource).not.toContain("session-react-root");
-    expect(sessionViewSource).toContain("Agent 工作台");
+    expect(sessionViewSource).not.toContain("Agent 工作台");
     expect(sessionViewSource).toContain("接管 / 链接");
     expect(sessionViewSource).toContain("当前状态");
     expect(sessionViewSource).toContain("时间线统计");
@@ -286,7 +286,10 @@ describe("admin token usage e2e", () => {
           <AuthProfilePanel`);
     expect(adminCssSource).toContain(".session-body { flex: 1; min-height: 0; overflow: hidden;");
     expect(adminCssSource).toContain(".session-timeline-panel .mini-body { flex: 1; min-height: 0; overflow: hidden;");
-    expect(adminCssSource).toContain(".timeline { flex: 1; min-height: 0; display: grid; grid-auto-rows: max-content; align-content: start;");
+    expect(adminCssSource).toContain(".timeline { flex: 1; min-height: 0; display: flex; flex-direction: column;");
+    expect(adminCssSource).toContain(".agent-transcript");
+    expect(adminCssSource).toContain(".agent-message-body");
+    expect(adminCssSource).toContain(".agent-tool-step");
     expect(sessionViewSource).not.toContain("SessionHeaderPill");
     expect(sessionViewSource).not.toContain("session-detail-meta-strip");
     expect(adminCssSource).not.toContain(".session-permalink-panel .timeline");
