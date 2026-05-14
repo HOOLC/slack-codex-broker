@@ -191,7 +191,9 @@ describe("admin session performance contract", () => {
       .map((event) => event.sequence)
       .filter((sequence): sequence is number => typeof sequence === "number");
     expect(first.events).toHaveLength(25);
-    expect((first.events as Array<Record<string, unknown>>).map((event) => event.type)).not.toContain("session_created");
+    expect((first.events as Array<Record<string, unknown>>).map((event) => event.type)).toEqual(
+      Array.from({ length: 25 }, () => "agent_assistant_message")
+    );
     expect(firstTraceSequences.slice(0, 3)).toEqual([96, 97, 98]);
     expect(firstTraceSequences.at(-1)).toBe(120);
     expect(first.page).toMatchObject({

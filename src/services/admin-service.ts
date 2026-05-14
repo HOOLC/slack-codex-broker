@@ -318,51 +318,6 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs
     });
 
-    const events: Array<Record<string, JsonLike>> = [
-      {
-        type: "session_created",
-        at: session.createdAt,
-        status: session.activeTurnId ? "active" : "idle",
-        summary: "Slack thread 初始化"
-      }
-    ];
-
-    for (const message of inbound.filter(isVisibleTimelineInboundMessage)) {
-      events.push({
-        type: "inbound_message",
-        at: message.updatedAt ?? message.createdAt,
-        status: message.status,
-        summary: message.text.slice(0, 160),
-        sessionKey: message.sessionKey,
-        messageTs: message.messageTs,
-        source: message.source,
-        userId: message.userId
-      });
-    }
-
-    for (const job of jobs.filter(isVisibleTimelineBackgroundJob)) {
-      events.push({
-        type: "background_job",
-        at: job.updatedAt ?? job.createdAt,
-        status: job.status,
-        summary: job.kind,
-        sessionKey: job.sessionKey,
-        jobId: job.id
-      });
-    }
-
-    const lastTurnSignalKind = session.lastTurnSignalKind;
-    if (lastTurnSignalKind && isVisibleTimelineTurnSignal(lastTurnSignalKind)) {
-      events.push({
-        type: "turn_signal",
-        at: session.lastTurnSignalAt ?? session.updatedAt,
-        status: lastTurnSignalKind,
-        summary: session.lastTurnSignalReason ?? lastTurnSignalKind,
-        sessionKey: session.key,
-        turnId: session.lastTurnSignalTurnId ?? null
-      });
-    }
-
     const tracePage = this.#listAgentTraceEventsPage(session.key, {
       limit: options.limit,
       beforeSequence: options.beforeSequence
@@ -370,7 +325,6 @@ export class AdminService {
     const agentEvents = visibleTimelineTraceEvents(tracePage.events);
     const pageLimit = clampPositiveInteger(options.limit ?? 100, 1, 500);
     const timelinePage = selectTimelinePageEvents({
-      syntheticEvents: options.beforeSequence ? [] : events,
       agentEvents: agentEvents.map(agentTraceEventToTimelineEvent),
       limit: pageLimit,
       traceHasMore: tracePage.hasMore,
@@ -2037,7 +1991,6 @@ function compareTimelineEvents(left: Record<string, JsonLike>, right: Record<str
 }
 
 function selectTimelinePageEvents(options: {
-  readonly syntheticEvents: readonly Record<string, JsonLike>[];
   readonly agentEvents: readonly Record<string, JsonLike>[];
   readonly limit: number;
   readonly traceHasMore: boolean;
@@ -2047,7 +2000,7 @@ function selectTimelinePageEvents(options: {
   readonly hasMore: boolean;
   readonly nextBeforeSequence: number | null;
 } {
-  const newest = [...options.syntheticEvents, ...options.agentEvents]
+  const newest = [...options.agentEvents]
     .sort(compareTimelineEventsNewestFirst)
     .slice(0, options.limit);
   const returnedTraceSequences = newest
@@ -2058,7 +2011,7 @@ function selectTimelinePageEvents(options: {
     : options.traceNextBeforeSequence;
   return {
     events: newest.slice().sort(compareTimelineEvents),
-    hasMore: Boolean(nextBeforeSequence && (options.traceHasMore || options.agentEvents.length > returnedTraceSequences.length)),
+    hasMore: Boolean(nextBeforeSequence && options.traceHasMore),
     nextBeforeSequence
   };
 }
@@ -2148,18 +2101,6 @@ function toolTraceKey(event: Pick<PersistedAgentTraceEvent, "turnId" | "callId" 
     return "";
   }
   return [event.turnId ?? "", event.toolName ?? ""].join("\u001f");
-}
-
-function isVisibleTimelineInboundMessage(message: PersistedInboundMessage): boolean {
-  return message.status === "pending" || message.status === "inflight";
-}
-
-function isVisibleTimelineBackgroundJob(job: PersistedBackgroundJob): boolean {
-  return job.status !== "completed" && job.status !== "cancelled";
-}
-
-function isVisibleTimelineTurnSignal(kind: string | undefined): boolean {
-  return Boolean(kind && kind !== "final" && kind !== "completed");
 }
 
 function agentTraceEventToTimelineEvent(event: PersistedAgentTraceEvent): Record<string, JsonLike> {

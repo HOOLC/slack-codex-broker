@@ -31,8 +31,9 @@ The remaining problems are data-contract problems:
 - `/admin/api/sessions/:key/timeline` reads from newest to oldest with a bounded
   limit. The response includes a cursor for loading older events.
 - The initial timeline page is the newest page across visible timeline events.
-  Old synthetic state events such as session creation must not be injected into
-  a full latest page.
+  Synthetic state events such as session creation, current inbound messages,
+  background jobs, and turn signals are session metadata and must not be injected
+  into the paginated agent timeline.
 - The first timeline page is rendered in chronological order inside that page,
   but it is obtained by reading the newest rows first.
 - The React detail view fetches only the selected session's first timeline page.
@@ -46,8 +47,8 @@ The remaining problems are data-contract problems:
   raw `listAgentTurnUsage()` aggregation.
 - `GET /admin/api/sessions/:key/timeline?limit=50` returns at most 50 visible
   timeline events plus pagination metadata.
-- When a session has more than `limit` trace events, the first page contains the
-  newest `limit` events and does not prepend old synthetic events.
+- The first page contains only the newest agent trace events. Synthetic session
+  state is exposed through the session summary payload, not as timeline rows.
 - `before_sequence` loads older trace rows and does not reread the newest page.
 - Timeline responses include trace summary data from the per-session redundant
   summary, not from the current page size.

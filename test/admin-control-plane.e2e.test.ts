@@ -105,11 +105,7 @@ describe("admin control plane e2e", () => {
     expect(eventTypes).not.toContain("agent_turn_completed");
     expect(trace.categories).not.toHaveProperty("agent_token_count");
     expect(JSON.stringify(timeline.events)).not.toContain("tokenUsage");
-    expect(eventTypes).toEqual(expect.arrayContaining([
-      "session_created",
-      "inbound_message",
-      "background_job",
-      "turn_signal",
+    expect(eventTypes).toEqual([
       "agent_system_prompt",
       "agent_memory",
       "agent_user_message",
@@ -117,42 +113,15 @@ describe("admin control plane e2e", () => {
       "agent_assistant_message",
       "agent_tool_call",
       "agent_tool_result"
+    ]);
+    expect(eventTypes).not.toEqual(expect.arrayContaining([
+      "session_created",
+      "inbound_message",
+      "background_job",
+      "turn_signal"
     ]));
-    expect(timeline.events).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "inbound_message",
-          status: "done",
-          summary: "initial request"
-        }),
-        expect.objectContaining({
-          type: "background_job",
-          status: "completed",
-          summary: "watch_ci"
-        }),
-        expect.objectContaining({
-          type: "turn_signal",
-          status: "final"
-        })
-      ])
-    );
     expect(timeline.events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          type: "inbound_message",
-          status: "pending",
-          summary: "follow up"
-        }),
-        expect.objectContaining({
-          type: "background_job",
-          status: "running",
-          summary: "watch_ci"
-        }),
-        expect.objectContaining({
-          type: "turn_signal",
-          status: "wait",
-          summary: "waiting on CI"
-        }),
         expect.objectContaining({
           type: "agent_system_prompt",
           title: "系统 Prompt",
