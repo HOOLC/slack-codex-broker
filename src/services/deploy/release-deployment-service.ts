@@ -6,16 +6,24 @@ import { execCommand, spawnDetachedCommand } from "../../utils/exec.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const RELEASE_METADATA_FILENAME = ".broker-release.json";
-const RELEASE_STATE_SCHEMA_VERSION = 1;
+const RELEASE_STATE_SCHEMA_VERSION = 2;
+const DEFAULT_RELEASE_PACKAGE_NAME = "agent-session-broker";
 export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 90_000;
 
 export interface ReleaseMetadata {
   readonly revision: string | null;
   readonly shortRevision: string | null;
   readonly branch: string | null;
-  readonly builtAt: string;
-  readonly builtBy: string;
-  readonly builtFromHost: string;
+  readonly packageName?: string | undefined;
+  readonly packageVersion?: string | undefined;
+  readonly packageSpec?: string | undefined;
+  readonly installedAt?: string | undefined;
+  readonly installedBy?: string | undefined;
+  readonly installedFromHost?: string | undefined;
+  readonly requestedVersion?: string | null | undefined;
+  readonly builtAt?: string | undefined;
+  readonly builtBy?: string | undefined;
+  readonly builtFromHost?: string | undefined;
   readonly requestedRef?: string | null | undefined;
   readonly stateSchemaVersion: number;
 }
@@ -25,6 +33,11 @@ export interface ReleaseInfo {
   readonly targetPath: string | null;
   readonly exists: boolean;
   readonly metadata: ReleaseMetadata | null;
+}
+
+export interface ReleasePackageVersionInfo {
+  readonly version: string;
+  readonly packageSpec: string;
 }
 
 export interface WorkerHealthStatus {
@@ -43,22 +56,23 @@ export interface AdminHealthStatus {
 
 export interface ReleaseDeploymentStatus {
   readonly serviceRoot: string;
-  readonly repoRoot: string;
-  readonly repoUrl: string | null;
+  readonly packageName: string;
+  readonly npmRegistryUrl: string | null;
   readonly currentRelease: ReleaseInfo;
   readonly previousRelease: ReleaseInfo;
   readonly failedRelease: ReleaseInfo;
   readonly recentReleases: readonly ReleaseInfo[];
+  readonly recentPackageVersions: readonly ReleasePackageVersionInfo[];
   readonly admin: AdminHealthStatus | null;
   readonly worker: WorkerHealthStatus;
 }
 
 export interface DeployReleaseOptions {
-  readonly ref: string;
+  readonly version: string;
 }
 
 export interface RollbackReleaseOptions {
-  readonly ref?: string | undefined;
+  readonly version?: string | undefined;
 }
 
 export class ReleaseDeploymentService {
@@ -68,7 +82,6 @@ export class ReleaseDeploymentService {
   constructor(
     private readonly options: {
       readonly serviceRoot: string;
-      readonly repoRoot: string;
       readonly releasesRoot: string;
       readonly currentReleasePath: string;
       readonly previousReleasePath: string;
@@ -80,8 +93,9 @@ export class ReleaseDeploymentService {
       readonly workerLaunchdLabel: string;
       readonly workerBaseUrl: string;
       readonly codexAppServerPort: number;
-      readonly releaseRepoUrl?: string | undefined;
-      readonly corepackPath?: string | undefined;
+      readonly packageName?: string | undefined;
+      readonly npmPath?: string | undefined;
+      readonly npmRegistryUrl?: string | undefined;
       readonly healthCheckTimeoutMs?: number | undefined;
       readonly healthCheckIntervalMs?: number | undefined;
       readonly scheduleAdminRestart?: ((restart: () => Promise<void>) => void) | undefined;
@@ -91,23 +105,25 @@ export class ReleaseDeploymentService {
   ) {}
 
   async getStatus(): Promise<ReleaseDeploymentStatus> {
-    const [currentRelease, previousRelease, failedRelease, recentReleases, admin, worker] = await Promise.all([
+    const [currentRelease, previousRelease, failedRelease, recentReleases, recentPackageVersions, admin, worker] = await Promise.all([
       this.#readLinkedRelease(this.options.currentReleasePath),
       this.#readLinkedRelease(this.options.previousReleasePath),
       this.#readLinkedRelease(this.options.failedReleasePath),
       this.#readRecentReleases(),
+      this.#readRecentPackageVersions(),
       this.#readAdminHealth(),
       this.#readWorkerHealth()
     ]);
 
     return {
       serviceRoot: this.options.serviceRoot,
-      repoRoot: this.options.repoRoot,
-      repoUrl: await this.#readRepoUrl(),
+      packageName: this.#packageName(),
+      npmRegistryUrl: this.options.npmRegistryUrl ?? null,
       currentRelease,
       previousRelease,
       failedRelease,
       recentReleases,
+      recentPackageVersions,
       admin,
       worker
     };
@@ -115,11 +131,9 @@ export class ReleaseDeploymentService {
 
   async deploy(options: DeployReleaseOptions): Promise<ReleaseDeploymentStatus> {
     return await this.#runExclusive(async () => {
-      await this.#ensureRepoReady();
-      const revision = await this.#resolveRevision(options.ref);
-      const releaseRoot = await this.#ensureReleaseWorktree(revision);
-      const metadata = await this.#buildReleaseMetadata(revision, options.ref);
-      await this.#buildRelease(releaseRoot);
+      const version = normalizePackageVersion(options.version);
+      const releaseRoot = await this.#ensurePackageRelease(version);
+      const metadata = this.#buildReleaseMetadata(version);
       await this.#writeReleaseMetadata(releaseRoot, metadata);
       await this.#activateRelease(releaseRoot);
       return await this.getStatus();
@@ -128,8 +142,8 @@ export class ReleaseDeploymentService {
 
   async rollback(options: RollbackReleaseOptions = {}): Promise<ReleaseDeploymentStatus> {
     return await this.#runExclusive(async () => {
-      const releaseRoot = options.ref
-        ? await this.#resolveRollbackRelease(options.ref)
+      const releaseRoot = options.version
+        ? await this.#requireInstalledPackageRelease(options.version)
         : await this.#requirePreviousRelease();
       await this.#activateRelease(releaseRoot);
       return await this.getStatus();
@@ -158,22 +172,47 @@ export class ReleaseDeploymentService {
     }
   }
 
-  async #resolveRollbackRelease(ref: string): Promise<string> {
-    const directPath = path.join(this.options.releasesRoot, ref);
-    if (await fileExists(directPath)) {
-      return directPath;
+  async #ensurePackageRelease(version: string): Promise<string> {
+    const installRoot = this.#installRootForVersion(version);
+    const packageRoot = this.#packageRootForInstallRoot(installRoot);
+    if (await this.#isUsablePackageRoot(packageRoot)) {
+      return packageRoot;
     }
 
-    await this.#ensureRepoReady();
-    const revision = await this.#resolveRevision(ref);
-    const releaseRoot = await this.#ensureReleaseWorktree(revision);
-    const metadataPath = path.join(releaseRoot, RELEASE_METADATA_FILENAME);
-    if (!(await fileExists(metadataPath))) {
-      const metadata = await this.#buildReleaseMetadata(revision, ref);
-      await this.#buildRelease(releaseRoot);
-      await this.#writeReleaseMetadata(releaseRoot, metadata);
+    await ensureDir(this.options.releasesRoot);
+    const tempRoot = `${installRoot}.tmp-${process.pid}-${Date.now()}`;
+    await fs.rm(tempRoot, { force: true, recursive: true });
+
+    try {
+      await this.#exec(this.#npmPath(), [
+        "install",
+        "--prefix",
+        tempRoot,
+        "--omit=dev",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        ...this.#npmRegistryArgs(),
+        packageSpec(this.#packageName(), version)
+      ]);
+      const tempPackageRoot = this.#packageRootForInstallRoot(tempRoot);
+      await this.#assertUsablePackageRoot(tempPackageRoot);
+      await fs.rm(installRoot, { force: true, recursive: true });
+      await fs.rename(tempRoot, installRoot);
+      return packageRoot;
+    } catch (error) {
+      await fs.rm(tempRoot, { force: true, recursive: true });
+      throw error;
     }
-    return releaseRoot;
+  }
+
+  async #requireInstalledPackageRelease(version: string): Promise<string> {
+    const normalized = normalizePackageVersion(version);
+    const packageRoot = this.#packageRootForInstallRoot(this.#installRootForVersion(normalized));
+    if (!(await this.#isUsablePackageRoot(packageRoot))) {
+      throw new Error(`Package release is not installed locally: ${this.#packageName()}@${normalized}`);
+    }
+    return packageRoot;
   }
 
   async #requirePreviousRelease(): Promise<string> {
@@ -184,76 +223,20 @@ export class ReleaseDeploymentService {
     return previous.targetPath;
   }
 
-  async #ensureRepoReady(): Promise<void> {
-    if (!(await fileExists(path.join(this.options.repoRoot, ".git")))) {
-      if (!this.options.releaseRepoUrl) {
-        throw new Error("Missing release repo clone and RELEASE_REPO_URL is not configured.");
-      }
-      await ensureDir(path.dirname(this.options.repoRoot));
-      await this.#exec("git", ["clone", this.options.releaseRepoUrl, this.options.repoRoot]);
-    }
-
-    if (this.options.releaseRepoUrl) {
-      await this.#exec("git", ["-C", this.options.repoRoot, "remote", "set-url", "origin", this.options.releaseRepoUrl]);
-    }
-
-    await this.#exec("git", ["-C", this.options.repoRoot, "fetch", "--prune", "--tags", "origin"]);
-  }
-
-  async #resolveRevision(ref: string): Promise<string> {
-    const result = await this.#exec("git", ["-C", this.options.repoRoot, "rev-parse", `${ref}^{commit}`]);
-    return result.stdout.trim();
-  }
-
-  async #ensureReleaseWorktree(revision: string): Promise<string> {
-    const releaseRoot = path.join(this.options.releasesRoot, revision);
-    if (await fileExists(path.join(releaseRoot, ".git"))) {
-      const existingRevision = (await this.#exec("git", ["-C", releaseRoot, "rev-parse", "HEAD"])).stdout.trim();
-      if (existingRevision === revision) {
-        return releaseRoot;
-      }
-      throw new Error(`Existing release path points at a different revision: ${releaseRoot}`);
-    }
-
-    if (await fileExists(releaseRoot)) {
-      await fs.rm(releaseRoot, { force: true, recursive: true });
-      await this.#exec("git", ["-C", this.options.repoRoot, "worktree", "prune"]);
-    }
-
-    await ensureDir(this.options.releasesRoot);
-    await this.#exec("git", ["-C", this.options.repoRoot, "worktree", "add", "--detach", releaseRoot, revision]);
-    return releaseRoot;
-  }
-
-  async #buildReleaseMetadata(revision: string, requestedRef: string): Promise<ReleaseMetadata> {
-    let branch: string | null = null;
-    try {
-      const result = await this.#exec("git", ["-C", this.options.repoRoot, "branch", "--contains", revision, "--format=%(refname:short)"]);
-      branch = result.stdout
-        .split(/\r?\n/)
-        .map((entry) => entry.trim())
-        .find(Boolean) ?? null;
-    } catch {
-      branch = null;
-    }
-
+  #buildReleaseMetadata(version: string): ReleaseMetadata {
     return {
-      revision,
-      shortRevision: revision.slice(0, 12),
-      branch,
-      builtAt: new Date().toISOString(),
-      builtBy: process.env.USER || process.env.LOGNAME || "unknown",
-      builtFromHost: process.env.HOSTNAME || "unknown",
-      requestedRef,
+      revision: null,
+      shortRevision: null,
+      branch: null,
+      packageName: this.#packageName(),
+      packageVersion: version,
+      packageSpec: packageSpec(this.#packageName(), version),
+      requestedVersion: version,
+      installedAt: new Date().toISOString(),
+      installedBy: process.env.USER || process.env.LOGNAME || "unknown",
+      installedFromHost: process.env.HOSTNAME || "unknown",
       stateSchemaVersion: RELEASE_STATE_SCHEMA_VERSION
     };
-  }
-
-  async #buildRelease(releaseRoot: string): Promise<void> {
-    const corepack = this.options.corepackPath || "corepack";
-    await this.#exec(corepack, ["pnpm", "install", "--frozen-lockfile"], { cwd: releaseRoot });
-    await this.#exec(corepack, ["pnpm", "build"], { cwd: releaseRoot });
-    await this.#exec(corepack, ["pnpm", "install", "--prod", "--frozen-lockfile"], { cwd: releaseRoot });
   }
 
   async #writeReleaseMetadata(releaseRoot: string, metadata: ReleaseMetadata): Promise<void> {
@@ -434,30 +417,6 @@ export class ReleaseDeploymentService {
     };
   }
 
-  async #assertAdminHealthy(): Promise<void> {
-    if (!this.options.adminLaunchdLabel || !this.options.adminBaseUrl) {
-      return;
-    }
-
-    const timeoutMs = this.options.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS;
-    const intervalMs = this.options.healthCheckIntervalMs ?? 500;
-    const deadline = Date.now() + timeoutMs;
-    let lastStatus = await this.#readAdminHealth();
-
-    while (Date.now() < deadline) {
-      if (lastStatus?.launchdLoaded && lastStatus.healthOk) {
-        return;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      lastStatus = await this.#readAdminHealth();
-    }
-
-    throw new Error(
-      `Admin failed health checks: launchdLoaded=${lastStatus?.launchdLoaded ?? false} healthOk=${lastStatus?.healthOk ?? false}`
-    );
-  }
-
   #scheduleAdminRestart(reason: string): void {
     if (!this.options.adminPlistPath || !this.options.adminLaunchdLabel) {
       return;
@@ -554,19 +513,6 @@ export class ReleaseDeploymentService {
     });
   }
 
-  async #readRepoUrl(): Promise<string | null> {
-    if (!(await fileExists(path.join(this.options.repoRoot, ".git")))) {
-      return this.options.releaseRepoUrl ?? null;
-    }
-
-    try {
-      const result = await this.#exec("git", ["-C", this.options.repoRoot, "remote", "get-url", "origin"]);
-      return result.stdout.trim() || this.options.releaseRepoUrl || null;
-    } catch {
-      return this.options.releaseRepoUrl ?? null;
-    }
-  }
-
   async #readRecentReleases(): Promise<readonly ReleaseInfo[]> {
     if (!(await fileExists(this.options.releasesRoot))) {
       return [];
@@ -575,9 +521,13 @@ export class ReleaseDeploymentService {
     const entries = await fs.readdir(this.options.releasesRoot, { withFileTypes: true });
     const releases = await Promise.all(
       entries
-        .filter((entry) => entry.isDirectory())
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
         .map(async (entry) => {
-          const targetPath = path.join(this.options.releasesRoot, entry.name);
+          const installRoot = path.join(this.options.releasesRoot, entry.name);
+          const targetPath = await this.#resolveReleaseRootFromInstallEntry(installRoot);
+          if (!targetPath) {
+            return null;
+          }
           const metadata = await this.#readReleaseMetadata(targetPath);
           const stat = await fs.stat(targetPath);
           return {
@@ -591,9 +541,40 @@ export class ReleaseDeploymentService {
     );
 
     return releases
+      .filter((release): release is NonNullable<typeof release> => Boolean(release))
       .sort((left, right) => right.mtimeMs - left.mtimeMs)
       .slice(0, 10)
       .map(({ mtimeMs: _mtimeMs, ...release }) => release);
+  }
+
+  async #resolveReleaseRootFromInstallEntry(installRoot: string): Promise<string | null> {
+    const packageRoot = this.#packageRootForInstallRoot(installRoot);
+    if (await fileExists(packageRoot)) {
+      return packageRoot;
+    }
+    if (await fileExists(path.join(installRoot, RELEASE_METADATA_FILENAME))) {
+      return installRoot;
+    }
+    return null;
+  }
+
+  async #readRecentPackageVersions(): Promise<readonly ReleasePackageVersionInfo[]> {
+    try {
+      const result = await this.#exec(this.#npmPath(), [
+        "view",
+        this.#packageName(),
+        "versions",
+        "--json",
+        ...this.#npmRegistryArgs()
+      ]);
+      return parsePackageVersions(result.stdout, this.#packageName()).slice(0, 20);
+    } catch (error) {
+      logger.warn("Failed to read package versions for deployment status", {
+        packageName: this.#packageName(),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return [];
+    }
   }
 
   async #readLinkedRelease(linkPath: string): Promise<ReleaseInfo> {
@@ -640,6 +621,49 @@ export class ReleaseDeploymentService {
     await fs.rename(tempPath, linkPath);
   }
 
+  async #isUsablePackageRoot(packageRoot: string): Promise<boolean> {
+    try {
+      await this.#assertUsablePackageRoot(packageRoot);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async #assertUsablePackageRoot(packageRoot: string): Promise<void> {
+    const required = [
+      path.join(packageRoot, "dist", "src", "admin-index.js"),
+      path.join(packageRoot, "dist", "src", "worker-index.js"),
+      path.join(packageRoot, "scripts", "ops", "macos-launchd-launcher.mjs"),
+      path.join(packageRoot, "scripts", "ops", "macos-launchd-restart.mjs")
+    ];
+    for (const filePath of required) {
+      if (!(await fileExists(filePath))) {
+        throw new Error(`Installed package is missing required runtime file: ${filePath}`);
+      }
+    }
+  }
+
+  #installRootForVersion(version: string): string {
+    return path.join(this.options.releasesRoot, `npm-${version}`);
+  }
+
+  #packageRootForInstallRoot(installRoot: string): string {
+    return path.join(installRoot, "node_modules", ...this.#packageName().split("/"));
+  }
+
+  #packageName(): string {
+    return this.options.packageName || DEFAULT_RELEASE_PACKAGE_NAME;
+  }
+
+  #npmPath(): string {
+    return this.options.npmPath || "npm";
+  }
+
+  #npmRegistryArgs(): readonly string[] {
+    return this.options.npmRegistryUrl ? ["--registry", this.options.npmRegistryUrl] : [];
+  }
+
   async #exec(
     command: string,
     args: readonly string[],
@@ -662,4 +686,29 @@ export class ReleaseDeploymentService {
     const spawnDetached = this.options.spawnDetached ?? spawnDetachedCommand;
     spawnDetached(command, args, options);
   }
+}
+
+function packageSpec(packageName: string, version: string): string {
+  return `${packageName}@${version}`;
+}
+
+function normalizePackageVersion(version: string): string {
+  const normalized = String(version || "").trim();
+  if (!normalized || !/^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(normalized)) {
+    throw new Error(`Invalid package version: ${version}`);
+  }
+  return normalized;
+}
+
+function parsePackageVersions(stdout: string, packageName: string): readonly ReleasePackageVersionInfo[] {
+  const parsed = JSON.parse(stdout || "[]") as unknown;
+  const versions = Array.isArray(parsed) ? parsed : typeof parsed === "string" ? [parsed] : [];
+  return versions
+    .map((version) => String(version || "").trim())
+    .filter(Boolean)
+    .reverse()
+    .map((version) => ({
+      version,
+      packageSpec: packageSpec(packageName, version)
+    }));
 }

@@ -297,7 +297,7 @@ describe("admin session row display", () => {
         account: {
           ok: true,
           account: {
-            email: "hejiachen@toeverything.info",
+            email: "operator@example.com",
             planType: "prolite"
           }
         },
@@ -335,7 +335,6 @@ describe("admin session row display", () => {
     const labels = meta.map((item) => item.label);
 
     expect(labels).toEqual(["#ops", "7d 64% / 0.64", "Token 5.1K"]);
-    expect(labels.join(" ")).not.toContain("hejiachen@toeverything.info");
     expect(labels.join(" ")).not.toContain("Pro Lite");
     expect(shouldShowSessionState({ rank: 10 })).toBe(false);
   });

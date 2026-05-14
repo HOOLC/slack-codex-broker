@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { formatAuthQuotaDisplay, remainingPercent, weightedWeeklyQuotaScore, daysUntilReset } from "../auth-profile-quota";
+import {
+  formatAuthQuotaDisplay,
+  formatWeightedWeeklyQuotaScore,
+  remainingPercent,
+  weightedWeeklyQuotaScore,
+  daysUntilReset
+} from "../auth-profile-quota";
 import {
   profileAccountLabel,
   profilePlanLabel,
@@ -107,13 +113,13 @@ function OperationsView({ status }: {
   const [githubStatus, setGitHubStatus] = useState<string | null>(null);
 
   return (
-    <>
-      <div className="view-grid">
+    <div className="ops-page">
+      <div className="view-grid ops-grid">
         <DeployPanel status={status} message={deployStatus} setMessage={setDeployStatus} />
         <OperationRecords status={status} />
       </div>
 
-      <div className="view-grid">
+      <div className="view-grid ops-grid">
         <AuthProfilesPanel
           status={status}
           message={profileStatus}
@@ -128,7 +134,7 @@ function OperationsView({ status }: {
         />
       </div>
 
-      <div className="view-grid">
+      <div className="view-grid ops-grid">
         <LogsPanel logs={status.state?.recentBrokerLogs || []} />
         <ServicePanel service={status.service || {}} />
       </div>
@@ -146,7 +152,7 @@ function OperationsView({ status }: {
           onStatus={setGitHubStatus}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -155,13 +161,21 @@ function DeployPanel({ status, message, setMessage }: {
   readonly message: string | null;
   readonly setMessage: (message: string | null) => void;
 }): React.JSX.Element {
-  const [ref, setRef] = useState("");
   const [busy, setBusy] = useState<"deploy" | "rollback" | null>(null);
+  const deployTargetOptions = useMemo(() => buildDeployTargetOptions(status.deployment), [status.deployment]);
+  const deployTargetValues = deployTargetOptions.map((option) => option.value).join("\n");
+  const [selectedDeployVersion, setSelectedDeployVersion] = useState("");
+  useEffect(() => {
+    setSelectedDeployVersion((previous) =>
+      previous && deployTargetOptions.some((option) => option.value === previous)
+        ? previous
+        : deployTargetOptions[0]?.value || ""
+    );
+  }, [deployTargetValues]);
 
   async function runDeploy(): Promise<void> {
-    const trimmed = ref.trim();
-    if (!trimmed) {
-      setMessage("必须填写发布目标");
+    if (!selectedDeployVersion) {
+      setMessage("没有可发布的 package 版本");
       return;
     }
     setBusy("deploy");
@@ -175,10 +189,10 @@ function DeployPanel({ status, message, setMessage }: {
       const payload = await requestJson("/admin/api/deploy", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ref: trimmed, allow_active: allowActive })
+        body: JSON.stringify({ version: selectedDeployVersion, allow_active: allowActive })
       });
       publishStatusFromPayload(payload);
-      setMessage(`已发布 ${trimmed} · 操作 ${payload.operation?.id || ""}`);
+      setMessage(`已发布 ${selectedDeployVersion} · 操作 ${payload.operation?.id || ""}`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -186,7 +200,11 @@ function DeployPanel({ status, message, setMessage }: {
     }
   }
 
-  async function runRollback(): Promise<void> {
+  async function runRollbackTo(version: string): Promise<void> {
+    if (!version) {
+      setMessage("缺少回滚目标");
+      return;
+    }
     setBusy("rollback");
     setMessage("正在回滚...");
     try {
@@ -198,10 +216,10 @@ function DeployPanel({ status, message, setMessage }: {
       const payload = await requestJson("/admin/api/rollback", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ allow_active: allowActive })
+        body: JSON.stringify({ version, allow_active: allowActive })
       });
       publishStatusFromPayload(payload);
-      setMessage(`已回滚 · 操作 ${payload.operation?.id || ""}`);
+      setMessage(`已回滚到 ${version} · 操作 ${payload.operation?.id || ""}`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -210,27 +228,40 @@ function DeployPanel({ status, message, setMessage }: {
   }
 
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">发布</div>
-        <button className="primary" type="button" disabled={busy !== null} onClick={() => { void runDeploy(); }}>
-          发布
-        </button>
       </div>
       <div className="panel-body">
         <div className="deploy-actions">
-          <input
-            type="text"
-            placeholder="提交 / 分支 / 标签"
-            value={ref}
-            onChange={(event) => setRef(event.target.value)}
-          />
-          <button className="secondary" type="button" disabled={busy !== null} onClick={() => { void runRollback(); }}>
-            回滚
+          <label className="deploy-target-field">
+            <span className="summary-label">Package 版本</span>
+            <select
+              id="deploy-package-version-select"
+              aria-label="Package 版本"
+              value={selectedDeployVersion}
+              disabled={deployTargetOptions.length === 0 || busy !== null}
+              onChange={(event) => setSelectedDeployVersion(event.target.value)}
+            >
+              {deployTargetOptions.length ? deployTargetOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              )) : (
+                <option value="">没有可发布的 package 版本</option>
+              )}
+            </select>
+          </label>
+          <button className="primary" type="button" disabled={busy !== null || !selectedDeployVersion} onClick={() => { void runDeploy(); }}>
+            发布
           </button>
         </div>
         <RiskPanel state={status.state || {}} />
-        <DeploymentPanel deployment={status.deployment} />
+        <DeploymentPanel
+          deployment={status.deployment}
+          rollbackBusy={busy === "rollback"}
+          onRollback={(version) => { void runRollbackTo(version); }}
+        />
         {message ? <div className={"summary-detail " + (message.includes("失败") || message.includes("必须") ? "danger" : "")} style={{ marginTop: 6 }}>{message}</div> : null}
       </div>
     </section>
@@ -243,7 +274,7 @@ function OperationRecords({ status }: {
   const operations = Array.isArray(status.operations) ? status.operations : [];
   const events = Array.isArray(status.auditEvents) ? status.auditEvents : [];
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">操作记录</div>
         <span className="badge purple">审计</span>
@@ -298,26 +329,35 @@ function AuthProfilesPanel({ status, message, setMessage, onAdd }: {
   }
 
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">账号池</div>
         <button type="button" onClick={onAdd}>添加</button>
       </div>
       <div className="panel-body maintenance-grid">
-        {profiles.length ? profiles.map((profile: Record<string, any>) => (
-          <div className="profile-row" key={profile.name || profile.path || profile.mtime}>
-            <div className="profile-line">
-              <span className="profile-account">{profileAccountLabel(profile)}</span>
-              <span className="profile-plan">{profilePlanLabel(profile) || profile.account?.error || "ChatGPT"}</span>
-            </div>
-            <ProfileQuota rateLimits={profile.rateLimits} />
-            <div className="profile-actions">
-              <button className="danger" type="button" onClick={() => { void deleteProfile(String(profile.name || "")); }}>
+        {profiles.length ? profiles.map((profile: Record<string, any>) => {
+          const quota = profileQuotaSummary(profile.rateLimits);
+          const plan = profilePlanLabel(profile);
+          const issue = profile.account?.error || profile.rateLimits?.error || "";
+          const cardTone = profile.account?.ok === false || quota.ok === false ? "danger" : quota.tone;
+          return (
+          <div className={"profile-card " + cardTone} key={profile.name || profile.path || profile.mtime} title={profileTitle(profile)}>
+            <div className="profile-card-head">
+              <div className="profile-identity">
+                <div className="profile-account-row">
+                  <span className="profile-account">{profileAccountLabel(profile)}</span>
+                  {plan ? <span className="profile-plan-badge">{plan}</span> : null}
+                </div>
+                {issue ? <div className="profile-card-subtitle">{issue}</div> : null}
+              </div>
+              <button className="profile-delete-button danger" type="button" onClick={() => { void deleteProfile(String(profile.name || "")); }}>
                 删除
               </button>
             </div>
+            <ProfileQuotaMetrics quota={quota} />
           </div>
-        )) : (
+          );
+        }) : (
           <div className="empty-state">暂无账号</div>
         )}
       </div>
@@ -332,36 +372,23 @@ function GitHubAccountsPanel({ status, message, setMessage, onBind }: {
   readonly setMessage: (message: string | null) => void;
   readonly onBind: (account: Record<string, any>) => void;
 }): React.JSX.Element {
-  const [query, setQuery] = useState("");
   const accounts = normalizeGitHubAccounts(status);
   const boundAccounts = accounts.filter((account) => account.prBinding?.state === "bound");
   const currentDefaultAccount = accounts.find((account) => account.isDefaultPrAccount);
   const defaultPrAccount = status.githubAccounts?.defaultPrAccount;
-  const boundAccountKeys = boundAccounts.map((account) => account.slackUserId).join("\n");
+  const selectableDefaultAccounts = boundAccounts;
+  const defaultSelectValue = currentDefaultAccount?.slackUserId ||
+    (defaultPrAccount?.available && defaultPrAccount.source === "env" ? "__env_default__" : "");
+  const selectableDefaultAccountKeys = selectableDefaultAccounts.map((account) => account.slackUserId).join("\n");
   const [defaultSelection, setDefaultSelection] = useState("");
   useEffect(() => {
-    const nextSelection = currentDefaultAccount?.slackUserId || boundAccounts[0]?.slackUserId || "";
+    const nextSelection = defaultSelectValue || selectableDefaultAccounts[0]?.slackUserId || "";
     setDefaultSelection((previous) =>
-      previous && boundAccounts.some((account) => account.slackUserId === previous)
+      previous && (previous === defaultSelectValue || selectableDefaultAccounts.some((account) => account.slackUserId === previous))
         ? previous
         : nextSelection
     );
-  }, [boundAccountKeys, currentDefaultAccount?.slackUserId]);
-  const filtered = accounts.filter((account) => {
-    const lower = query.trim().toLowerCase();
-    if (!lower) return true;
-    const identity = account.slackIdentity || {};
-    const binding = account.prBinding || {};
-    return [
-      account.slackUserId,
-      binding.githubLogin,
-      identity.displayName,
-      identity.realName,
-      identity.username,
-      identity.email,
-      binding.githubEmail
-    ].some((value) => String(value || "").toLowerCase().includes(lower));
-  });
+  }, [defaultSelectValue, selectableDefaultAccountKeys]);
 
   async function setDefault(slackUserId: string): Promise<void> {
     if (!slackUserId) {
@@ -387,56 +414,52 @@ function GitHubAccountsPanel({ status, message, setMessage, onBind }: {
     : defaultPrAccount?.available && defaultPrAccount.source === "env"
       ? `环境默认账号 ${defaultPrAccount.githubLogin || ""}`.trim()
       : "未设置";
-  const canSwitchDefault = Boolean(defaultSelection) && defaultSelection !== currentDefaultAccount?.slackUserId;
+  const canSwitchDefault = Boolean(defaultSelection) &&
+    defaultSelection !== defaultSelectValue &&
+    selectableDefaultAccounts.some((account) => account.slackUserId === defaultSelection);
 
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">GitHub 账号</div>
       </div>
       <div className="github-default-control">
-        <div className="github-default-summary">
-          <div className="summary-label">默认 PR 账号</div>
-          <div className="summary-detail">{currentDefaultLabel}</div>
-          {boundAccounts.length === 0 ? (
-            <div className="summary-detail">先绑定任意 Slack 用户的 GitHub OAuth 后，才能设置默认账号。</div>
-          ) : null}
-        </div>
-        <div className="github-default-actions">
+        <label className="github-default-field">
+          <span className="summary-label">默认 PR 账号</span>
           <select
-            aria-label="选择默认 PR GitHub 账号"
+            aria-label="选择候选 GitHub PR 账号"
             value={defaultSelection}
-            disabled={boundAccounts.length === 0}
+            disabled={selectableDefaultAccounts.length === 0}
             onChange={(event) => setDefaultSelection(event.target.value)}
           >
-            {boundAccounts.length ? boundAccounts.map((account) => (
+            {defaultSelectValue && !currentDefaultAccount ? (
+              <option value={defaultSelectValue}>{currentDefaultLabel}</option>
+            ) : null}
+            {selectableDefaultAccounts.length ? selectableDefaultAccounts.map((account) => (
               <option key={account.slackUserId} value={account.slackUserId}>
                 {githubAccountOptionLabel(account)}
               </option>
             )) : (
-              <option value="">暂无已绑定账号</option>
+              <option value="">未设置</option>
             )}
           </select>
+        </label>
+        <div className="github-default-actions">
           <button
             className="secondary"
             type="button"
             disabled={!canSwitchDefault}
             onClick={() => { void setDefault(defaultSelection); }}
           >
-            设为默认 PR
+            切换
           </button>
         </div>
-      </div>
-      <div className="toolbar" style={{ gridTemplateColumns: "1fr", borderTop: 0 }}>
-        <input
-          type="search"
-          placeholder="筛选 Slack / GitHub 账号..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        {boundAccounts.length === 0 ? (
+          <div className="summary-detail github-default-hint">先绑定任意 Slack 用户的 GitHub OAuth 后，才能设置默认账号。</div>
+        ) : null}
       </div>
       <div className="panel-body maintenance-grid">
-        {filtered.length ? filtered.map((account) => {
+        {accounts.length ? accounts.map((account) => {
           const identity = account.slackIdentity || {};
           const binding = account.prBinding || {};
           const label = identity.realName || identity.displayName || identity.username || account.slackUserId;
@@ -477,7 +500,7 @@ function LogsPanel({ logs }: {
   readonly logs: readonly Record<string, any>[];
 }): React.JSX.Element {
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">系统日志</div>
       </div>
@@ -499,7 +522,7 @@ function ServicePanel({ service }: {
   readonly service: Record<string, any>;
 }): React.JSX.Element {
   return (
-    <section className="panel">
+    <section className="panel ops-panel">
       <div className="panel-head">
         <div className="panel-title">运行信息</div>
       </div>
@@ -831,8 +854,10 @@ function RiskCell({ label, value, danger = false }: {
   );
 }
 
-function DeploymentPanel({ deployment }: {
+function DeploymentPanel({ deployment, rollbackBusy, onRollback }: {
   readonly deployment: any;
+  readonly rollbackBusy: boolean;
+  readonly onRollback: (ref: string) => void;
 }): React.JSX.Element {
   if (!deployment) {
     return <div className="summary-detail">Worker 发布状态不可用</div>;
@@ -842,6 +867,7 @@ function DeploymentPanel({ deployment }: {
   }
   const admin = deployment.admin || {};
   const worker = deployment.worker || {};
+  const rollbackReleases = buildRollbackReleaseOptions(deployment);
   return (
     <>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -853,52 +879,178 @@ function DeploymentPanel({ deployment }: {
       </div>
       <div className="release-stack">
         <ReleaseRow label="当前版本" release={deployment.currentRelease} />
-        <ReleaseRow label="上一版本" release={deployment.previousRelease} />
+      </div>
+      <div className="release-stack">
+        <div className="summary-label">最近已发布</div>
+        {rollbackReleases.length ? rollbackReleases.map((release) => {
+          const ref = releaseRollbackRef(release);
+          return (
+            <ReleaseRow
+              key={ref}
+              label="版本"
+              release={release}
+              action={ref ? (
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={rollbackBusy}
+                  onClick={() => onRollback(ref)}
+                >
+                  回滚
+                </button>
+              ) : null}
+            />
+          );
+        }) : (
+          <div className="summary-detail">暂无可回滚版本</div>
+        )}
       </div>
     </>
   );
 }
 
-function ReleaseRow({ label, release }: {
+function ReleaseRow({ label, release, action = null }: {
   readonly label: string;
   readonly release: any;
+  readonly action?: React.ReactNode;
 }): React.JSX.Element {
   if (!release?.targetPath) {
     return <div className="summary-detail">{label}：无</div>;
   }
   const metadata = release.metadata || {};
-  const heading = metadata.shortRevision || metadata.revision || String(release.targetPath).split("/").pop() || "release";
+  const heading = metadata.packageVersion || metadata.shortRevision || metadata.revision || String(release.targetPath).split("/").pop() || "release";
+  const detailTime = metadata.installedAt || metadata.builtAt;
   return (
     <div className="release-row">
       <div className="profile-line">
         <span className="profile-account">{label}：{heading}</span>
-        <span className="profile-plan">{metadata.branch || "detached"}</span>
+        <span className="profile-plan">{metadata.packageName || metadata.branch || "package"}</span>
       </div>
-      <div className="summary-detail">{metadata.builtAt ? fmtDateTime(metadata.builtAt) : release.targetPath}</div>
+      <div className="summary-detail">{detailTime ? fmtDateTime(detailTime) : release.targetPath}</div>
+      {action ? <div className="release-row-action">{action}</div> : null}
     </div>
   );
 }
 
-function ProfileQuota({ rateLimits }: {
-  readonly rateLimits: any;
-}): React.JSX.Element {
-  if (!rateLimits || rateLimits.ok === false) {
-    return <div className="summary-detail">{rateLimits?.error || "额度不可用"}</div>;
+type DeployTargetOption = {
+  readonly value: string;
+  readonly label: string;
+};
+
+function buildDeployTargetOptions(deployment: any): readonly DeployTargetOption[] {
+  const versions = Array.isArray(deployment?.recentPackageVersions) ? deployment.recentPackageVersions : [];
+  return versions
+    .map((entry: Record<string, any>) => {
+      const version = String(entry.version || "").trim();
+      if (!version) return null;
+      const spec = String(entry.packageSpec || "").trim();
+      return {
+        value: version,
+        label: spec || version
+      };
+    })
+    .filter((option): option is DeployTargetOption => Boolean(option));
+}
+
+function buildRollbackReleaseOptions(deployment: any): readonly Record<string, any>[] {
+  const currentTargetPath = String(deployment?.currentRelease?.targetPath || "");
+  const releases = Array.isArray(deployment?.recentReleases) ? deployment.recentReleases : [];
+  const fallback = deployment?.previousRelease?.targetPath ? [deployment.previousRelease] : [];
+  const deduped = new Map<string, Record<string, any>>();
+  for (const release of [...releases, ...fallback]) {
+    const ref = releaseRollbackRef(release);
+    if (!ref || release?.targetPath === currentTargetPath) {
+      continue;
+    }
+    deduped.set(ref, release);
   }
-  const snapshot = rateLimits.rateLimits || {};
-  const label = formatAuthQuotaDisplay({
-    primary: snapshot.primary,
-    secondary: snapshot.secondary
-  });
+  return [...deduped.values()];
+}
+
+function releaseRollbackRef(release: any): string {
+  const version = String(release?.metadata?.packageVersion || "").trim();
+  if (version) return version;
+  const targetPath = String(release?.targetPath || "").trim();
+  const installRoot = targetPath.split("/node_modules/")[0] || "";
+  const leaf = installRoot.split("/").filter(Boolean).pop() || "";
+  return leaf.startsWith("npm-") ? leaf.slice("npm-".length) : leaf;
+}
+
+function ProfileQuotaMetrics({ quota }: {
+  readonly quota: ProfileQuotaSummary;
+}): React.JSX.Element {
+  if (quota.ok === false) {
+    return <div className="profile-quota-error">{quota.error}</div>;
+  }
   return (
-    <div className="quota-grid">
-      <div className="quota-line">
-        <span>额度</span>
-        <strong>{label || "--"}</strong>
-        <span>{snapshot.secondary ? "周 " + formatResetTime(snapshot.secondary.resetsAt) : "不可用"}</span>
+    <div className="profile-quota-block" title={quota.fullLabel}>
+      <div className="profile-quota-metrics">
+        <div className={"profile-quota-metric " + quota.tone}>
+          <span>7d 剩余</span>
+          <strong>{quota.remainingLabel}</strong>
+        </div>
+        <div className={"profile-quota-metric " + quota.tone}>
+          <span>加权</span>
+          <strong>{quota.scoreLabel}</strong>
+        </div>
+        <div className="profile-quota-metric">
+          <span>重置</span>
+          <strong>{quota.resetLabel}</strong>
+        </div>
       </div>
+      {quota.shortLabel ? (
+        <div className="profile-short-window">
+          <span>短窗</span>
+          <strong>{quota.shortLabel}</strong>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+type ProfileQuotaSummary =
+  | {
+      readonly ok: true;
+      readonly fullLabel: string;
+      readonly remainingLabel: string;
+      readonly scoreLabel: string;
+      readonly resetLabel: string;
+      readonly shortLabel: string | null;
+      readonly tone: Tone;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly tone: Tone;
+    };
+
+function profileQuotaSummary(rateLimits: any): ProfileQuotaSummary {
+  if (!rateLimits || rateLimits.ok === false) {
+    return {
+      ok: false,
+      error: rateLimits?.error || "额度不可用",
+      tone: "danger"
+    };
+  }
+
+  const snapshot = rateLimits.rateLimits || {};
+  const secondary = snapshot.secondary || {};
+  const fullLabel = formatAuthQuotaDisplay({
+    primary: snapshot.primary,
+    secondary
+  }) || "额度未知";
+  const [weeklyLabel, ...shortParts] = fullLabel.split(" | ");
+  const remaining = remainingPercent(secondary.usedPercent);
+  const score = weightedWeeklyQuotaScore(remaining, daysUntilReset(secondary.resetsAt));
+  return {
+    ok: true,
+    fullLabel,
+    remainingLabel: remaining === undefined ? "--" : `${Math.round(remaining)}%`,
+    scoreLabel: formatWeightedWeeklyQuotaScore(score),
+    resetLabel: formatResetTime(secondary.resetsAt),
+    shortLabel: shortParts.length ? shortParts.join(" | ") : null,
+    tone: quotaTone(remaining ?? 100) || (weeklyLabel ? "" : "warn")
+  };
 }
 
 function Badge({ label, tone = "" }: {
@@ -923,7 +1075,7 @@ async function loadAdminStatus(): Promise<AdminStatus> {
 }
 
 async function loadAdminSessionsStatus(): Promise<AdminStatus> {
-  const sessionsPayload = await requestJson("/admin/api/sessions", { timeoutMs: 15_000 });
+  const sessionsPayload = await requestJson("/admin/api/sessions", { timeoutMs: 45_000 });
   const sessions = Array.isArray(sessionsPayload.sessions) ? sessionsPayload.sessions : [];
   return {
     ok: true,
@@ -936,7 +1088,7 @@ async function loadAdminSessionsStatus(): Promise<AdminStatus> {
 }
 
 async function loadAdminOverview(): Promise<Record<string, any>> {
-  return await requestJson("/admin/api/overview", { timeoutMs: 8_000 });
+  return await requestJson("/admin/api/overview", { timeoutMs: 45_000 });
 }
 
 async function loadAdminLogs(): Promise<Record<string, any>> {
@@ -1279,7 +1431,7 @@ function operationLabel(value: unknown): string {
 }
 
 function pickOperationLabel(operation: Record<string, any>): string {
-  return operation?.request?.ref || operation?.request?.name || operation?.request?.slackUserId || operation?.id || "-";
+  return operation?.request?.version || operation?.request?.ref || operation?.request?.name || operation?.request?.slackUserId || operation?.id || "-";
 }
 
 function fmtTime(value: unknown): string {
@@ -1302,6 +1454,11 @@ function fmtDateTime(value: unknown): string {
     String(date.getMonth() + 1).padStart(2, "0"),
     String(date.getDate()).padStart(2, "0")
   ].join("-") + " " + fmtTime(value);
+}
+
+function shortRevision(value: unknown): string {
+  const text = String(value || "").trim();
+  return text.length > 12 ? text.slice(0, 12) : text;
 }
 
 function formatRelativeDuration(ms: number): string {

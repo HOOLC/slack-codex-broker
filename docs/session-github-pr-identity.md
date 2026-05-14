@@ -131,7 +131,7 @@ Example:
 Session 页面：https://...
 
 当前发起人还没有绑定 GitHub 账号。
-不绑定时，后续创建 PR 会使用默认账号 zzj3720。
+不绑定时，后续创建 PR 会使用默认账号 default-bot。
 绑定 GitHub：https://.../session/<key>/github/bind
 ```
 

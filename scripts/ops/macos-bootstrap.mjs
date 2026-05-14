@@ -8,13 +8,12 @@ import path from "node:path";
 import { repoRoot, runCommand } from "./lib.mjs";
 
 const DEFAULT_SERVICE_ROOT = repoRoot;
-const DEFAULT_ADMIN_LABEL = "com.zzj3720.slack-codex-broker";
-const DEFAULT_WORKER_LABEL = "com.zzj3720.slack-codex-broker.worker";
+const DEFAULT_ADMIN_LABEL = "io.github.hoolc.agent-session-broker";
+const DEFAULT_WORKER_LABEL = "io.github.hoolc.agent-session-broker.worker";
 const DEFAULT_NODE_PATH = "/opt/homebrew/opt/node@24/bin/node";
-const DEFAULT_COREPACK_PATH = "/opt/homebrew/opt/node@24/bin/corepack";
 const DEFAULT_CODEX_VERSION = "0.114.0";
 const DEFAULT_GEMINI_VERSION = "0.33.0";
-const DEFAULT_PNPM_VERSION = readDefaultPnpmVersion();
+const DEFAULT_PACKAGE_INFO = readDefaultPackageInfo();
 const RELEASE_METADATA_FILENAME = ".broker-release.json";
 
 const CODEX_HOME_FILE_ENTRIES = [
@@ -65,18 +64,19 @@ const BROKER_ENV_PASSTHROUGH_KEYS = [
   "BROKER_ADMIN_TOKEN"
 ];
 
-function readDefaultPnpmVersion() {
+function readDefaultPackageInfo() {
   try {
     const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-    const packageManager = packageJson.packageManager?.trim();
-    if (packageManager?.startsWith("pnpm@")) {
-      return packageManager.slice("pnpm@".length);
-    }
+    return {
+      name: packageJson.name || "agent-session-broker",
+      version: packageJson.version || "latest"
+    };
   } catch {
-    // fall back to a pinned version below
+    return {
+      name: "agent-session-broker",
+      version: "latest"
+    };
   }
-
-  return "10.33.0";
 }
 
 function parseArgs(argv) {
@@ -85,8 +85,10 @@ function parseArgs(argv) {
     adminLabel: DEFAULT_ADMIN_LABEL,
     workerLabel: DEFAULT_WORKER_LABEL,
     nodePath: DEFAULT_NODE_PATH,
-    corepackPath: DEFAULT_COREPACK_PATH,
-    pnpmVersion: DEFAULT_PNPM_VERSION,
+    npmPath: undefined,
+    packageName: DEFAULT_PACKAGE_INFO.name,
+    packageVersion: DEFAULT_PACKAGE_INFO.version,
+    npmRegistryUrl: undefined,
     codexVersion: DEFAULT_CODEX_VERSION,
     geminiVersion: DEFAULT_GEMINI_VERSION,
     startWorker: false
@@ -111,12 +113,20 @@ function parseArgs(argv) {
         options.nodePath = argv[index + 1];
         index += 1;
         break;
-      case "--corepack-path":
-        options.corepackPath = argv[index + 1];
+      case "--npm-path":
+        options.npmPath = argv[index + 1];
         index += 1;
         break;
-      case "--pnpm-version":
-        options.pnpmVersion = argv[index + 1];
+      case "--package-name":
+        options.packageName = argv[index + 1];
+        index += 1;
+        break;
+      case "--package-version":
+        options.packageVersion = argv[index + 1];
+        index += 1;
+        break;
+      case "--npm-registry-url":
+        options.npmRegistryUrl = argv[index + 1];
         index += 1;
         break;
       case "--codex-version":
@@ -149,15 +159,13 @@ function printHelp() {
       "  node scripts/ops/macos-bootstrap.mjs [options]",
       "",
       "What it does:",
-      "  - expects to run inside the VM's long-lived git clone",
-      "  - uses that clone as the stable Git source for release worktrees",
       "  - prepares shared runtime directories under the service root",
-      "  - creates an admin/worker release from the current commit under releases/<sha>",
+      "  - installs a built npm package under releases/npm-<version>",
       "  - writes admin/worker launchd plists and env files",
       "  - starts admin immediately; worker is optional",
       "",
       "Notes:",
-      "  - preferred flow: git clone on the VM, cd into the repo, then run this script there",
+      "  - preferred flow: install this package, then run this script with --package-version",
       "  - auth.json is not copied by this script; import auth profiles later through /admin",
       "  - Slack tokens come from the current shell env or an existing config/broker.env",
       "",
@@ -167,8 +175,10 @@ function printHelp() {
       `  --worker-label <label>              Worker launchd label, default ${DEFAULT_WORKER_LABEL}`,
       "  --start-worker                      Also start the worker after bootstrap",
       "  --node-path <path>                  Node binary for launchd",
-      "  --corepack-path <path>              Corepack binary",
-      "  --pnpm-version <version>            pnpm version to activate",
+      "  --npm-path <path>                   npm binary, default next to --node-path",
+      "  --package-name <name>               Broker npm package name",
+      "  --package-version <version>         Broker npm package version",
+      "  --npm-registry-url <url>            Optional npm registry URL",
       "  --codex-version <version>           codex CLI version to install globally",
       "  --gemini-version <version>          gemini CLI version to install globally"
     ].join("\n")
@@ -429,16 +439,36 @@ function buildPaths(serviceRoot, options) {
   };
 }
 
-function buildReleaseMetadata(revision) {
+function buildReleaseMetadata(packageName, packageVersion) {
   return {
-    revision,
-    shortRevision: revision ? revision.slice(0, 12) : null,
-    branch: runCommand("git", ["branch", "--show-current"], { capture: true, cwd: repoRoot }) || null,
-    builtAt: new Date().toISOString(),
-    builtBy: os.userInfo().username,
-    builtFromHost: os.hostname(),
-    stateSchemaVersion: 1
+    revision: null,
+    shortRevision: null,
+    branch: null,
+    packageName,
+    packageVersion,
+    packageSpec: packageSpec(packageName, packageVersion),
+    requestedVersion: packageVersion,
+    installedAt: new Date().toISOString(),
+    installedBy: os.userInfo().username,
+    installedFromHost: os.hostname(),
+    stateSchemaVersion: 2
   };
+}
+
+function packageSpec(packageName, version) {
+  return `${packageName}@${version}`;
+}
+
+function packageRootForInstallRoot(installRoot, packageName) {
+  return path.join(installRoot, "node_modules", ...packageName.split("/"));
+}
+
+function normalizePackageVersion(version) {
+  const normalized = String(version || "").trim();
+  if (!normalized || !/^[0-9A-Za-z][0-9A-Za-z._+-]*$/.test(normalized)) {
+    throw new Error(`Invalid package version: ${version}`);
+  }
+  return normalized;
 }
 
 function buildAdminEnv(paths, options, seedBrokerEnv) {
@@ -468,7 +498,8 @@ function buildAdminEnv(paths, options, seedBrokerEnv) {
     ADMIN_LAUNCHD_LABEL: options.adminLabel,
     WORKER_LAUNCHD_LABEL: options.workerLabel,
     ADMIN_PLIST_PATH: paths.adminPlistPath,
-    RELEASE_REPO_ROOT: paths.repoRoot,
+    RELEASE_PACKAGE_NAME: options.packageName,
+    ...(options.npmRegistryUrl ? { RELEASE_NPM_REGISTRY_URL: options.npmRegistryUrl } : {}),
     RELEASES_ROOT: paths.releasesRoot,
     CURRENT_RELEASE_PATH: paths.currentReleasePath,
     PREVIOUS_RELEASE_PATH: paths.previousReleasePath,
@@ -505,7 +536,8 @@ function buildWorkerEnv(paths, options, seedBrokerEnv) {
     WORKER_LAUNCHD_LABEL: options.workerLabel,
     ADMIN_PLIST_PATH: paths.adminPlistPath,
     WORKER_PLIST_PATH: paths.workerPlistPath,
-    RELEASE_REPO_ROOT: paths.repoRoot,
+    RELEASE_PACKAGE_NAME: options.packageName,
+    ...(options.npmRegistryUrl ? { RELEASE_NPM_REGISTRY_URL: options.npmRegistryUrl } : {}),
     RELEASES_ROOT: paths.releasesRoot,
     CURRENT_RELEASE_PATH: paths.currentReleasePath,
     PREVIOUS_RELEASE_PATH: paths.previousReleasePath,
@@ -515,9 +547,7 @@ function buildWorkerEnv(paths, options, seedBrokerEnv) {
 }
 
 async function installTooling(options) {
-  const npmPath = path.join(path.dirname(options.nodePath), "npm");
-  runCommand(options.corepackPath, ["enable"]);
-  runCommand(options.corepackPath, ["prepare", `pnpm@${options.pnpmVersion}`, "--activate"]);
+  const npmPath = options.npmPath || path.join(path.dirname(options.nodePath), "npm");
   runCommand(npmPath, [
     "install",
     "-g",
@@ -525,12 +555,6 @@ async function installTooling(options) {
     `@openai/codex@${options.codexVersion}`,
     `@google/gemini-cli@${options.geminiVersion}`
   ]);
-}
-
-async function installRepoAtPath(repoPath, options) {
-  runCommand(options.corepackPath, ["pnpm", "install", "--frozen-lockfile"], { cwd: repoPath });
-  runCommand(options.corepackPath, ["pnpm", "build"], { cwd: repoPath });
-  runCommand(options.corepackPath, ["pnpm", "install", "--prod", "--frozen-lockfile"], { cwd: repoPath });
 }
 
 async function prepareSharedHomes(paths) {
@@ -549,26 +573,36 @@ async function prepareSharedHomes(paths) {
 }
 
 async function ensureInitialWorkerRelease(paths, options) {
-  const revision = runCommand("git", ["rev-parse", "HEAD"], { capture: true, cwd: paths.repoRoot });
-  const releaseRoot = path.join(paths.releasesRoot, revision);
+  const version = normalizePackageVersion(options.packageVersion);
+  const installRoot = path.join(paths.releasesRoot, `npm-${version}`);
+  const releaseRoot = packageRootForInstallRoot(installRoot, options.packageName);
+  const npmPath = options.npmPath || path.join(path.dirname(options.nodePath), "npm");
   await ensureDir(paths.releasesRoot);
-  if (!(await fileExists(path.join(releaseRoot, ".git")))) {
-    if (await fileExists(releaseRoot)) {
-      await fs.rm(releaseRoot, { recursive: true, force: true });
-    }
-    runCommand("git", ["-C", paths.repoRoot, "worktree", "add", "--detach", releaseRoot, revision]);
+  if (!(await fileExists(releaseRoot))) {
+    await fs.rm(installRoot, { recursive: true, force: true });
+    runCommand(npmPath, [
+      "install",
+      "--prefix",
+      installRoot,
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      ...(options.npmRegistryUrl ? ["--registry", options.npmRegistryUrl] : []),
+      packageSpec(options.packageName, version)
+    ]);
   }
-  await installRepoAtPath(releaseRoot, options);
   await fs.writeFile(
     path.join(releaseRoot, RELEASE_METADATA_FILENAME),
-    `${JSON.stringify(buildReleaseMetadata(revision), null, 2)}\n`,
+    `${JSON.stringify(buildReleaseMetadata(options.packageName, version), null, 2)}\n`,
     "utf8"
   );
 
   await fs.rm(paths.currentReleasePath, { recursive: true, force: true });
   await fs.symlink(path.relative(path.dirname(paths.currentReleasePath), releaseRoot), paths.currentReleasePath, "dir");
   return {
-    revision,
+    packageName: options.packageName,
+    packageVersion: version,
     releaseRoot
   };
 }
@@ -633,7 +667,6 @@ async function main() {
 
   await prepareSharedHomes(paths);
   await installTooling(options);
-  await installRepoAtPath(paths.repoRoot, options);
   const initialRelease = await ensureInitialWorkerRelease(paths, options);
   await writeLaunchdFiles(paths, options, seedBrokerEnv);
 

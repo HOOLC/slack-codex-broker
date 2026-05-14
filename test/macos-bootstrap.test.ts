@@ -30,33 +30,12 @@ describe("macOS bootstrap", () => {
     const fakeBin = path.join(tempRoot, "bin");
     const serviceRoot = path.join(tempRoot, "service");
     const commandLog = path.join(tempRoot, "commands.log");
-    const revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const packageVersion = "0.2.0";
 
     await fs.mkdir(path.join(home, ".codex"), { recursive: true });
     await fs.mkdir(fakeBin, { recursive: true });
     await fs.mkdir(serviceRoot, { recursive: true });
-    await writeExecutable(path.join(fakeBin, "git"), [
-      "#!/bin/sh",
-      "set -eu",
-      "echo \"git $*\" >> \"$FAKE_COMMAND_LOG\"",
-      "if [ \"${1:-}\" = \"rev-parse\" ] && [ \"${2:-}\" = \"HEAD\" ]; then",
-      "  echo \"$TEST_REVISION\"",
-      "  exit 0",
-      "fi",
-      "if [ \"${1:-}\" = \"branch\" ] && [ \"${2:-}\" = \"--show-current\" ]; then",
-      "  echo main",
-      "  exit 0",
-      "fi",
-      "if [ \"${1:-}\" = \"-C\" ] && [ \"${3:-}\" = \"worktree\" ] && [ \"${4:-}\" = \"add\" ]; then",
-      "  mkdir -p \"$6/.git\"",
-      "  echo \"$7\" > \"$6/.revision\"",
-      "  exit 0",
-      "fi",
-      "echo \"unexpected git command: $*\" >&2",
-      "exit 1"
-    ].join("\n"));
-    await writeExecutable(path.join(fakeBin, "corepack"), fakeCommandScript("corepack"));
-    await writeExecutable(path.join(fakeBin, "npm"), fakeCommandScript("npm"));
+    await writeExecutable(path.join(fakeBin, "npm"), fakeNpmScript());
     await writeExecutable(path.join(fakeBin, "launchctl"), fakeCommandScript("launchctl"));
     await writeExecutable(path.join(fakeBin, "node"), fakeCommandScript("node"));
 
@@ -71,8 +50,10 @@ describe("macOS bootstrap", () => {
         "test.worker",
         "--node-path",
         path.join(fakeBin, "node"),
-        "--corepack-path",
-        path.join(fakeBin, "corepack")
+        "--npm-path",
+        path.join(fakeBin, "npm"),
+        "--package-version",
+        packageVersion
       ],
       {
         ...process.env,
@@ -80,7 +61,6 @@ describe("macOS bootstrap", () => {
         HOME: home,
         SLACK_APP_TOKEN: "xapp-test",
         SLACK_BOT_TOKEN: "xoxb-test",
-        TEST_REVISION: revision,
         FAKE_COMMAND_LOG: commandLog
       }
     );
@@ -95,7 +75,7 @@ describe("macOS bootstrap", () => {
     });
 
     const currentReleasePath = path.join(serviceRoot, "current");
-    const releaseRoot = path.join(serviceRoot, "releases", revision);
+    const releaseRoot = path.join(serviceRoot, "releases", `npm-${packageVersion}`, "node_modules", "agent-session-broker");
     await expect(fs.readlink(currentReleasePath)).resolves.toBe(path.relative(serviceRoot, releaseRoot));
 
     const adminPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.admin.plist"), "utf8");
@@ -130,6 +110,27 @@ function fakeCommandScript(command: string): string {
     "#!/bin/sh",
     "set -eu",
     `echo "${command} $*" >> "$FAKE_COMMAND_LOG"`
+  ].join("\n");
+}
+
+function fakeNpmScript(): string {
+  return [
+    "#!/bin/sh",
+    "set -eu",
+    "echo \"npm $*\" >> \"$FAKE_COMMAND_LOG\"",
+    "if [ \"${1:-}\" = \"install\" ] && [ \"${2:-}\" = \"--prefix\" ]; then",
+    "  prefix=\"$3\"",
+    "  last=\"\"",
+    "  for arg in \"$@\"; do last=\"$arg\"; done",
+    "  version=\"${last##*@}\"",
+    "  package_root=\"$prefix/node_modules/agent-session-broker\"",
+    "  mkdir -p \"$package_root/dist/src\" \"$package_root/scripts/ops\"",
+    "  : > \"$package_root/dist/src/admin-index.js\"",
+    "  : > \"$package_root/dist/src/worker-index.js\"",
+    "  : > \"$package_root/scripts/ops/macos-launchd-launcher.mjs\"",
+    "  : > \"$package_root/scripts/ops/macos-launchd-restart.mjs\"",
+    "  printf '{\"name\":\"agent-session-broker\",\"version\":\"%s\"}\\n' \"$version\" > \"$package_root/package.json\"",
+    "fi"
   ].join("\n");
 }
 

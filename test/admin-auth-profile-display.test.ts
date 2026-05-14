@@ -17,7 +17,7 @@ describe("admin auth profile display", () => {
     const sevenDays = Math.floor((now.getTime() + 7 * 24 * 60 * 60 * 1000) / 1000);
     const profile = authProfile({
       name: "575d9997-db66-4b21-979d-4d3b9597b36e",
-      email: "hejiachen@toeverything.info",
+      email: "operator@example.com",
       planType: "prolite",
       primaryUsed: 4,
       primaryResetsAt: fiveHours,
@@ -25,12 +25,12 @@ describe("admin auth profile display", () => {
       secondaryResetsAt: sevenDays
     });
 
-    expect(profileAccountLabel(profile)).toBe("hejiachen@toeverything.info");
-    expect(profileDisplayLabel(profile)).toBe("hejiachen@toeverything.info · Pro Lite");
+    expect(profileAccountLabel(profile)).toBe("operator@example.com");
+    expect(profileDisplayLabel(profile)).toBe("operator@example.com · Pro Lite");
     expect(profileQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
     expect(profileWeeklyQuotaLabel(profile, { now })).toBe("7d 64% / 0.64");
-    expect(profileOptionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 7d 64% / 0.64");
-    expect(profileSessionActionLabel(profile, { now })).toBe("hejiachen@toeverything.info · Pro Lite · 7d 64% / 0.64");
+    expect(profileOptionLabel(profile, { now })).toBe("operator@example.com · Pro Lite · 7d 64% / 0.64");
+    expect(profileSessionActionLabel(profile, { now })).toBe("operator@example.com · Pro Lite · 7d 64% / 0.64");
     expect(profileTitle(profile, { now })).toContain("内部标识 575d9997-db66-4b21-979d-4d3b9597b36e");
   });
 

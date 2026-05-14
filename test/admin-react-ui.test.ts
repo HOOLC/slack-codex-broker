@@ -41,8 +41,8 @@ describe("admin React UI architecture", () => {
     expect(shell.indexOf("const nextStatus = await loadAdminSessionsStatus()")).toBeLessThan(
       shell.indexOf("void loadAdminOverview()")
     );
-    expect(shell).toContain('requestJson("/admin/api/sessions", { timeoutMs: 15_000 })');
-    expect(shell).toContain('requestJson("/admin/api/overview", { timeoutMs: 8_000 })');
+    expect(shell).toContain('requestJson("/admin/api/sessions", { timeoutMs: 45_000 })');
+    expect(shell).toContain('requestJson("/admin/api/overview", { timeoutMs: 45_000 })');
     expect(shell).toContain('requestJson("/admin/api/logs?limit=40", { timeoutMs: 5_000 })');
     expect(shell).not.toContain('requestJson("/admin/api/status")');
   });
@@ -66,7 +66,6 @@ describe("admin React UI architecture", () => {
     expect(shell).toContain("绑定 GitHub");
     expect(shell).toContain("重新绑定 GitHub");
     expect(shell).toContain("默认 PR 账号");
-    expect(shell).toContain("选择默认 PR GitHub 账号");
     expect(shell).toContain("设为默认 PR");
     expect(shell).toContain("buildFallbackGitHubAccounts");
     expect(shell).toContain("firstUserMessage");
@@ -81,12 +80,95 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain("历史 Commit 作者");
   });
 
+  it("keeps the default GitHub PR account control from repeating the current account", async () => {
+    const shell = await readAdminShellSource();
+    const css = await fs.readFile(new URL("admin.css", adminUiRoot), "utf8");
+    expect(shell).toContain("github-default-field");
+    expect(shell).toContain("defaultSelectValue");
+    expect(shell).toContain("selectableDefaultAccounts");
+    expect(shell).toContain("选择候选 GitHub PR 账号");
+    expect(shell).toContain("切换");
+    expect(shell).not.toContain("github-default-current");
+    expect(shell).not.toContain("只有当前账号可用");
+    expect(shell).not.toContain("没有可切换账号");
+    expect(shell).not.toContain("选择默认 PR GitHub 账号");
+    expect(shell).not.toContain('<div className="summary-detail">{currentDefaultLabel}</div>');
+    expect(shell).not.toContain("candidateAccounts");
+    expect(css).toContain(".github-default-control { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;");
+    expect(css).toContain(".github-default-field { min-width: 0; display: contents;");
+    expect(css).not.toContain(".github-default-control { grid-template-columns: 1fr;");
+  });
+
+  it("uses selectable package versions instead of a free-form publish ref input", async () => {
+    const shell = await readAdminShellSource();
+    const css = await fs.readFile(new URL("admin.css", adminUiRoot), "utf8");
+    expect(shell).toContain("buildDeployTargetOptions");
+    expect(shell).toContain("recentPackageVersions");
+    expect(shell).toContain('id="deploy-package-version-select"');
+    expect(shell).toContain("Package 版本");
+    expect(shell).toContain("releaseRollbackRef");
+    expect(shell).toContain("最近已发布");
+    expect(shell).not.toContain("recentMainCommits");
+    expect(shell).not.toContain("origin/main");
+    expect(shell).not.toContain('placeholder="提交 / 分支 / 标签"');
+    expect(shell).not.toContain('const [ref, setRef] = useState("");');
+    expect(css).toContain(".deploy-actions { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;");
+    expect(css).toContain(".deploy-target-field { min-width: 0; display: contents;");
+    expect(css).not.toContain(".deploy-actions { grid-template-columns: 1fr;");
+  });
+
   it("keeps session auth profile action detailed without expanding dense quota labels", async () => {
     const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
     const authProfileDisplay = await fs.readFile(new URL("auth-profile-display.ts", adminUiRoot), "utf8");
     expect(authProfileDisplay).toContain("export function profileSessionActionLabel");
     expect(sessionView).toContain("profileSessionActionLabel(currentProfile)");
     expect(sessionView).toContain('className={"auth-profile-detail-button " + (blocked ? "danger" : "")}');
+  });
+
+  it("renders the account pool as structured profile cards instead of plain quota rows", async () => {
+    const shell = await readAdminShellSource();
+    const css = await fs.readFile(new URL("admin.css", adminUiRoot), "utf8");
+    expect(shell).toContain("profile-card");
+    expect(shell).toContain("profile-quota-metrics");
+    expect(shell).toContain("profile-quota-metric");
+    expect(shell).toContain("短窗");
+    expect(css).toContain(".profile-card");
+    expect(css).toContain(".profile-quota-metrics");
+    expect(css).toContain(".profile-delete-button");
+    expect(css).not.toContain(".profile-quota-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line);");
+    expect(css).not.toContain(".profile-quota-metric { min-width: 0; display: grid; gap: 1px; padding: 5px 6px; background: #070b10;");
+    expect(css).not.toContain(".profile-quota-metric + .profile-quota-metric");
+    expect(css).not.toContain(".profile-plan-badge { flex: 0 0 auto; border:");
+    expect(css).not.toContain(".profile-short-window { display: flex; gap: 6px; align-items: baseline; min-width: 0; padding: 3px 5px; border:");
+    expect(shell).not.toContain('<div className="quota-grid">');
+    expect(shell).not.toContain("ChatGPT Codex 账号");
+  });
+
+  it("gives operation page modules distinct boundaries without table-like internals", async () => {
+    const shell = await readAdminShellSource();
+    const css = await fs.readFile(new URL("admin.css", adminUiRoot), "utf8");
+    expect(shell).toContain('className="ops-page"');
+    expect(shell).toContain('className="view-grid ops-grid"');
+    expect(shell).toContain('className="panel ops-panel"');
+    expect(css).toContain(".ops-page");
+    expect(css).toContain(".ops-grid");
+    expect(css).toContain(".ops-panel");
+    expect(css).toContain(".ops-panel > .panel-head");
+    expect(css).toContain(".ops-panel .operation-list");
+    expect(css).not.toContain(".ops-panel .operation-list { display: grid; gap: 1px; background: var(--line);");
+    expect(css).not.toContain(".ops-panel .maintenance-grid { display: grid; gap: 1px; background: var(--line);");
+  });
+
+  it("does not render free-text search controls in the admin UI", async () => {
+    const shell = await readAdminShellSource();
+    const sessionView = await fs.readFile(new URL("session-view.tsx", adminUiRoot), "utf8");
+    const combined = shell + "\n" + sessionView;
+    expect(combined).not.toContain('type="search"');
+    expect(combined).not.toContain("sessionSearch");
+    expect(combined).not.toContain("session-search");
+    expect(combined).not.toContain("筛选会话");
+    expect(combined).not.toContain("筛选 Slack / GitHub 账号");
+    expect(combined).not.toContain("setQuery");
   });
 
   it("opens Slack threads through a backend permalink resolver", async () => {

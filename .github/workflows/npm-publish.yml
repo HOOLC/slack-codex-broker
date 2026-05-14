@@ -1,19 +1,20 @@
-name: CI
+name: Publish NPM Package
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    tags:
+      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  test:
-    name: Build and test
+  publish:
+    name: Build, test, pack, and publish
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -29,6 +30,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -47,3 +49,8 @@ jobs:
         with:
           name: agent-session-broker-npm-package
           path: artifacts/*.tgz
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

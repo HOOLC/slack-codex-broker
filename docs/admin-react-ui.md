@@ -53,6 +53,9 @@ Status data flows through a React hook backed by `admin-status-store`:
 - `/admin/api/overview` is loaded after the session index, with bounded runtime
   probes, so account quota, auth profile, GitHub, or deploy status reads cannot
   keep the whole admin page blank;
+- the browser-side session and overview request budgets must be long enough for
+  the real production data reads used by preview/admin. They stay bounded, but
+  the UI must not give up before session and account data arrive;
 - `/admin/api/overview` must not scan the full inbound-message history; Slack
   account rows are composed in React from the already loaded session summaries
   plus OAuth bindings;
@@ -109,8 +112,25 @@ be React state and refs, not global DOM lookup.
 
 The operations page must preserve existing behavior:
 
-- publish and rollback show deployment status and run preflight confirmation;
+- operation modules are first-class sections with stronger boundaries than
+  their internal rows. The page uses dedicated operations layout and panel
+  classes so publish, audit records, account pool, GitHub accounts, logs, and
+  service status read as separate modules without adding table-like separators
+  inside each module;
+- admin pages do not expose free-text search boxes. Session navigation uses
+  explicit status filters, and account panels show their full bounded lists;
+- publish uses a package-version selector instead of a free-form text field.
+  Candidates are recent npm package versions reported by the deployment service.
+  Rollback is not a parallel top-level input; each recent installed package
+  release row exposes its own rollback action. Publish and rollback still show
+  deployment status and run preflight confirmation;
 - auth profiles list current accounts, quota, and deletion;
+- auth profile rows render as structured account cards: identity and plan first,
+  then weekly remaining, weighted score, reset time, and any short-window pressure.
+  They avoid redundant dark sub-containers, repeated generic account copy, and
+  table-like internal separator lines; hierarchy comes from spacing, type, and
+  color only.
+  Deletion is a secondary danger action, not the main visual weight of the row;
 - adding auth profiles prefers device-code OAuth and keeps auth.json as the
   fallback;
 - operation records and audit records remain visible;
@@ -130,7 +150,11 @@ After the React migration, GitHub account work continues in React:
   and default PR account flag;
 - the old manual commit-author editing path is not shown; rows bind existing
   Slack users to GitHub OAuth identities;
-- setting the default PR account only accepts a bound non-revoked OAuth account.
+- setting the default PR account only accepts a bound non-revoked OAuth account;
+- the default PR control shows account identity only in the selector. Surrounding
+  text is limited to the field label and action state, so the same identity is
+  not repeated as summary, selected option, and action text. The label, selector,
+  and switch action stay on one row as a single form control group.
 
 ## Acceptance Criteria
 
@@ -140,6 +164,8 @@ After the React migration, GitHub account work continues in React:
 - `admin-shell` exports React components, not an HTML string renderer.
 - Business UI files do not use `getElementById`, `querySelector`, or
   `innerHTML` for rendering or event binding.
+- Admin business UI does not render `type="search"` inputs or keep free-text
+  search state such as `sessionSearch`.
 - `/admin` still serves one app shell and the production Vite assets.
 - `/admin/sessions/:key` still deep links into the session React view.
 - `/admin/sessions/:key/github/bind` renders a dedicated GitHub binding page
@@ -177,4 +203,10 @@ After the React migration, GitHub account work continues in React:
   failed, and already-cancelled jobs do not show a cancel action.
 - The session detail operation panel displays the selected auth profile with
   account identity, plan, and quota. Dense quota labels elsewhere remain compact.
+- The operations page account pool uses structured account cards with separate
+  quota metrics while the top quota strip remains compact.
+- The GitHub default PR account control shows account identity only once, in the
+  selector, and lays out label, selector, and action on one row.
+- The publish control uses a select for package versions and does not render a
+  free-form `提交 / 分支 / 标签` input or Git ref selector.
 - `pnpm test` and `pnpm build` pass.

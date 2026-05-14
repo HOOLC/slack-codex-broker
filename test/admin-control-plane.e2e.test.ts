@@ -556,7 +556,7 @@ describe("admin control plane e2e", () => {
     const { baseUrl, deploymentCalls } = await startAdminFixture();
 
     const deploy = await postJson(`${baseUrl}/admin/api/deploy`, {
-      ref: "main",
+      version: "0.2.0",
       allow_active: false
     });
     expect(deploy).toMatchObject({
@@ -565,11 +565,11 @@ describe("admin control plane e2e", () => {
         kind: "deploy",
         status: "succeeded",
         request: {
-          ref: "main"
+          version: "0.2.0"
         }
       }
     });
-    expect(deploymentCalls).toEqual([{ kind: "deploy", ref: "main" }]);
+    expect(deploymentCalls).toEqual([{ kind: "deploy", version: "0.2.0" }]);
 
     const operations = await readJson(`${baseUrl}/admin/api/operations`);
     expect(operations).toMatchObject({
@@ -580,7 +580,7 @@ describe("admin control plane e2e", () => {
           kind: "deploy",
           status: "succeeded",
           request: {
-            ref: "main"
+            version: "0.2.0"
           }
         }
       ]
@@ -614,7 +614,7 @@ describe("admin control plane e2e", () => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        ref: "main",
+        version: "0.2.0",
         allow_active: false
       })
     });
@@ -634,7 +634,7 @@ describe("admin control plane e2e", () => {
           kind: "deploy",
           status: "failed",
           request: {
-            ref: "main"
+            version: "0.2.0"
           }
         }
       ]
@@ -735,12 +735,12 @@ describe("admin control plane e2e", () => {
       } as never,
       deployment: {
         getStatus: async () => deploymentStatus(config),
-        deploy: async ({ ref }: { readonly ref: string }) => {
-          deploymentCalls.push({ kind: "deploy", ref });
+        deploy: async ({ version }: { readonly version: string }) => {
+          deploymentCalls.push({ kind: "deploy", version });
           return deploymentStatus(config);
         },
-        rollback: async ({ ref }: { readonly ref?: string | undefined }) => {
-          deploymentCalls.push({ kind: "rollback", ref: ref ?? null });
+        rollback: async ({ version }: { readonly version?: string | undefined }) => {
+          deploymentCalls.push({ kind: "rollback", version: version ?? null });
           return deploymentStatus(config);
         },
         restartWorker: async () => {}
@@ -1081,20 +1081,23 @@ function backgroundJob(patch: Partial<PersistedBackgroundJob>): PersistedBackgro
 function deploymentStatus(config: AppConfig): Record<string, unknown> {
   return {
     serviceRoot: config.serviceRoot ?? "",
-    repoRoot: config.serviceRoot ?? "",
-    repoUrl: "https://github.com/HOOLC/slack-codex-broker.git",
+    packageName: "agent-session-broker",
+    npmRegistryUrl: null,
     currentRelease: {
       linkPath: config.currentReleasePath ?? "",
-      targetPath: path.join(config.serviceRoot ?? "", "releases", "current"),
+      targetPath: path.join(config.serviceRoot ?? "", "releases", "npm-0.2.0", "node_modules", "agent-session-broker"),
       exists: true,
       metadata: {
-        revision: "abc123",
-        shortRevision: "abc123",
-        branch: "main",
-        builtAt: "2026-03-19T00:00:00.000Z",
-        builtBy: "test",
-        builtFromHost: "test-host",
-        stateSchemaVersion: 1
+        revision: null,
+        shortRevision: null,
+        branch: null,
+        packageName: "agent-session-broker",
+        packageVersion: "0.2.0",
+        packageSpec: "agent-session-broker@0.2.0",
+        installedAt: "2026-03-19T00:00:00.000Z",
+        installedBy: "test",
+        installedFromHost: "test-host",
+        stateSchemaVersion: 2
       }
     },
     previousRelease: {
@@ -1110,6 +1113,12 @@ function deploymentStatus(config: AppConfig): Record<string, unknown> {
       metadata: null
     },
     recentReleases: [],
+    recentPackageVersions: [
+      {
+        version: "0.2.0",
+        packageSpec: "agent-session-broker@0.2.0"
+      }
+    ],
     admin: {
       launchdLoaded: true,
       healthOk: true,

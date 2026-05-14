@@ -670,7 +670,7 @@ export class AdminService {
   }
 
   async deployRelease(options: {
-    readonly ref: string;
+    readonly version: string;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
     if (!this.options.deployment) {
@@ -680,13 +680,13 @@ export class AdminService {
     return await this.#runTrackedOperation(
       "deploy",
       {
-        ref: options.ref,
+        version: options.version,
         allowActive: options.allowActive
       },
       async () => {
         await this.#assertSafeToInterrupt(options.allowActive, "deploy");
         const deployment = await this.options.deployment!.deploy({
-          ref: options.ref
+          version: options.version
         } satisfies DeployReleaseOptions);
         return {
           ok: true,
@@ -697,7 +697,7 @@ export class AdminService {
   }
 
   async rollbackRelease(options: {
-    readonly ref?: string | undefined;
+    readonly version?: string | undefined;
     readonly allowActive: boolean;
   }): Promise<Record<string, unknown>> {
     if (!this.options.deployment) {
@@ -707,13 +707,13 @@ export class AdminService {
     return await this.#runTrackedOperation(
       "rollback",
       {
-        ref: options.ref ?? null,
+        version: options.version ?? null,
         allowActive: options.allowActive
       },
       async () => {
         await this.#assertSafeToInterrupt(options.allowActive, "rollback");
         const deployment = await this.options.deployment!.rollback({
-          ref: options.ref
+          version: options.version
         } satisfies RollbackReleaseOptions);
         return {
           ok: true,

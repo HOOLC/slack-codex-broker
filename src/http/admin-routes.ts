@@ -359,19 +359,19 @@ export async function handleAdminRequest(
       return true;
     }
 
-    const ref = readString(body.ref);
-    if (!ref) {
+    const version = readString(body.version);
+    if (!version) {
       respondJson(response, 400, {
         ok: false,
         error: "missing_required_body",
-        required: ["ref"]
+        required: ["version"]
       });
       return true;
     }
 
     await runAdminOperation(response, () =>
       options.adminService.deployRelease({
-        ref,
+        version,
         allowActive: body.allow_active === true
       })
     );
@@ -386,7 +386,7 @@ export async function handleAdminRequest(
 
     await runAdminOperation(response, () =>
       options.adminService.rollbackRelease({
-        ref: readString(body.ref) ?? undefined,
+        version: readString(body.version) ?? undefined,
         allowActive: body.allow_active === true
       })
     );

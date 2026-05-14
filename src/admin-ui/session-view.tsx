@@ -32,7 +32,6 @@ import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type Time
 
 type UiState = {
   readonly adminView: string;
-  readonly sessionSearch: string;
   readonly sessionFilter: string;
   readonly selectedSessionKey: string | null;
 };
@@ -69,18 +68,17 @@ export function AdminSessionsView(): React.JSX.Element {
   );
   const channelLabelById = useMemo(() => buildChannelLabelById(sessions), [sessions]);
   const [uiState, setUiState] = useState(loadUiState);
-  const query = uiState.sessionSearch.trim().toLowerCase();
   const mode = uiState.sessionFilter;
   const orderRef = useRef<{ viewKey: string; keys: readonly string[] }>({ viewKey: "", keys: [] });
 
   const filtered = useMemo(() => {
     return sessions
-      .filter((session) => sessionMatchesFilter(session, mode, query, authProfileByName))
+      .filter((session) => sessionMatchesFilter(session, mode, authProfileByName))
       .sort((left, right) => compareSessionsForMode(mode, left, right, authProfileByName));
-  }, [authProfileByName, mode, query, sessions]);
+  }, [authProfileByName, mode, sessions]);
 
   const filteredKeys = filtered.map((session) => String(session.key)).join("\u001f");
-  const viewKey = mode + "\n" + query;
+  const viewKey = mode;
   const filteredByKey = new Map(filtered.map((session) => [String(session.key), session]));
 
   orderRef.current = stableSessionOrder(orderRef.current, viewKey, filtered.map((session) => String(session.key)));
@@ -117,13 +115,6 @@ export function AdminSessionsView(): React.JSX.Element {
           </span>
         </div>
         <div className="toolbar">
-          <input
-            id="session-search"
-            type="search"
-            placeholder="筛选会话..."
-            value={uiState.sessionSearch}
-            onChange={(event) => updateSessionUiState({ sessionSearch: event.target.value })}
-          />
           <select
             id="session-filter"
             value={mode}
@@ -151,7 +142,7 @@ export function AdminSessionsView(): React.JSX.Element {
               />
             ))
           ) : (
-            <div className="empty-state">没有匹配的会话</div>
+            <div className="empty-state">没有符合当前状态的会话</div>
           )}
         </div>
       </section>
@@ -1255,7 +1246,6 @@ function Badge({ label, tone, title }: { readonly label: unknown; readonly tone?
 function sessionMatchesFilter(
   session: SessionRecord,
   mode: string,
-  query: string,
   authProfileByName?: ReadonlyMap<string, SessionRecord>
 ): boolean {
   const authProfile = session.authProfileName ? authProfileByName?.get(String(session.authProfileName)) : null;
@@ -1265,9 +1255,7 @@ function sessionMatchesFilter(
   if (mode === "jobs" && !session.runningBackgroundJobCount) return false;
   if (mode === "issues" && !sessionAuthBlockActive(session, authProfile)) return false;
   if (mode === "usage" && !session.usage?.turnCount) return false;
-  if (!query) return true;
-  return [session.key, session.channelId, session.channelLabel, session.workspacePath, sessionPrimaryText(session), sessionFirstText(session)]
-    .some((value) => String(value || "").toLowerCase().includes(query));
+  return true;
 }
 
 function resolveSelectedSession(sessions: readonly SessionRecord[], selectedSessionKey: string | null): SessionRecord | null {
@@ -1412,16 +1400,15 @@ function uiStateStorageKey(): string {
 }
 
 function defaultUiState(): UiState {
-  return { adminView: "sessions", sessionSearch: "", sessionFilter: "ongoing", selectedSessionKey: null };
+  return { adminView: "sessions", sessionFilter: "ongoing", selectedSessionKey: null };
 }
 
 function normalizeUiState(value: unknown): UiState {
   const next = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const adminView = ["sessions", "ops"].includes(String(next.adminView || "")) ? String(next.adminView) : "sessions";
   const sessionFilter = sessionFilters.includes(String(next.sessionFilter || "")) ? String(next.sessionFilter) : "ongoing";
-  const sessionSearch = typeof next.sessionSearch === "string" ? next.sessionSearch : "";
   const selectedSessionKey = typeof next.selectedSessionKey === "string" && next.selectedSessionKey ? next.selectedSessionKey : null;
-  return { adminView, sessionSearch, sessionFilter, selectedSessionKey };
+  return { adminView, sessionFilter, selectedSessionKey };
 }
 
 function classSafeValue(value: unknown, fallback: string): string {

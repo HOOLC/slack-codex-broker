@@ -41,8 +41,8 @@ export interface AppConfig {
   readonly brokerAdminToken?: string | undefined;
   readonly adminLaunchdLabel?: string | undefined;
   readonly workerLaunchdLabel?: string | undefined;
-  readonly releaseRepoUrl?: string | undefined;
-  readonly releaseRepoRoot?: string | undefined;
+  readonly releasePackageName: string;
+  readonly releaseNpmRegistryUrl?: string | undefined;
   readonly releasesRoot?: string | undefined;
   readonly currentReleasePath?: string | undefined;
   readonly previousReleasePath?: string | undefined;
@@ -216,8 +216,8 @@ export function loadConfig(env = process.env): AppConfig {
     brokerAdminToken: getOptional(env, "BROKER_ADMIN_TOKEN"),
     adminLaunchdLabel: getOptional(env, "ADMIN_LAUNCHD_LABEL"),
     workerLaunchdLabel: getOptional(env, "WORKER_LAUNCHD_LABEL"),
-    releaseRepoUrl: getOptional(env, "RELEASE_REPO_URL"),
-    releaseRepoRoot: env.RELEASE_REPO_ROOT ? path.resolve(env.RELEASE_REPO_ROOT) : serviceRoot,
+    releasePackageName: env.RELEASE_PACKAGE_NAME ?? "agent-session-broker",
+    releaseNpmRegistryUrl: getOptional(env, "RELEASE_NPM_REGISTRY_URL"),
     releasesRoot: env.RELEASES_ROOT ? path.resolve(env.RELEASES_ROOT) : serviceRoot ? path.join(serviceRoot, "releases") : undefined,
     currentReleasePath: env.CURRENT_RELEASE_PATH ? path.resolve(env.CURRENT_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current") : undefined,
     previousReleasePath: env.PREVIOUS_RELEASE_PATH ? path.resolve(env.PREVIOUS_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous") : undefined,
