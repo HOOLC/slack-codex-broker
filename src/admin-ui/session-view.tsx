@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   profileDisplayLabel,
@@ -28,7 +28,7 @@ import {
   shouldShowSessionState
 } from "./session-row-display";
 import type { SessionQueueState } from "./session-row-display";
-import { getTimelineEventDisplay, isTimelineEventVisible, statusLabel, type TimelineEvent } from "./timeline-display";
+import { filterVisibleTimelineEvents, getTimelineEventDisplay, statusLabel, type TimelineEvent } from "./timeline-display";
 
 type UiState = {
   readonly adminView: string;
@@ -51,6 +51,7 @@ type TimelinePayload = {
 const sessionFilters = ["ongoing", "all", "active", "inbound", "jobs", "issues", "usage"];
 const AUTO_AUTH_PROFILE_VALUE = "__auto_auth_profile__";
 const TIMELINE_PAGE_SIZE = 30;
+const TIMELINE_AUTO_LOAD_THRESHOLD = 32;
 
 export function AdminSessionsView(): React.JSX.Element {
   const githubBindSessionKey = readGitHubBindSessionKey();
@@ -871,7 +872,7 @@ function SessionTimeline({ session }: {
     };
   }, [sessionKey]);
 
-  async function loadOlder(): Promise<void> {
+  const loadOlder = useCallback(async (): Promise<void> => {
     if (!payload || Array.isArray(payload) || olderBusy || !payload.page?.hasMore || !payload.page.nextBeforeSequence) {
       return;
     }
@@ -891,7 +892,18 @@ function SessionTimeline({ session }: {
     } finally {
       setOlderBusy(false);
     }
-  }
+  }, [olderBusy, payload, sessionKey]);
+
+  useEffect(() => {
+    if (!payload || Array.isArray(payload) || olderBusy || !payload.page?.hasMore) {
+      return;
+    }
+    const visibleCount = filterVisibleTimelineEvents(payload.events || []).length;
+    if (visibleCount >= TIMELINE_PAGE_SIZE) {
+      return;
+    }
+    void loadOlder();
+  }, [loadOlder, olderBusy, payload]);
 
   if (error) return <div className="summary-detail">{error}</div>;
   if (!payload) return <Timeline events={[{ at: session.createdAt, type: "session", title: "已创建" }]} />;
@@ -908,7 +920,12 @@ function SessionTimeline({ session }: {
           {olderBusy ? "正在加载" : "加载更早活动"}
         </button>
       ) : null}
-      <TimelinePayloadView payload={payload} />
+      <TimelinePayloadView
+        payload={payload}
+        hasMore={Boolean(page?.hasMore)}
+        olderBusy={olderBusy}
+        onLoadOlder={loadOlder}
+      />
     </div>
   );
 }
@@ -1045,10 +1062,15 @@ function initialAuthProfileSelection(session: SessionRecord, blocked: boolean): 
   return blocked ? AUTO_AUTH_PROFILE_VALUE : String(session.authProfileName || "");
 }
 
-function TimelinePayloadView({ payload }: { readonly payload: TimelinePayload }): React.JSX.Element {
-  const events = (Array.isArray(payload) ? payload : (payload.events || [])).filter(isTimelineEventVisible);
+function TimelinePayloadView({ payload, hasMore = false, olderBusy = false, onLoadOlder }: {
+  readonly payload: TimelinePayload;
+  readonly hasMore?: boolean;
+  readonly olderBusy?: boolean;
+  readonly onLoadOlder?: (() => Promise<void>) | undefined;
+}): React.JSX.Element {
+  const events = filterVisibleTimelineEvents(Array.isArray(payload) ? payload : (payload.events || []));
   if (!events.length) return <div className="summary-detail">暂无时间线事件</div>;
-  return <Timeline events={events} />;
+  return <Timeline events={events} hasMore={hasMore} olderBusy={olderBusy} onLoadOlder={onLoadOlder} />;
 }
 
 function mergeTimelinePayloads(current: TimelinePayload | null, older: TimelinePayload): TimelinePayload {
@@ -1123,7 +1145,12 @@ function TraceSummary({ trace }: { readonly trace: Record<string, any> }): React
   );
 }
 
-function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): React.JSX.Element {
+function Timeline({ events, hasMore = false, olderBusy = false, onLoadOlder }: {
+  readonly events: readonly TimelineEvent[];
+  readonly hasMore?: boolean;
+  readonly olderBusy?: boolean;
+  readonly onLoadOlder?: (() => Promise<void>) | undefined;
+}): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
 
@@ -1137,10 +1164,23 @@ function Timeline({ events }: { readonly events: readonly TimelineEvent[] }): Re
     updateFollowState();
   }, [events.length]);
 
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || !hasMore || olderBusy || !onLoadOlder) {
+      return;
+    }
+    if (container.scrollHeight <= container.clientHeight + TIMELINE_AUTO_LOAD_THRESHOLD) {
+      void onLoadOlder();
+    }
+  }, [events.length, hasMore, olderBusy, onLoadOlder]);
+
   function updateFollowState(): void {
     const container = containerRef.current;
     if (!container) {
       return;
+    }
+    if (container.scrollTop <= TIMELINE_AUTO_LOAD_THRESHOLD && hasMore && !olderBusy && onLoadOlder) {
+      void onLoadOlder();
     }
     shouldFollowRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 24;
   }

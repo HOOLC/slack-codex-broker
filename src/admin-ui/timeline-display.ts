@@ -36,6 +36,24 @@ export function isTimelineEventVisible(event: TimelineEvent): boolean {
   return true;
 }
 
+export function filterVisibleTimelineEvents(events: readonly TimelineEvent[]): TimelineEvent[] {
+  const completedToolCallKeys = new Set(
+    events
+      .filter((event) => String(event.type || "").toLowerCase() === "agent_tool_result")
+      .map(toolTraceKey)
+      .filter(Boolean)
+  );
+  return events.filter((event) => {
+    if (!isTimelineEventVisible(event)) {
+      return false;
+    }
+    if (String(event.type || "").toLowerCase() !== "agent_tool_call") {
+      return true;
+    }
+    return !completedToolCallKeys.has(toolTraceKey(event));
+  });
+}
+
 export function getTimelineEventDisplay(event: TimelineEvent): TimelineEventDisplay {
   const type = String(event.type || "").toLowerCase();
   const rawTitle = nonEmptyString(event.title) || statusLabel(type || event.status || "event");
@@ -183,6 +201,16 @@ function compactTimelineText(value: string, maxLength: number): string {
     return text;
   }
   return `${text.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
+}
+
+function toolTraceKey(event: TimelineEvent): string {
+  if (event.callId) {
+    return [event.turnId || "", event.callId].join("\u001f");
+  }
+  if (!event.turnId && !event.toolName) {
+    return "";
+  }
+  return [event.turnId || "", event.toolName || ""].join("\u001f");
 }
 
 export function statusLabel(value: unknown): string {

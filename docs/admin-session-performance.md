@@ -17,6 +17,11 @@ The remaining problems are data-contract problems:
   time;
 - timeline reads return a full session slice instead of a latest page with a
   cursor;
+- timeline pagination is still raw-row oriented in places, so hidden trace rows
+  can make a `limit=30` response render far fewer than 30 readable activity
+  rows;
+- the session detail page exposes an older-page button, but scrolling to the
+  top of the activity list does not automatically load history;
 - trace statistics are derived by scanning the fetched timeline payload;
 - the detail page has no explicit "load older" path, so one old or large
   session can make the first usable view slow.
@@ -34,6 +39,9 @@ The remaining problems are data-contract problems:
   per-session summaries when usage or trace rows are written.
 - `/admin/api/sessions/:key/timeline` reads from newest to oldest with a bounded
   limit. The response includes a cursor for loading older events.
+- Timeline `limit` is a visible-event contract: after hiding token counters,
+  turn bookkeeping, and tool-call rows superseded by tool results, the API fills
+  the page with up to the requested number of readable events before returning.
 - The initial timeline page is the newest page across visible timeline events.
   Synthetic state events such as session creation, current inbound messages,
   background jobs, and turn signals are session metadata and must not be injected
@@ -43,6 +51,9 @@ The remaining problems are data-contract problems:
 - The React detail view fetches only the selected session's first timeline page.
   It starts with a small latest page and prepends older pages only when the user
   asks for more.
+- The React detail view also treats the activity list as an infinite history:
+  scrolling near the top loads older pages, and an underfilled first screen keeps
+  backfilling until it has enough visible rows or the API reports no more.
 - Timeline page rows carry summaries only. Full trace `detail` payloads are
   loaded per event when the user opens a row's detail disclosure.
 - Realtime events append to the loaded timeline page without forcing a full
@@ -61,6 +72,9 @@ The remaining problems are data-contract problems:
   `SessionManager.load()` on the read path.
 - `GET /admin/api/sessions/:key/timeline?limit=50` returns at most 50 visible
   timeline events plus pagination metadata.
+- If the newest raw trace rows are hidden from the UI, the timeline endpoint
+  continues scanning older rows so the returned page is not starved by hidden
+  bookkeeping rows.
 - The first page contains only the newest agent trace events. Synthetic session
   state is exposed through the session summary payload, not as timeline rows.
 - `before_sequence` loads older trace rows and does not reread the newest page.
@@ -69,6 +83,9 @@ The remaining problems are data-contract problems:
 - The React session detail initial request includes a bounded `limit`.
 - The React session detail has an explicit `加载更早活动` action when the API says
   older activity exists.
+- The React session detail automatically loads older activity when the timeline
+  scroll container reaches the top or the first loaded page does not fill the
+  visible area.
 - The first timeline page does not inline large trace details; details are lazy
   loaded by event id.
 - Timeline, sessions, overview, usage, and status responses expose backend

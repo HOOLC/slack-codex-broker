@@ -316,14 +316,13 @@ export class AdminService {
       rootThreadTs: session.rootThreadTs
     });
 
-    const tracePage = this.#listAgentTraceEventsPage(session.key, {
-      limit: options.limit,
+    const pageLimit = clampPositiveInteger(options.limit ?? 100, 1, 500);
+    const tracePage = this.#listVisibleTimelineTraceEventsPage(session.key, {
+      limit: pageLimit,
       beforeSequence: options.beforeSequence
     });
-    const agentEvents = visibleTimelineTraceEvents(tracePage.events);
-    const pageLimit = clampPositiveInteger(options.limit ?? 100, 1, 500);
     const timelinePage = selectTimelinePageEvents({
-      agentEvents: agentEvents.map((event) => agentTraceEventToTimelineEvent(event)),
+      agentEvents: tracePage.events.map((event) => agentTraceEventToTimelineEvent(event)),
       limit: pageLimit,
       traceHasMore: tracePage.hasMore,
       traceNextBeforeSequence: tracePage.nextBeforeSequence
@@ -338,7 +337,7 @@ export class AdminService {
         usage: sessionUsageSummaryFromPersisted(this.#getAgentSessionUsageSummary(session.key)),
         channelLabels: await this.#buildChannelLabelLookup([session], new Map([[session.key, inbound]]))
       }),
-      trace: traceSummaryFromPersisted(this.#getAgentSessionTraceSummary(session.key), agentEvents),
+      trace: traceSummaryFromPersisted(this.#getAgentSessionTraceSummary(session.key), tracePage.events),
       page: {
         limit: pageLimit,
         hasMore: timelinePage.hasMore,
@@ -1458,6 +1457,56 @@ export class AdminService {
     };
   }
 
+  #listVisibleTimelineTraceEventsPage(sessionKey: string, options: {
+    readonly limit: number;
+    readonly beforeSequence?: number | undefined;
+  }): {
+    readonly events: PersistedAgentTraceEvent[];
+    readonly hasMore: boolean;
+    readonly nextBeforeSequence: number | null;
+  } {
+    const visibleLimit = clampPositiveInteger(options.limit, 1, 500);
+    const rawBatchLimit = clampPositiveInteger(Math.max(visibleLimit * 4, 100), visibleLimit, 500);
+    const maxRawScan = Math.max(rawBatchLimit, 5_000);
+    const rawEvents: PersistedAgentTraceEvent[] = [];
+    let beforeSequence = options.beforeSequence;
+    let rawHasMore = false;
+    let rawCursor: number | null = null;
+    let scanned = 0;
+
+    while (scanned < maxRawScan) {
+      const page = this.#listAgentTraceEventsPage(sessionKey, {
+        limit: Math.min(rawBatchLimit, maxRawScan - scanned),
+        beforeSequence
+      });
+      rawEvents.push(...page.events);
+      scanned += page.events.length;
+      rawHasMore = page.hasMore;
+      rawCursor = page.nextBeforeSequence;
+
+      const visible = visibleTimelineTraceEvents(rawEvents);
+      if (visible.length > visibleLimit || !page.hasMore || !page.nextBeforeSequence || page.events.length === 0) {
+        break;
+      }
+      beforeSequence = page.nextBeforeSequence;
+    }
+
+    const visible = visibleTimelineTraceEvents(rawEvents);
+    const newest = [...visible].sort(comparePersistedTraceEventsNewestFirst);
+    const selected = newest.slice(0, visibleLimit);
+    const returnedTraceSequences = selected
+      .map((event) => event.sequence)
+      .filter((sequence): sequence is number => typeof sequence === "number");
+    const nextBeforeSequence = returnedTraceSequences.length
+      ? Math.min(...returnedTraceSequences)
+      : rawCursor;
+    return {
+      events: selected.slice().sort(comparePersistedTraceEvents),
+      hasMore: Boolean(nextBeforeSequence && (newest.length > visibleLimit || (rawHasMore && scanned >= maxRawScan))),
+      nextBeforeSequence
+    };
+  }
+
   #getAgentSessionTraceSummary(sessionKey: string): PersistedAgentSessionTraceSummary | undefined {
     const store = this.#operationStore();
     return store.getAgentSessionTraceSummary?.call(this.options.sessions, sessionKey);
@@ -2133,6 +2182,22 @@ function compareTimelineEventsNewestFirst(left: Record<string, JsonLike>, right:
     return rightSequence - leftSequence;
   }
   return String(right.id ?? "").localeCompare(String(left.id ?? ""));
+}
+
+function comparePersistedTraceEvents(left: PersistedAgentTraceEvent, right: PersistedAgentTraceEvent): number {
+  const atComparison = left.at.localeCompare(right.at);
+  if (atComparison !== 0) {
+    return atComparison;
+  }
+  return left.sequence - right.sequence || left.id.localeCompare(right.id);
+}
+
+function comparePersistedTraceEventsNewestFirst(left: PersistedAgentTraceEvent, right: PersistedAgentTraceEvent): number {
+  const atComparison = timestampMs(right.at) - timestampMs(left.at);
+  if (atComparison !== 0) {
+    return atComparison;
+  }
+  return right.sequence - left.sequence || right.id.localeCompare(left.id);
 }
 
 function summarizeAgentTrace(

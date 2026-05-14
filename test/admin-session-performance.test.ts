@@ -36,6 +36,8 @@ describe("admin session performance contract", () => {
     expect(doc).toContain("before_sequence");
     expect(doc).toContain("per-session redundant");
     expect(doc).toContain("加载更早活动");
+    expect(doc).toContain("visible-event contract");
+    expect(doc).toContain("scroll container reaches the top");
   });
 
   it("keeps session summaries off raw trace and turn-usage scans", async () => {
@@ -246,6 +248,99 @@ describe("admin session performance contract", () => {
     });
   });
 
+  it("fills timeline pages with visible events instead of raw hidden trace rows", async () => {
+    const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), "admin-session-visible-page-"));
+    tempDirs.push(dataRoot);
+    const config = loadConfig({
+      SLACK_APP_TOKEN: "xapp-test",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      DATA_ROOT: dataRoot
+    } as NodeJS.ProcessEnv);
+    await fs.mkdir(config.codexHome, { recursive: true });
+    await fs.mkdir(config.logDir, { recursive: true });
+
+    const stateStore = new StateStore(config.stateDir, config.sessionsRoot);
+    const sessions = new SessionManager({
+      stateStore,
+      sessionsRoot: config.sessionsRoot
+    });
+    await sessions.load();
+    await sessions.ensureSession("C123", "111.222");
+    for (let index = 1; index <= 60; index += 1) {
+      await sessions.upsertAgentTraceEvent({
+        id: `visible-${index}`,
+        sessionKey: "C123:111.222",
+        source: "agent_runtime",
+        type: "agent_assistant_message",
+        at: new Date(Date.UTC(2030, 2, 19, 0, 0, index)).toISOString(),
+        sequence: index,
+        title: `visible ${index}`,
+        summary: `visible summary ${index}`,
+        detail: `visible detail ${index}`,
+        status: "completed",
+        role: "assistant",
+        createdAt: "2026-03-19T00:00:00.000Z",
+        updatedAt: "2026-03-19T00:00:00.000Z"
+      });
+    }
+    for (let index = 61; index <= 90; index += 1) {
+      await sessions.upsertAgentTraceEvent({
+        id: `hidden-${index}`,
+        sessionKey: "C123:111.222",
+        source: "agent_runtime",
+        type: "agent_token_count",
+        at: new Date(Date.UTC(2030, 2, 19, 0, 0, index)).toISOString(),
+        sequence: index,
+        title: "token usage",
+        summary: `${index} tokens`,
+        detail: `hidden detail ${index}`,
+        status: "completed",
+        role: "assistant",
+        createdAt: "2026-03-19T00:00:00.000Z",
+        updatedAt: "2026-03-19T00:00:00.000Z"
+      });
+    }
+
+    const service = new AdminService({
+      config,
+      startedAt: new Date("2026-03-19T00:00:00.000Z"),
+      sessions,
+      authProfiles: {
+        listProfilesStatus: async () => ({
+          managedRoot: path.join(dataRoot, "auth-profiles"),
+          profilesRoot: path.join(dataRoot, "auth-profiles", "docker", "profiles"),
+          profiles: []
+        })
+      } as never,
+      githubAuthorMappings: new GitHubAuthorMappingService({ stateDir: dataRoot }),
+      runtime: {
+        readAccountSummary: async () => ({
+          account: null,
+          requiresOpenaiAuth: true
+        }),
+        readAccountRateLimits: async () => ({
+          rateLimits: null,
+          rateLimitsByLimitId: {}
+        })
+      } as never
+    });
+
+    const page = await service.getSessionTimeline("C123:111.222", { limit: 25 });
+    const sequences = (page.events as Array<Record<string, unknown>>)
+      .map((event) => event.sequence)
+      .filter((sequence): sequence is number => typeof sequence === "number");
+    expect(page.events).toHaveLength(25);
+    expect((page.events as Array<Record<string, unknown>>).map((event) => event.type)).toEqual(
+      Array.from({ length: 25 }, () => "agent_assistant_message")
+    );
+    expect(sequences[0]).toBe(36);
+    expect(sequences.at(-1)).toBe(60);
+    expect(page.page).toMatchObject({
+      hasMore: true,
+      nextBeforeSequence: 36
+    });
+  });
+
   it("passes timeline pagination query parameters through the HTTP route", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const baseUrl = await startAdminServer({
@@ -277,6 +372,8 @@ describe("admin session performance contract", () => {
     expect(source).toContain("TIMELINE_PAGE_SIZE");
     expect(source).toContain("before_sequence");
     expect(source).toContain("加载更早活动");
+    expect(source).toContain("onLoadOlder");
+    expect(source).toContain("scrollTop <= TIMELINE_AUTO_LOAD_THRESHOLD");
   });
 
   async function startAdminServer(configEnv: NodeJS.ProcessEnv, adminService: Record<string, unknown>): Promise<string> {

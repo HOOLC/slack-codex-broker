@@ -6,7 +6,7 @@ import {
   sessionQueueState,
   shouldShowSessionState
 } from "../src/admin-ui/session-row-display.js";
-import { getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
+import { filterVisibleTimelineEvents, getTimelineEventDisplay, isTimelineEventVisible } from "../src/admin-ui/timeline-display.js";
 
 describe("admin session timeline display", () => {
   it("uses category badges instead of duplicating the event title", () => {
@@ -286,6 +286,25 @@ describe("admin session timeline display", () => {
       title: "工具调用",
       summary: "exec_command"
     })).toBe(true);
+  });
+
+  it("collapses completed tool call rows when the matching tool result is loaded", () => {
+    expect(filterVisibleTimelineEvents([
+      {
+        id: "call-1",
+        type: "agent_tool_call",
+        callId: "call-a",
+        turnId: "turn-1",
+        toolName: "exec_command"
+      },
+      {
+        id: "result-1",
+        type: "agent_tool_result",
+        callId: "call-a",
+        turnId: "turn-1",
+        toolName: "exec_command"
+      }
+    ]).map((event) => event.id)).toEqual(["result-1"]);
   });
 });
 
