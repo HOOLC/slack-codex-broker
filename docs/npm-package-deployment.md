@@ -132,5 +132,8 @@ commits.
   the requested target.
 - Admin launchd runs through the admin current symlink.
 - Worker launchd runs through the worker current symlink.
+- Bootstrap preserves explicit operator runtime configuration for logging,
+  cleanup, GitHub PR fallback, and API/OAuth settings instead of silently
+  rewriting those values to defaults.
 - Regression tests avoid private-string negative assertions.
 - `pnpm test` and `pnpm build` pass.
