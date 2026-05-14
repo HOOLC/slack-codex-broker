@@ -34,7 +34,23 @@ describe("macOS bootstrap", () => {
 
     await fs.mkdir(path.join(home, ".codex"), { recursive: true });
     await fs.mkdir(fakeBin, { recursive: true });
-    await fs.mkdir(serviceRoot, { recursive: true });
+    await fs.mkdir(path.join(serviceRoot, "config"), { recursive: true });
+    await fs.writeFile(
+      path.join(serviceRoot, "config", "broker.env"),
+      [
+        "SLACK_APP_TOKEN=\"xapp-from-broker-env\"",
+        "SLACK_BOT_TOKEN=\"xoxb-from-broker-env\"",
+        "DISK_CLEANUP_MIN_FREE_BYTES=\"21474836480\"",
+        "DISK_CLEANUP_TARGET_FREE_BYTES=\"32212254720\"",
+        "LOG_RAW_MAX_BYTES=\"65536\"",
+        "BROKER_DEFAULT_GITHUB_LOGIN=\"default-pr-account\"",
+        "BROKER_DEFAULT_GITHUB_TOKEN=\"default-pr-token\"",
+        "GH_TOKEN=\"legacy-gh-token\"",
+        "GITHUB_TOKEN=\"legacy-github-token\"",
+        "CURRENT_RELEASE_PATH=\"stale-single-release-path\""
+      ].join("\n") + "\n",
+      "utf8"
+    );
     await writeExecutable(path.join(fakeBin, "npm"), fakeNpmScript());
     await writeExecutable(path.join(fakeBin, "launchctl"), fakeCommandScript("launchctl"));
     await writeExecutable(path.join(fakeBin, "node"), fakeCommandScript("node"));
@@ -85,6 +101,7 @@ describe("macOS bootstrap", () => {
     const adminPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.admin.plist"), "utf8");
     const workerPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.worker.plist"), "utf8");
     const adminEnv = await fs.readFile(path.join(serviceRoot, "config", "admin.env"), "utf8");
+    const workerEnv = await fs.readFile(path.join(serviceRoot, "config", "worker.env"), "utf8");
     const adminLauncherPath = path.join(currentAdminReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
     const workerLauncherPath = path.join(currentWorkerReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
     const adminPlistPath = path.join(home, "Library", "LaunchAgents", "test.admin.plist");
@@ -102,6 +119,16 @@ describe("macOS bootstrap", () => {
     });
     expect(adminEnv).toContain(`ADMIN_PLIST_PATH="${adminPlistPath}"`);
     expect(adminEnv).toContain(`WORKER_PLIST_PATH="${workerPlistPath}"`);
+    for (const envText of [adminEnv, workerEnv]) {
+      expect(envText).toContain('DISK_CLEANUP_MIN_FREE_BYTES="21474836480"');
+      expect(envText).toContain('DISK_CLEANUP_TARGET_FREE_BYTES="32212254720"');
+      expect(envText).toContain('LOG_RAW_MAX_BYTES="65536"');
+      expect(envText).toContain('BROKER_DEFAULT_GITHUB_LOGIN="default-pr-account"');
+      expect(envText).toContain('BROKER_DEFAULT_GITHUB_TOKEN="default-pr-token"');
+      expect(envText).toContain('GH_TOKEN="legacy-gh-token"');
+      expect(envText).toContain('GITHUB_TOKEN="legacy-github-token"');
+      expect(envText).not.toContain("CURRENT_RELEASE_PATH");
+    }
   }, 15_000);
 });
 
