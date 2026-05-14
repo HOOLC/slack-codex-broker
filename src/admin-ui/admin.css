@@ -291,7 +291,7 @@
     .quota-line::-webkit-scrollbar { display: none; }
     .quota-line span, .quota-line strong { flex: 0 0 auto; white-space: nowrap; }
     .quota-line strong { color: var(--text); }
-    .deploy-actions { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .deploy-actions { display: grid; grid-template-columns: auto minmax(110px, 0.35fr) auto minmax(0, 1fr) auto; gap: 6px; align-items: center; margin-bottom: 6px; }
     .deploy-target-field { min-width: 0; display: contents; }
     .deploy-target-field .summary-label { white-space: nowrap; }
     .release-stack { display: grid; gap: 4px; margin-top: 6px; }

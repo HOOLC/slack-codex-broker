@@ -359,18 +359,20 @@ export async function handleAdminRequest(
       return true;
     }
 
+    const target = readReleaseTarget(body.target);
     const version = readString(body.version);
-    if (!version) {
+    if (!target || !version) {
       respondJson(response, 400, {
         ok: false,
         error: "missing_required_body",
-        required: ["version"]
+        required: ["target", "version"]
       });
       return true;
     }
 
     await runAdminOperation(response, () =>
       options.adminService.deployRelease({
+        target,
         version,
         allowActive: body.allow_active === true
       })
@@ -384,8 +386,19 @@ export async function handleAdminRequest(
       return true;
     }
 
+    const target = readReleaseTarget(body.target);
+    if (!target) {
+      respondJson(response, 400, {
+        ok: false,
+        error: "missing_required_body",
+        required: ["target"]
+      });
+      return true;
+    }
+
     await runAdminOperation(response, () =>
       options.adminService.rollbackRelease({
+        target,
         version: readString(body.version) ?? undefined,
         allowActive: body.allow_active === true
       })
@@ -565,6 +578,10 @@ async function readAdminBody(
 function readPositiveNumber(value: unknown): number | undefined {
   const numeric = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : Number.NaN;
   return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function readReleaseTarget(value: unknown): "admin" | "worker" | undefined {
+  return value === "admin" || value === "worker" ? value : undefined;
 }
 
 async function runAdminOperation(

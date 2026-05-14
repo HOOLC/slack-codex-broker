@@ -556,6 +556,7 @@ describe("admin control plane e2e", () => {
     const { baseUrl, deploymentCalls } = await startAdminFixture();
 
     const deploy = await postJson(`${baseUrl}/admin/api/deploy`, {
+      target: "worker",
       version: "0.2.0",
       allow_active: false
     });
@@ -565,11 +566,12 @@ describe("admin control plane e2e", () => {
         kind: "deploy",
         status: "succeeded",
         request: {
+          target: "worker",
           version: "0.2.0"
         }
       }
     });
-    expect(deploymentCalls).toEqual([{ kind: "deploy", version: "0.2.0" }]);
+    expect(deploymentCalls).toEqual([{ kind: "deploy", target: "worker", version: "0.2.0" }]);
 
     const operations = await readJson(`${baseUrl}/admin/api/operations`);
     expect(operations).toMatchObject({
@@ -580,6 +582,7 @@ describe("admin control plane e2e", () => {
           kind: "deploy",
           status: "succeeded",
           request: {
+            target: "worker",
             version: "0.2.0"
           }
         }
@@ -614,6 +617,7 @@ describe("admin control plane e2e", () => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
+        target: "worker",
         version: "0.2.0",
         allow_active: false
       })
@@ -634,6 +638,7 @@ describe("admin control plane e2e", () => {
           kind: "deploy",
           status: "failed",
           request: {
+            target: "worker",
             version: "0.2.0"
           }
         }
@@ -735,12 +740,12 @@ describe("admin control plane e2e", () => {
       } as never,
       deployment: {
         getStatus: async () => deploymentStatus(config),
-        deploy: async ({ version }: { readonly version: string }) => {
-          deploymentCalls.push({ kind: "deploy", version });
+        deploy: async ({ target, version }: { readonly target: "admin" | "worker"; readonly version: string }) => {
+          deploymentCalls.push({ kind: "deploy", target, version });
           return deploymentStatus(config);
         },
-        rollback: async ({ version }: { readonly version?: string | undefined }) => {
-          deploymentCalls.push({ kind: "rollback", version: version ?? null });
+        rollback: async ({ target, version }: { readonly target: "admin" | "worker"; readonly version?: string | undefined }) => {
+          deploymentCalls.push({ kind: "rollback", target, version: version ?? null });
           return deploymentStatus(config);
         },
         restartWorker: async () => {}
@@ -1079,46 +1084,84 @@ function backgroundJob(patch: Partial<PersistedBackgroundJob>): PersistedBackgro
 }
 
 function deploymentStatus(config: AppConfig): Record<string, unknown> {
+  const adminPackageName = "@agent-session-broker/admin";
+  const workerPackageName = "@agent-session-broker/worker";
   return {
     serviceRoot: config.serviceRoot ?? "",
-    packageName: "agent-session-broker",
     npmRegistryUrl: null,
-    currentRelease: {
-      linkPath: config.currentReleasePath ?? "",
-      targetPath: path.join(config.serviceRoot ?? "", "releases", "npm-0.2.0", "node_modules", "agent-session-broker"),
-      exists: true,
-      metadata: {
-        revision: null,
-        shortRevision: null,
-        branch: null,
-        packageName: "agent-session-broker",
-        packageVersion: "0.2.0",
-        packageSpec: "agent-session-broker@0.2.0",
-        installedAt: "2026-03-19T00:00:00.000Z",
-        installedBy: "test",
-        installedFromHost: "test-host",
-        stateSchemaVersion: 2
+    targets: {
+      admin: {
+        target: "admin",
+        packageName: adminPackageName,
+        currentRelease: {
+          linkPath: config.currentAdminReleasePath ?? "",
+          targetPath: null,
+          exists: false,
+          metadata: null
+        },
+        previousRelease: {
+          linkPath: config.previousAdminReleasePath ?? "",
+          targetPath: null,
+          exists: false,
+          metadata: null
+        },
+        failedRelease: {
+          linkPath: config.failedAdminReleasePath ?? "",
+          targetPath: null,
+          exists: false,
+          metadata: null
+        },
+        recentReleases: [],
+        recentPackageVersions: [
+          {
+            version: "0.2.0",
+            packageSpec: `${adminPackageName}@0.2.0`
+          }
+        ]
+      },
+      worker: {
+        target: "worker",
+        packageName: workerPackageName,
+        currentRelease: {
+          linkPath: config.currentWorkerReleasePath ?? "",
+          targetPath: path.join(config.serviceRoot ?? "", "releases", "worker", "npm-0.2.0", "node_modules", "@agent-session-broker", "worker"),
+          exists: true,
+          metadata: {
+            revision: null,
+            shortRevision: null,
+            branch: null,
+            target: "worker",
+            packageName: workerPackageName,
+            packageVersion: "0.2.0",
+            packageSpec: `${workerPackageName}@0.2.0`,
+            installedAt: "2026-03-19T00:00:00.000Z",
+            installedBy: "test",
+            installedFromHost: "test-host",
+            requestedVersion: "0.2.0",
+            stateSchemaVersion: 3
+          }
+        },
+        previousRelease: {
+          linkPath: config.previousWorkerReleasePath ?? "",
+          targetPath: null,
+          exists: false,
+          metadata: null
+        },
+        failedRelease: {
+          linkPath: config.failedWorkerReleasePath ?? "",
+          targetPath: null,
+          exists: false,
+          metadata: null
+        },
+        recentReleases: [],
+        recentPackageVersions: [
+          {
+            version: "0.2.0",
+            packageSpec: `${workerPackageName}@0.2.0`
+          }
+        ]
       }
     },
-    previousRelease: {
-      linkPath: config.previousReleasePath ?? "",
-      targetPath: null,
-      exists: false,
-      metadata: null
-    },
-    failedRelease: {
-      linkPath: config.failedReleasePath ?? "",
-      targetPath: null,
-      exists: false,
-      metadata: null
-    },
-    recentReleases: [],
-    recentPackageVersions: [
-      {
-        version: "0.2.0",
-        packageSpec: "agent-session-broker@0.2.0"
-      }
-    ],
     admin: {
       launchdLoaded: true,
       healthOk: true,

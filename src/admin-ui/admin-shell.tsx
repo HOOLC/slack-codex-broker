@@ -162,7 +162,11 @@ function DeployPanel({ status, message, setMessage }: {
   readonly setMessage: (message: string | null) => void;
 }): React.JSX.Element {
   const [busy, setBusy] = useState<"deploy" | "rollback" | null>(null);
-  const deployTargetOptions = useMemo(() => buildDeployTargetOptions(status.deployment), [status.deployment]);
+  const [selectedDeployTarget, setSelectedDeployTarget] = useState<"admin" | "worker">("worker");
+  const deployTargetOptions = useMemo(
+    () => buildDeployTargetOptions(status.deployment, selectedDeployTarget),
+    [status.deployment, selectedDeployTarget]
+  );
   const deployTargetValues = deployTargetOptions.map((option) => option.value).join("\n");
   const [selectedDeployVersion, setSelectedDeployVersion] = useState("");
   useEffect(() => {
@@ -189,10 +193,14 @@ function DeployPanel({ status, message, setMessage }: {
       const payload = await requestJson("/admin/api/deploy", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version: selectedDeployVersion, allow_active: allowActive })
+        body: JSON.stringify({
+          target: selectedDeployTarget,
+          version: selectedDeployVersion,
+          allow_active: allowActive
+        })
       });
       publishStatusFromPayload(payload);
-      setMessage(`已发布 ${selectedDeployVersion} · 操作 ${payload.operation?.id || ""}`);
+      setMessage(`已发布 ${targetLabel(selectedDeployTarget)} ${selectedDeployVersion} · 操作 ${payload.operation?.id || ""}`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -200,7 +208,7 @@ function DeployPanel({ status, message, setMessage }: {
     }
   }
 
-  async function runRollbackTo(version: string): Promise<void> {
+  async function runRollbackTo(target: "admin" | "worker", version: string): Promise<void> {
     if (!version) {
       setMessage("缺少回滚目标");
       return;
@@ -216,10 +224,10 @@ function DeployPanel({ status, message, setMessage }: {
       const payload = await requestJson("/admin/api/rollback", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ version, allow_active: allowActive })
+        body: JSON.stringify({ target, version, allow_active: allowActive })
       });
       publishStatusFromPayload(payload);
-      setMessage(`已回滚到 ${version} · 操作 ${payload.operation?.id || ""}`);
+      setMessage(`已回滚 ${targetLabel(target)} 到 ${version} · 操作 ${payload.operation?.id || ""}`);
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -234,6 +242,19 @@ function DeployPanel({ status, message, setMessage }: {
       </div>
       <div className="panel-body">
         <div className="deploy-actions">
+          <label className="deploy-target-field">
+            <span className="summary-label">目标</span>
+            <select
+              id="deploy-package-target-select"
+              aria-label="发布目标"
+              value={selectedDeployTarget}
+              disabled={busy !== null}
+              onChange={(event) => setSelectedDeployTarget(event.target.value === "admin" ? "admin" : "worker")}
+            >
+              <option value="worker">Worker</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
           <label className="deploy-target-field">
             <span className="summary-label">Package 版本</span>
             <select
@@ -260,7 +281,7 @@ function DeployPanel({ status, message, setMessage }: {
         <DeploymentPanel
           deployment={status.deployment}
           rollbackBusy={busy === "rollback"}
-          onRollback={(version) => { void runRollbackTo(version); }}
+          onRollback={(target, version) => { void runRollbackTo(target, version); }}
         />
         {message ? <div className={"summary-detail " + (message.includes("失败") || message.includes("必须") ? "danger" : "")} style={{ marginTop: 6 }}>{message}</div> : null}
       </div>
@@ -857,17 +878,17 @@ function RiskCell({ label, value, danger = false }: {
 function DeploymentPanel({ deployment, rollbackBusy, onRollback }: {
   readonly deployment: any;
   readonly rollbackBusy: boolean;
-  readonly onRollback: (ref: string) => void;
+  readonly onRollback: (target: "admin" | "worker", ref: string) => void;
 }): React.JSX.Element {
   if (!deployment) {
-    return <div className="summary-detail">Worker 发布状态不可用</div>;
+    return <div className="summary-detail">发布状态不可用</div>;
   }
   if (deployment.ok === false) {
     return <div className="summary-detail danger">发布状态读取失败：{deployment.error || "unknown"}</div>;
   }
   const admin = deployment.admin || {};
   const worker = deployment.worker || {};
-  const rollbackReleases = buildRollbackReleaseOptions(deployment);
+  const targets = deployment.targets || {};
   return (
     <>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -877,35 +898,60 @@ function DeploymentPanel({ deployment, rollbackBusy, onRollback }: {
         <Badge label={worker.healthOk ? "HTTP 正常" : "HTTP 异常"} tone={worker.healthOk ? "good" : "danger"} />
         <Badge label={worker.readyOk ? "Codex 就绪" : "Codex 异常"} tone={worker.readyOk ? "good" : "danger"} />
       </div>
-      <div className="release-stack">
-        <ReleaseRow label="当前版本" release={deployment.currentRelease} />
-      </div>
-      <div className="release-stack">
-        <div className="summary-label">最近已发布</div>
-        {rollbackReleases.length ? rollbackReleases.map((release) => {
-          const ref = releaseRollbackRef(release);
-          return (
-            <ReleaseRow
-              key={ref}
-              label="版本"
-              release={release}
-              action={ref ? (
-                <button
-                  className="secondary"
-                  type="button"
-                  disabled={rollbackBusy}
-                  onClick={() => onRollback(ref)}
-                >
-                  回滚
-                </button>
-              ) : null}
-            />
-          );
-        }) : (
-          <div className="summary-detail">暂无可回滚版本</div>
-        )}
-      </div>
+      <ReleaseTargetPanel
+        target="worker"
+        status={targets.worker}
+        rollbackBusy={rollbackBusy}
+        onRollback={onRollback}
+      />
+      <ReleaseTargetPanel
+        target="admin"
+        status={targets.admin}
+        rollbackBusy={rollbackBusy}
+        onRollback={onRollback}
+      />
     </>
+  );
+}
+
+function ReleaseTargetPanel({ target, status, rollbackBusy, onRollback }: {
+  readonly target: "admin" | "worker";
+  readonly status: any;
+  readonly rollbackBusy: boolean;
+  readonly onRollback: (target: "admin" | "worker", ref: string) => void;
+}): React.JSX.Element {
+  const rollbackReleases = buildRollbackReleaseOptions(status);
+  return (
+    <div className="release-stack">
+      <div className="profile-line">
+        <span className="profile-account">{targetLabel(target)}</span>
+        <span className="profile-plan">{status?.packageName || "package"}</span>
+      </div>
+      <ReleaseRow label="当前版本" release={status?.currentRelease} />
+      <div className="summary-label">最近已发布</div>
+      {rollbackReleases.length ? rollbackReleases.map((release) => {
+        const ref = releaseRollbackRef(release);
+        return (
+          <ReleaseRow
+            key={`${target}-${ref}`}
+            label="版本"
+            release={release}
+            action={ref ? (
+              <button
+                className="secondary"
+                type="button"
+                disabled={rollbackBusy}
+                onClick={() => onRollback(target, ref)}
+              >
+                回滚
+              </button>
+            ) : null}
+          />
+        );
+      }) : (
+        <div className="summary-detail">暂无可回滚版本</div>
+      )}
+    </div>
   );
 }
 
@@ -937,8 +983,9 @@ type DeployTargetOption = {
   readonly label: string;
 };
 
-function buildDeployTargetOptions(deployment: any): readonly DeployTargetOption[] {
-  const versions = Array.isArray(deployment?.recentPackageVersions) ? deployment.recentPackageVersions : [];
+function buildDeployTargetOptions(deployment: any, target: "admin" | "worker"): readonly DeployTargetOption[] {
+  const targetStatus = deployment?.targets?.[target] || {};
+  const versions = Array.isArray(targetStatus.recentPackageVersions) ? targetStatus.recentPackageVersions : [];
   return versions
     .map((entry: Record<string, any>) => {
       const version = String(entry.version || "").trim();
@@ -952,10 +999,10 @@ function buildDeployTargetOptions(deployment: any): readonly DeployTargetOption[
     .filter((option): option is DeployTargetOption => Boolean(option));
 }
 
-function buildRollbackReleaseOptions(deployment: any): readonly Record<string, any>[] {
-  const currentTargetPath = String(deployment?.currentRelease?.targetPath || "");
-  const releases = Array.isArray(deployment?.recentReleases) ? deployment.recentReleases : [];
-  const fallback = deployment?.previousRelease?.targetPath ? [deployment.previousRelease] : [];
+function buildRollbackReleaseOptions(targetStatus: any): readonly Record<string, any>[] {
+  const currentTargetPath = String(targetStatus?.currentRelease?.targetPath || "");
+  const releases = Array.isArray(targetStatus?.recentReleases) ? targetStatus.recentReleases : [];
+  const fallback = targetStatus?.previousRelease?.targetPath ? [targetStatus.previousRelease] : [];
   const deduped = new Map<string, Record<string, any>>();
   for (const release of [...releases, ...fallback]) {
     const ref = releaseRollbackRef(release);
@@ -965,6 +1012,10 @@ function buildRollbackReleaseOptions(deployment: any): readonly Record<string, a
     deduped.set(ref, release);
   }
   return [...deduped.values()];
+}
+
+function targetLabel(target: "admin" | "worker"): string {
+  return target === "admin" ? "Admin" : "Worker";
 }
 
 function releaseRollbackRef(release: any): string {

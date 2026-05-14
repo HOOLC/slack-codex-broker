@@ -1,0 +1,35 @@
+{
+  "name": "@agent-session-broker/worker",
+  "version": "0.1.0",
+  "description": "Worker runtime for the agent session broker.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HOOLC/slack-codex-broker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HOOLC/slack-codex-broker/issues"
+  },
+  "homepage": "https://github.com/HOOLC/slack-codex-broker#readme",
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "files": [
+    "dist/src/",
+    "scripts/ops/macos-launchd-launcher.mjs",
+    "scripts/ops/macos-launchd-restart.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "ws": "^8.18.3"
+  }
+}

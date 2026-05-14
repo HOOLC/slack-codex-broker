@@ -104,7 +104,10 @@ describe("admin React UI architecture", () => {
     const css = await fs.readFile(new URL("admin.css", adminUiRoot), "utf8");
     expect(shell).toContain("buildDeployTargetOptions");
     expect(shell).toContain("recentPackageVersions");
+    expect(shell).toContain('id="deploy-package-target-select"');
     expect(shell).toContain('id="deploy-package-version-select"');
+    expect(shell).toContain('body: JSON.stringify({');
+    expect(shell).toContain("target: selectedDeployTarget");
     expect(shell).toContain("Package 版本");
     expect(shell).toContain("releaseRollbackRef");
     expect(shell).toContain("最近已发布");
@@ -112,7 +115,7 @@ describe("admin React UI architecture", () => {
     expect(shell).not.toContain("origin/main");
     expect(shell).not.toContain('placeholder="提交 / 分支 / 标签"');
     expect(shell).not.toContain('const [ref, setRef] = useState("");');
-    expect(css).toContain(".deploy-actions { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;");
+    expect(css).toContain(".deploy-actions { display: grid; grid-template-columns: auto minmax(110px, 0.35fr) auto minmax(0, 1fr) auto;");
     expect(css).toContain(".deploy-target-field { min-width: 0; display: contents;");
     expect(css).not.toContain(".deploy-actions { grid-template-columns: 1fr;");
   });

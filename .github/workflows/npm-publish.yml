@@ -41,16 +41,33 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Pack release artifact
-        run: pnpm pack --pack-destination artifacts
+      - name: Stage release packages
+        run: pnpm release:stage
 
-      - name: Upload release artifact
+      - name: Pack admin release artifact
+        run: npm pack artifacts/npm-packages/admin --pack-destination artifacts
+
+      - name: Pack worker release artifact
+        run: npm pack artifacts/npm-packages/worker --pack-destination artifacts
+
+      - name: Upload admin release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agent-session-broker-npm-package
-          path: artifacts/*.tgz
+          name: agent-session-broker-admin-npm-package
+          path: artifacts/agent-session-broker-admin-*.tgz
 
-      - name: Publish to npm
-        run: npm publish --access public --provenance
+      - name: Upload worker release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-session-broker-worker-npm-package
+          path: artifacts/agent-session-broker-worker-*.tgz
+
+      - name: Publish admin to npm
+        run: npm publish artifacts/npm-packages/admin --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish worker to npm
+        run: npm publish artifacts/npm-packages/worker --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

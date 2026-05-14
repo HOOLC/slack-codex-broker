@@ -103,6 +103,7 @@ describe("admin routes", () => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
+        target: "worker",
         version: "0.2.0",
         allow_active: true
       })
@@ -779,6 +780,7 @@ describe("admin routes", () => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
+        target: "worker",
         version: "0.2.0",
         allow_active: true
       })
@@ -786,6 +788,7 @@ describe("admin routes", () => {
     expect(response.status).toBe(200);
     expect(calls).toEqual([
       {
+        target: "worker",
         version: "0.2.0",
         allowActive: true
       }
@@ -816,6 +819,7 @@ describe("admin routes", () => {
         "content-type": "application/json"
       },
       body: JSON.stringify({
+        target: "admin",
         version: "0.1.0",
         allow_active: false
       })
@@ -823,6 +827,7 @@ describe("admin routes", () => {
     expect(response.status).toBe(200);
     expect(calls).toEqual([
       {
+        target: "admin",
         version: "0.1.0",
         allowActive: false
       }

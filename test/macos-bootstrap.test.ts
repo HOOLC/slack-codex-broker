@@ -70,29 +70,34 @@ describe("macOS bootstrap", () => {
     expect(payload).toMatchObject({
       ok: true,
       serviceRoot,
-      currentReleasePath: path.join(serviceRoot, "current"),
+      currentAdminReleasePath: path.join(serviceRoot, "current-admin"),
+      currentWorkerReleasePath: path.join(serviceRoot, "current-worker"),
       workerStarted: false
     });
 
-    const currentReleasePath = path.join(serviceRoot, "current");
-    const releaseRoot = path.join(serviceRoot, "releases", `npm-${packageVersion}`, "node_modules", "agent-session-broker");
-    await expect(fs.readlink(currentReleasePath)).resolves.toBe(path.relative(serviceRoot, releaseRoot));
+    const currentAdminReleasePath = path.join(serviceRoot, "current-admin");
+    const currentWorkerReleasePath = path.join(serviceRoot, "current-worker");
+    const adminReleaseRoot = path.join(serviceRoot, "releases", "admin", `npm-${packageVersion}`, "node_modules", "@agent-session-broker", "admin");
+    const workerReleaseRoot = path.join(serviceRoot, "releases", "worker", `npm-${packageVersion}`, "node_modules", "@agent-session-broker", "worker");
+    await expect(fs.readlink(currentAdminReleasePath)).resolves.toBe(path.relative(serviceRoot, adminReleaseRoot));
+    await expect(fs.readlink(currentWorkerReleasePath)).resolves.toBe(path.relative(serviceRoot, workerReleaseRoot));
 
     const adminPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.admin.plist"), "utf8");
     const workerPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.worker.plist"), "utf8");
     const adminEnv = await fs.readFile(path.join(serviceRoot, "config", "admin.env"), "utf8");
-    const launcherPath = path.join(currentReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
+    const adminLauncherPath = path.join(currentAdminReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
+    const workerLauncherPath = path.join(currentWorkerReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
     const adminPlistPath = path.join(home, "Library", "LaunchAgents", "test.admin.plist");
     const workerPlistPath = path.join(home, "Library", "LaunchAgents", "test.worker.plist");
 
     expectLaunchdRuntime(adminPlist, {
-      launcherPath,
-      repoRootPath: currentReleasePath,
+      launcherPath: adminLauncherPath,
+      repoRootPath: currentAdminReleasePath,
       entryPoint: "dist/src/admin-index.js"
     });
     expectLaunchdRuntime(workerPlist, {
-      launcherPath,
-      repoRootPath: currentReleasePath,
+      launcherPath: workerLauncherPath,
+      repoRootPath: currentWorkerReleasePath,
       entryPoint: "dist/src/worker-index.js"
     });
     expect(adminEnv).toContain(`ADMIN_PLIST_PATH="${adminPlistPath}"`);
@@ -123,13 +128,23 @@ function fakeNpmScript(): string {
     "  last=\"\"",
     "  for arg in \"$@\"; do last=\"$arg\"; done",
     "  version=\"${last##*@}\"",
-    "  package_root=\"$prefix/node_modules/agent-session-broker\"",
+    "  package_name=\"${last%@*}\"",
+    "  package_path=\"$(printf '%s' \"$package_name\" | sed 's#/# #g')\"",
+    "  set -- $package_path",
+    "  package_root=\"$prefix/node_modules/$1/$2\"",
     "  mkdir -p \"$package_root/dist/src\" \"$package_root/scripts/ops\"",
-    "  : > \"$package_root/dist/src/admin-index.js\"",
-    "  : > \"$package_root/dist/src/worker-index.js\"",
+    "  if [ \"$package_name\" = \"@agent-session-broker/admin\" ]; then",
+    "    mkdir -p \"$package_root/dist/admin-ui\"",
+    "    : > \"$package_root/dist/src/admin-index.js\"",
+    "    : > \"$package_root/dist/admin-ui/index.html\"",
+    "    : > \"$package_root/scripts/ops/macos-bootstrap.mjs\"",
+    "  fi",
+    "  if [ \"$package_name\" = \"@agent-session-broker/worker\" ]; then",
+    "    : > \"$package_root/dist/src/worker-index.js\"",
+    "  fi",
     "  : > \"$package_root/scripts/ops/macos-launchd-launcher.mjs\"",
     "  : > \"$package_root/scripts/ops/macos-launchd-restart.mjs\"",
-    "  printf '{\"name\":\"agent-session-broker\",\"version\":\"%s\"}\\n' \"$version\" > \"$package_root/package.json\"",
+    "  printf '{\"name\":\"%s\",\"version\":\"%s\"}\\n' \"$package_name\" \"$version\" > \"$package_root/package.json\"",
     "fi"
   ].join("\n");
 }

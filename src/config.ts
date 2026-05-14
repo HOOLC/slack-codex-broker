@@ -41,12 +41,16 @@ export interface AppConfig {
   readonly brokerAdminToken?: string | undefined;
   readonly adminLaunchdLabel?: string | undefined;
   readonly workerLaunchdLabel?: string | undefined;
-  readonly releasePackageName: string;
+  readonly releaseAdminPackageName: string;
+  readonly releaseWorkerPackageName: string;
   readonly releaseNpmRegistryUrl?: string | undefined;
   readonly releasesRoot?: string | undefined;
-  readonly currentReleasePath?: string | undefined;
-  readonly previousReleasePath?: string | undefined;
-  readonly failedReleasePath?: string | undefined;
+  readonly currentAdminReleasePath?: string | undefined;
+  readonly previousAdminReleasePath?: string | undefined;
+  readonly failedAdminReleasePath?: string | undefined;
+  readonly currentWorkerReleasePath?: string | undefined;
+  readonly previousWorkerReleasePath?: string | undefined;
+  readonly failedWorkerReleasePath?: string | undefined;
   readonly adminPlistPath?: string | undefined;
   readonly workerPlistPath?: string | undefined;
   readonly logDir: string;
@@ -216,12 +220,16 @@ export function loadConfig(env = process.env): AppConfig {
     brokerAdminToken: getOptional(env, "BROKER_ADMIN_TOKEN"),
     adminLaunchdLabel: getOptional(env, "ADMIN_LAUNCHD_LABEL"),
     workerLaunchdLabel: getOptional(env, "WORKER_LAUNCHD_LABEL"),
-    releasePackageName: env.RELEASE_PACKAGE_NAME ?? "agent-session-broker",
+    releaseAdminPackageName: env.RELEASE_ADMIN_PACKAGE_NAME ?? "@agent-session-broker/admin",
+    releaseWorkerPackageName: env.RELEASE_WORKER_PACKAGE_NAME ?? "@agent-session-broker/worker",
     releaseNpmRegistryUrl: getOptional(env, "RELEASE_NPM_REGISTRY_URL"),
     releasesRoot: env.RELEASES_ROOT ? path.resolve(env.RELEASES_ROOT) : serviceRoot ? path.join(serviceRoot, "releases") : undefined,
-    currentReleasePath: env.CURRENT_RELEASE_PATH ? path.resolve(env.CURRENT_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current") : undefined,
-    previousReleasePath: env.PREVIOUS_RELEASE_PATH ? path.resolve(env.PREVIOUS_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous") : undefined,
-    failedReleasePath: env.FAILED_RELEASE_PATH ? path.resolve(env.FAILED_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "failed") : undefined,
+    currentAdminReleasePath: env.CURRENT_ADMIN_RELEASE_PATH ? path.resolve(env.CURRENT_ADMIN_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current-admin") : undefined,
+    previousAdminReleasePath: env.PREVIOUS_ADMIN_RELEASE_PATH ? path.resolve(env.PREVIOUS_ADMIN_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous-admin") : undefined,
+    failedAdminReleasePath: env.FAILED_ADMIN_RELEASE_PATH ? path.resolve(env.FAILED_ADMIN_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "failed-admin") : undefined,
+    currentWorkerReleasePath: env.CURRENT_WORKER_RELEASE_PATH ? path.resolve(env.CURRENT_WORKER_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "current-worker") : undefined,
+    previousWorkerReleasePath: env.PREVIOUS_WORKER_RELEASE_PATH ? path.resolve(env.PREVIOUS_WORKER_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "previous-worker") : undefined,
+    failedWorkerReleasePath: env.FAILED_WORKER_RELEASE_PATH ? path.resolve(env.FAILED_WORKER_RELEASE_PATH) : serviceRoot ? path.join(serviceRoot, "failed-worker") : undefined,
     adminPlistPath: env.ADMIN_PLIST_PATH ? path.resolve(env.ADMIN_PLIST_PATH) : undefined,
     workerPlistPath: env.WORKER_PLIST_PATH ? path.resolve(env.WORKER_PLIST_PATH) : undefined,
     logDir,

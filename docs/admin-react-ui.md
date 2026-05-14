@@ -119,8 +119,9 @@ The operations page must preserve existing behavior:
   inside each module;
 - admin pages do not expose free-text search boxes. Session navigation uses
   explicit status filters, and account panels show their full bounded lists;
-- publish uses a package-version selector instead of a free-form text field.
-  Candidates are recent npm package versions reported by the deployment service.
+- publish uses target and package-version selectors instead of a free-form text
+  field. Candidates are recent npm package versions reported by the deployment
+  service for the selected admin or worker target.
   Rollback is not a parallel top-level input; each recent installed package
   release row exposes its own rollback action. Publish and rollback still show
   deployment status and run preflight confirmation;
@@ -207,6 +208,6 @@ After the React migration, GitHub account work continues in React:
   quota metrics while the top quota strip remains compact.
 - The GitHub default PR account control shows account identity only once, in the
   selector, and lays out label, selector, and action on one row.
-- The publish control uses a select for package versions and does not render a
-  free-form `提交 / 分支 / 标签` input or Git ref selector.
+- The publish control uses selects for target and package versions and does not
+  render a free-form `提交 / 分支 / 标签` input or Git ref selector.
 - `pnpm test` and `pnpm build` pass.

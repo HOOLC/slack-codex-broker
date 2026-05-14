@@ -2,73 +2,89 @@
 
 ## Goal
 
-Ship broker releases as built npm packages, then let admin deploy and roll back
-installed package versions.
+Ship broker releases as built npm packages, with separate admin and worker
+release units.
 
 Production must not be a build machine. CI or a release workstation builds the
-TypeScript and admin assets, packs the npm artifact, and publishes or stores that
-artifact. The live admin process only chooses a package version, installs that
-version into a versioned release directory, switches the `current` symlink, and
-restarts the launchd services.
+TypeScript and admin assets, stages runtime-only package directories, and
+publishes versioned npm artifacts. The live admin process only chooses a package
+target and version, installs that version into a versioned release directory,
+switches that target's `current` symlink, and restarts only the affected launchd
+service.
 
 ## Current State
 
-The current release path is Git based:
+The old release path was Git based:
 
-- the live machine keeps a repository clone;
-- admin fetches refs from that clone;
-- deploy creates a Git worktree under `releases/<sha>`;
-- deploy runs `pnpm install`, `pnpm build`, then `pnpm install --prod` on the
+- the live machine kept a repository clone;
+- admin fetched refs from that clone;
+- deploy created a Git worktree under `releases/<sha>`;
+- deploy ran `pnpm install`, `pnpm build`, then `pnpm install --prod` on the
   live machine;
-- rollback can resolve an arbitrary Git ref and build it if that release is not
-  already present.
+- rollback could resolve an arbitrary Git ref and build it if that release was
+  not already present.
 
-That couples live deploy safety to Git/network/build behavior on the production
-host. It also makes the public package boundary unclear because deployment relies
-on a whole checkout instead of a runtime artifact.
+The first npm refactor still used one package as the release unit. That was safer
+than Git worktrees, but it coupled admin UI releases and worker runtime releases:
+an admin-only UI change still activated the worker package path, and a worker
+deploy also implied an admin package change.
 
 ## Target Design
 
-The release unit is the npm package:
+The release units are scoped npm packages under the `agent-session-broker` npm
+organization:
 
-The package is named `agent-session-broker`, not after Slack or Codex. The
-release artifact should describe the stable abstraction: sessions from external
-message systems connected to agent runtimes. Slack and Codex are adapters inside
-that package, not the package identity.
+- `@agent-session-broker/admin` contains the admin HTTP entry point, admin UI
+  assets, and the launchd helpers needed by the admin service.
+- `@agent-session-broker/worker` contains the worker entry point and the launchd
+  helpers needed by the worker service.
+
+The root package is a private build workspace. It must not be published as the
+runtime artifact.
 
 1. `pnpm build` creates `dist/` with server code, copied prompt assets, and the
    built admin UI.
-2. `pnpm release:pack` packs the runtime package from explicit `package.json`
-   `files`.
-3. CI always builds, tests, and packs an artifact for the checked commit.
-4. The npm publish workflow publishes that same package to npm for versioned
+2. `pnpm release:stage` creates runtime-only package directories for admin and
+   worker from explicit package templates.
+3. `pnpm release:pack` packs both staged package directories.
+4. CI always builds, tests, stages, and packs both artifacts for the checked
+   commit.
+5. The npm publish workflow publishes both packages to npm for versioned
    releases.
-5. The admin deployment service reads candidate versions from the package
-   registry.
-6. Deploy installs `agent-session-broker@<version>` into
-   `<service-root>/releases/npm-<version>/`.
-7. The `current` symlink points at the installed package root inside that release
-   directory.
-8. Rollback only activates a release that is already installed locally. It never
-   fetches source or builds a missing version during rollback.
+6. The admin deployment service reads candidate versions from each target's
+   package registry entry.
+7. Deploy requires `{ target, version }` where target is `admin` or `worker`.
+8. Admin deploy installs `@agent-session-broker/admin@<version>` into
+   `<service-root>/releases/admin/npm-<version>/`, switches the admin current
+   symlink, and restarts only the admin launchd service.
+9. Worker deploy installs `@agent-session-broker/worker@<version>` into
+   `<service-root>/releases/worker/npm-<version>/`, switches the worker current
+   symlink, restarts only the worker launchd service, and waits for worker
+   readiness.
+10. Rollback requires a target and only activates a release already installed
+    locally for that target. It never fetches source or builds a missing version
+    during rollback.
 
 Package contents are runtime-only:
 
-- `dist/`;
+- package metadata;
+- `dist/src/`;
+- `dist/admin-ui/` only for the admin package;
 - launchd helper scripts needed by installed services;
-- README, license, and package metadata.
+- README and license.
 
 Source files, tests, local state, generated preview data, and private operator
-configuration are not part of the package.
+configuration are not part of either package.
 
 ## Publish Workflow
 
 Npm publication is a release operation, not a side effect of every push.
 
-- Pull requests and pushes run CI build, test, and pack.
+- Pull requests and pushes run CI build, test, stage, and pack.
 - Versioned release tags and manual dispatch run the npm publish workflow.
 - The publish workflow installs dependencies from the lockfile, builds, tests,
-  packs the artifact for inspection, then runs `npm publish`.
+  stages both package directories, packs both artifacts for inspection, then runs
+  `npm publish` for both staged package directories.
 - The workflow uses `NPM_TOKEN` from GitHub Actions secrets and does not store
   npm credentials in the repository.
 - The workflow requests GitHub OIDC permission and publishes with npm
@@ -86,28 +102,35 @@ repository metadata, deployment commands, and UI labels. Avoid tests like
 
 ## Admin UX
 
-The publish panel selects package versions, not free-form refs or main commits.
+The publish panel selects target and package version, not free-form refs or main
+commits.
 
-- The deploy selector lists recent package versions returned by deployment
-  status.
-- The deploy request sends a version.
-- The recent release list remains the rollback surface.
-- Each rollback button activates that already-installed package release.
+- The target selector chooses admin or worker.
+- The version selector lists recent package versions returned for the selected
+  target.
+- The deploy request sends `{ target, version }`.
+- The recent release list is grouped by target.
+- Each rollback button activates that already-installed target release.
 
 ## Acceptance Criteria
 
-- `package.json` has explicit package metadata for the public repository.
-- `package.json` exposes a runtime-only `files` boundary for packed releases.
-- CI builds, tests, and packs the npm artifact.
-- `.github/workflows/npm-publish.yml` publishes `agent-session-broker` from
+- The root `package.json` is private and acts as the build workspace.
+- Admin package metadata names `@agent-session-broker/admin`.
+- Worker package metadata names `@agent-session-broker/worker`.
+- Package staging creates runtime-only directories for both packages.
+- CI builds, tests, stages, and packs both npm artifacts.
+- `.github/workflows/npm-publish.yml` publishes both scoped packages from
   versioned release tags or manual dispatch using `NPM_TOKEN`.
-- Admin deployment status reports package name and recent package versions.
-- Admin publish UI selects a package version.
-- `/admin/api/deploy` requires a package `version`, not a Git `ref`.
+- Admin deployment status reports admin and worker package targets separately.
+- Admin publish UI selects target and package version.
+- `/admin/api/deploy` requires target and package version.
+- `/admin/api/rollback` requires target and uses an optional package version.
 - `ReleaseDeploymentService.deploy` does not run Git fetch/worktree commands.
 - `ReleaseDeploymentService.deploy` does not run `pnpm install` or
   `pnpm build` on the live host.
-- `ReleaseDeploymentService.rollback` only uses local installed releases.
-- Launchd services still execute through the `current` symlink.
+- `ReleaseDeploymentService.rollback` only uses local installed releases for
+  the requested target.
+- Admin launchd runs through the admin current symlink.
+- Worker launchd runs through the worker current symlink.
 - Regression tests avoid private-string negative assertions.
 - `pnpm test` and `pnpm build` pass.

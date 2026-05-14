@@ -39,11 +39,17 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Pack release artifact
-        run: pnpm pack --pack-destination artifacts
+      - name: Stage release packages
+        run: pnpm release:stage
+
+      - name: Pack admin release artifact
+        run: npm pack artifacts/npm-packages/admin --pack-destination artifacts
+
+      - name: Pack worker release artifact
+        run: npm pack artifacts/npm-packages/worker --pack-destination artifacts
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agent-session-broker-npm-package
+          name: agent-session-broker-npm-packages
           path: artifacts/*.tgz
