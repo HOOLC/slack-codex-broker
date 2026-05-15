@@ -140,9 +140,10 @@ and visual hierarchy refactor, not a behavior rewrite.
   rows use different restrained tones for success, running, and failure.
 - Runtime/session notice badges are subdued so the title/summary remains the
   reading focus.
-- Detail inspection uses a muted inline icon by default and only gains a subtle
-  cyan affordance on hover/open. The control must not create its own timeline
-  row.
+- Detail inspection uses a muted inline icon by default and opens an in-message
+  debug panel below the current item. It must not create its own timeline row,
+  use visible `查看详情` text, or rely on an absolute overlay that can be clipped
+  by the timeline scroll container or covered by neighboring rows.
 - Background job and runtime reminder inputs render as Runtime/session notes,
   not as `用户` messages.
 - Completed, failed, or cancelled background jobs are historical records, not

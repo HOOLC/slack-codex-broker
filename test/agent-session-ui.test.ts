@@ -89,12 +89,13 @@ describe("agent session UI", () => {
     expect(css).toContain(".agent-system-note");
     expect(css).toContain(".agent-notice");
     expect(css).toContain(".agent-notice .badge { opacity: 0.45; filter: saturate(0.62); }");
-    expect(css).toContain(".trace-details { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; margin: 0; }");
-    expect(css).toContain(".trace-details summary { list-style: none; display: grid; place-items: center; width: 14px; height: 14px;");
-    expect(css).toContain(".trace-details summary::-webkit-details-marker { display: none; }");
-    expect(css).toContain(".trace-details summary:hover, .trace-details[open] summary { color: var(--cyan); opacity: 0.72; }");
-    expect(css).toContain(".trace-details pre { position: absolute; right: 0; top: 18px;");
-    expect(sessionView).not.toContain("{renderTraceDetails()}\\n      </article>");
+    expect(css).toContain(".trace-details-button { display: grid; place-items: center; width: 14px; height: 14px;");
+    expect(css).toContain(".trace-details-button:hover, .trace-details-button.open { color: var(--cyan); opacity: 0.72; }");
+    expect(css).toContain(".trace-detail-panel { width: 100%; margin: 8px 0 0; padding: 6px 8px;");
+    expect(css).not.toContain(".trace-details pre { position: absolute;");
+    expect(css).not.toContain("top: 18px; z-index: 20; width: min(680px");
+    expect(sessionView).toContain("setDetailOpen");
+    expect(sessionView).toContain('className="trace-detail-panel"');
     expect(css).toContain(".agent-message-system .agent-message-avatar, .agent-message-session .agent-message-avatar { display: none; }");
     expect(css).toContain(".agent-message-system .agent-message-body, .agent-message-session .agent-message-body { padding: 0; border: 0; background: transparent; }");
     expect(css).not.toContain("grid-template-columns: 72px 90px minmax(0, 1fr)");
@@ -115,6 +116,7 @@ describe("agent session UI", () => {
     expect(sessionView).toContain('aria-label="查看详情"');
     expect(sessionView).toContain('className="trace-details-icon"');
     expect(sessionView).not.toContain("<summary>查看详情</summary>");
+    expect(sessionView).not.toContain("<details className=\"trace-details\"");
     expect(sessionView).toContain('className="agent-notice"');
     expect(sessionView).toContain('className="agent-notice-kind"');
     expect(sessionView).not.toContain("timelineEventKind");

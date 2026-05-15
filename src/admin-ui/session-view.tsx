@@ -1278,6 +1278,7 @@ function Timeline({ events, hasMore = false, olderBusy = false, onLoadOlder }: {
 function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.Element {
   const [detail, setDetail] = useState<string | null>(typeof event.detail === "string" ? event.detail : null);
   const [detailStatus, setDetailStatus] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const display = getTimelineEventDisplay(event);
   const badgeTone = statusTone(event.status === "failed" || event.status === "error" ? event.status : event.type);
   const kind = agentTranscriptKind(event);
@@ -1296,6 +1297,7 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
   useEffect(() => {
     setDetail(typeof event.detail === "string" ? event.detail : null);
     setDetailStatus(null);
+    setDetailOpen(false);
   }, [event.id, event.detail]);
 
   async function loadDetail(): Promise<void> {
@@ -1313,21 +1315,39 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
     }
   }
 
+  async function toggleDetail(): Promise<void> {
+    const nextOpen = !detailOpen;
+    setDetailOpen(nextOpen);
+    if (nextOpen) {
+      await loadDetail();
+    }
+  }
+
   function renderTraceDetails(): React.JSX.Element | null {
     if (!detail && !canLoadDetail) {
       return null;
     }
     return (
-      <details className="trace-details" onToggle={(toggleEvent) => {
-        if ((toggleEvent.currentTarget as HTMLDetailsElement).open) {
-          void loadDetail();
-        }
-      }}>
-        <summary aria-label="查看详情" title="查看详情">
-          <span aria-hidden="true" className="trace-details-icon">i</span>
-        </summary>
-        <pre>{detail || (detailStatus === "loading" ? "正在加载" : detailStatus || "")}</pre>
-      </details>
+      <button
+        type="button"
+        className={"trace-details-button" + (detailOpen ? " open" : "")}
+        aria-label="查看详情"
+        title={detailOpen ? "收起详情" : "查看详情"}
+        onClick={() => { void toggleDetail(); }}
+      >
+        <span aria-hidden="true" className="trace-details-icon">i</span>
+      </button>
+    );
+  }
+
+  function renderTraceDetailPanel(): React.JSX.Element | null {
+    if (!detailOpen) {
+      return null;
+    }
+    return (
+      <pre className="trace-detail-panel">
+        {detail || (detailStatus === "loading" ? "正在加载" : detailStatus || "")}
+      </pre>
     );
   }
 
@@ -1369,6 +1389,7 @@ function TimelineRow({ event }: { readonly event: TimelineEvent }): React.JSX.El
             {display.summary ? <span title={display.summary}>{display.summary}</span> : null}
           </div>
         ) : null}
+        {renderTraceDetailPanel()}
       </article>
     </div>
   );
