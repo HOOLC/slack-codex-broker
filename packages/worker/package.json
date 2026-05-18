@@ -1,6 +1,6 @@
 {
   "name": "@agent-session-broker/worker",
-  "version": "0.1.19",
+  "version": "0.1.21",
   "description": "Worker runtime for the agent session broker.",
   "license": "MIT",
   "repository": {

@@ -9,8 +9,8 @@ Production must not be a build machine. CI or a release workstation builds the
 TypeScript and admin assets, stages runtime-only package directories, and
 publishes versioned npm artifacts. The live admin process only chooses a package
 target and version, installs that version into a versioned release directory,
-switches that target's `current` symlink, and restarts only the affected launchd
-service.
+switches that target's `current` symlink, and restarts only the affected
+system launchd service.
 
 ## Current State
 
@@ -35,7 +35,8 @@ The release units are scoped npm packages under the `agent-session-broker` npm
 organization:
 
 - `@agent-session-broker/admin` contains the admin HTTP entry point, admin UI
-  assets, and the launchd helpers needed by the admin service.
+  assets, bootstrap tooling, and the launchd helpers needed by the admin
+  service.
 - `@agent-session-broker/worker` contains the worker entry point and the launchd
   helpers needed by the worker service.
 
@@ -54,14 +55,18 @@ runtime artifact.
 6. The admin deployment service reads candidate versions from each target's
    package registry entry.
 7. Deploy requires `{ target, version }` where target is `admin` or `worker`.
-8. Admin deploy installs `@agent-session-broker/admin@<version>` into
+8. Bootstrap installs admin and worker as LaunchDaemons in the `system` launchd
+   domain. When `CLOUDFLARED_TUNNEL_TOKEN` is configured, it also installs the
+   public admin cloudflared tunnel as a LaunchDaemon pointing at
+   `http://127.0.0.1:3000`.
+9. Admin deploy installs `@agent-session-broker/admin@<version>` into
    `<service-root>/releases/admin/npm-<version>/`, switches the admin current
-   symlink, and restarts only the admin launchd service.
-9. Worker deploy installs `@agent-session-broker/worker@<version>` into
+   symlink, and restarts only the admin LaunchDaemon.
+10. Worker deploy installs `@agent-session-broker/worker@<version>` into
    `<service-root>/releases/worker/npm-<version>/`, switches the worker current
-   symlink, restarts only the worker launchd service, and waits for worker
+   symlink, restarts only the worker LaunchDaemon, and waits for worker
    readiness.
-10. Rollback requires a target and only activates a release already installed
+11. Rollback requires a target and only activates a release already installed
     locally for that target. It never fetches source or builds a missing version
     during rollback.
 
@@ -134,8 +139,10 @@ commits.
   `pnpm build` on the live host.
 - `ReleaseDeploymentService.rollback` only uses local installed releases for
   the requested target.
-- Admin launchd runs through the admin current symlink.
-- Worker launchd runs through the worker current symlink.
+- Admin launchd runs as a LaunchDaemon through the admin current symlink.
+- Worker launchd runs as a LaunchDaemon through the worker current symlink.
+- Cloudflared, when configured, runs as a LaunchDaemon and points at the local
+  admin HTTP port.
 - Bootstrap preserves explicit operator runtime configuration for public admin
   URL, logging, cleanup, GitHub PR fallback, and API/OAuth settings instead of
   silently rewriting those values to defaults. `ADMIN_BASE_URL` is the public URL

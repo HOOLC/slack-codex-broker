@@ -508,11 +508,8 @@ export class SlackAgentBridge {
 
   async #backfillInboundMentionedUsers(reason: string): Promise<void> {
     const candidates = this.#sessions.listInboundMessages({
-      source: ["app_mention", "direct_message", "thread_reply"]
-    }).filter((message) => {
-      const mentionedUserIds = message.mentionedUserIds ?? [];
-      const mentionedUsers = message.mentionedUsers ?? [];
-      return mentionedUserIds.length > 0 && mentionedUsers.length < mentionedUserIds.length;
+      source: ["app_mention", "direct_message", "thread_reply"],
+      needsMentionUserBackfill: true
     });
 
     if (!candidates.length) {

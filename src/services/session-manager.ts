@@ -428,6 +428,7 @@ export class SessionManager {
     readonly status?: PersistedInboundMessageStatus | readonly PersistedInboundMessageStatus[] | undefined;
     readonly batchId?: string | undefined;
     readonly source?: PersistedInboundSource | readonly PersistedInboundSource[] | undefined;
+    readonly needsMentionUserBackfill?: boolean | undefined;
   }): PersistedInboundMessage[] {
     return this.#stateStore.listInboundMessages({
       sessionKey:
@@ -436,7 +437,8 @@ export class SessionManager {
           : undefined,
       status: options?.status,
       batchId: options?.batchId,
-      source: options?.source
+      source: options?.source,
+      needsMentionUserBackfill: options?.needsMentionUserBackfill
     });
   }
 

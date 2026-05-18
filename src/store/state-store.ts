@@ -21,7 +21,7 @@ import type {
 import { ensureDir } from "../utils/fs.js";
 
 export const STATE_DATABASE_FILENAME = "broker.sqlite";
-export const CURRENT_STATE_SCHEMA_VERSION = 15;
+export const CURRENT_STATE_SCHEMA_VERSION = 16;
 export const STATE_STORE_BUSY_TIMEOUT_MS = 5_000;
 const ADMIN_EVENT_RETENTION_LIMIT = 20_000;
 const ADMIN_EVENT_PRUNE_INTERVAL = 500;
@@ -152,6 +152,9 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(updated_at);
         CREATE INDEX IF NOT EXISTS idx_inbound_session_status ON inbound_messages(session_key, status, batch_id);
         CREATE INDEX IF NOT EXISTS idx_inbound_source ON inbound_messages(session_key, source, message_ts);
+        CREATE INDEX IF NOT EXISTS idx_inbound_source_message_ts ON inbound_messages(source, message_ts);
+        CREATE INDEX IF NOT EXISTS idx_inbound_mention_backfill
+          ON inbound_messages(source, mentioned_user_ids, mentioned_users, message_ts);
         CREATE INDEX IF NOT EXISTS idx_jobs_session_status ON background_jobs(session_key, status);
         CREATE INDEX IF NOT EXISTS idx_slack_events_status ON slack_events(status, created_at);
         CREATE INDEX IF NOT EXISTS idx_slack_events_done_updated ON slack_events(status, updated_at);
@@ -337,6 +340,13 @@ const STATE_MIGRATIONS: readonly StateMigration[] = [
     up(database) {
       createSlackEventRetentionIndexes(database);
     }
+  },
+  {
+    version: 16,
+    name: "inbound_mention_backfill_indexes",
+    up(database) {
+      createInboundMentionBackfillIndexes(database);
+    }
   }
 ];
 
@@ -443,6 +453,18 @@ function createSlackEventRetentionIndexes(database: DatabaseSync): void {
   }
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_slack_events_done_updated ON slack_events(status, updated_at);
+  `);
+}
+
+function createInboundMentionBackfillIndexes(database: DatabaseSync): void {
+  if (!tableExists(database, "inbound_messages")) {
+    return;
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_inbound_source_message_ts
+      ON inbound_messages(source, message_ts);
+    CREATE INDEX IF NOT EXISTS idx_inbound_mention_backfill
+      ON inbound_messages(source, mentioned_user_ids, mentioned_users, message_ts);
   `);
 }
 
@@ -843,6 +865,7 @@ export class StateStore {
     readonly status?: PersistedInboundMessageStatus | readonly PersistedInboundMessageStatus[] | undefined;
     readonly batchId?: string | undefined;
     readonly source?: PersistedInboundSource | readonly PersistedInboundSource[] | undefined;
+    readonly needsMentionUserBackfill?: boolean | undefined;
   }): PersistedInboundMessage[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
@@ -864,6 +887,12 @@ export class StateStore {
     if (sources) {
       where.push(`source IN (${placeholders(sources.length)})`);
       params.push(...sources);
+    }
+    if (options?.needsMentionUserBackfill) {
+      const mentionedUserIdCount = "CASE WHEN mentioned_user_ids IS NOT NULL AND json_valid(mentioned_user_ids) THEN json_array_length(mentioned_user_ids) ELSE 0 END";
+      const mentionedUserCount = "CASE WHEN mentioned_users IS NOT NULL AND json_valid(mentioned_users) THEN json_array_length(mentioned_users) ELSE 0 END";
+      where.push(`(${mentionedUserIdCount}) > 0`);
+      where.push(`(${mentionedUserCount}) < (${mentionedUserIdCount})`);
     }
 
     const sql = [

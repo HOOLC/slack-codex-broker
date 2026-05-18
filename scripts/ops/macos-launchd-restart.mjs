@@ -118,20 +118,34 @@ function summarize(result) {
   return [result.stdout, result.stderr].join("\n").trim().replace(/\s+/g, " ").slice(0, 500);
 }
 
+function shouldUseSudo(domain, plist) {
+  return domain === "system" &&
+    plist?.startsWith("/Library/LaunchDaemons/") &&
+    typeof process.getuid === "function" &&
+    process.getuid() !== 0;
+}
+
+async function runLaunchctl(args, options) {
+  if (shouldUseSudo(options.domain, options.plist)) {
+    return await runCommand("sudo", ["launchctl", ...args]);
+  }
+  return await runCommand("launchctl", args);
+}
+
 const options = parseArgs(process.argv.slice(2));
 const serviceTarget = `${options.domain}/${options.label}`;
 
 await appendLog(options.logFile, `starting ${options.reason}: ${serviceTarget} via ${options.plist}`);
 await sleep(options.delayMs);
 
-const bootout = await runCommand("launchctl", ["bootout", options.domain, options.plist]);
+const bootout = await runLaunchctl(["bootout", options.domain, options.plist], options);
 await appendLog(options.logFile, `bootout code=${bootout.code}${summarize(bootout) ? ` output=${summarize(bootout)}` : ""}`);
 await sleep(150);
 
 let loaded = false;
 let lastBootstrap = null;
 for (let attempt = 1; attempt <= 3; attempt += 1) {
-  const bootstrap = await runCommand("launchctl", ["bootstrap", options.domain, options.plist]);
+  const bootstrap = await runLaunchctl(["bootstrap", options.domain, options.plist], options);
   lastBootstrap = bootstrap;
   await appendLog(options.logFile, `bootstrap attempt=${attempt} code=${bootstrap.code}${summarize(bootstrap) ? ` output=${summarize(bootstrap)}` : ""}`);
   if (bootstrap.code === 0) {
@@ -139,7 +153,7 @@ for (let attempt = 1; attempt <= 3; attempt += 1) {
     break;
   }
 
-  const printed = await runCommand("launchctl", ["print", serviceTarget]);
+  const printed = await runLaunchctl(["print", serviceTarget], options);
   if (printed.code === 0) {
     loaded = true;
     await appendLog(options.logFile, "bootstrap failed but service is already loaded");
@@ -154,6 +168,6 @@ if (!loaded) {
   process.exit(1);
 }
 
-const kickstart = await runCommand("launchctl", ["kickstart", "-k", serviceTarget]);
+const kickstart = await runLaunchctl(["kickstart", "-k", serviceTarget], options);
 await appendLog(options.logFile, `kickstart code=${kickstart.code}${summarize(kickstart) ? ` output=${summarize(kickstart)}` : ""}`);
 process.exit(kickstart.code === 0 ? 0 : 1);

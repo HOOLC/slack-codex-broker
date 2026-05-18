@@ -10,7 +10,10 @@ import { repoRoot, runCommand } from "./lib.mjs";
 const DEFAULT_SERVICE_ROOT = repoRoot;
 const DEFAULT_ADMIN_LABEL = "io.github.hoolc.agent-session-broker";
 const DEFAULT_WORKER_LABEL = "io.github.hoolc.agent-session-broker.worker";
+const DEFAULT_CLOUDFLARED_LABEL = "io.github.hoolc.agent-session-broker.cloudflared";
 const DEFAULT_NODE_PATH = "/opt/homebrew/opt/node@24/bin/node";
+const DEFAULT_CLOUDFLARED_PATH = "/opt/homebrew/bin/cloudflared";
+const DEFAULT_LAUNCHD_DAEMON_DIR = "/Library/LaunchDaemons";
 const DEFAULT_CODEX_VERSION = "0.114.0";
 const DEFAULT_GEMINI_VERSION = "0.33.0";
 const DEFAULT_PACKAGE_INFO = readDefaultPackageInfo();
@@ -76,7 +79,8 @@ const BROKER_ENV_PASSTHROUGH_KEYS = [
   "BROKER_DEFAULT_GITHUB_LOGIN",
   "BROKER_DEFAULT_GITHUB_TOKEN",
   "GH_TOKEN",
-  "GITHUB_TOKEN"
+  "GITHUB_TOKEN",
+  "CLOUDFLARED_TUNNEL_TOKEN"
 ];
 
 function readDefaultPackageInfo() {
@@ -101,8 +105,12 @@ function parseArgs(argv) {
     serviceRoot: DEFAULT_SERVICE_ROOT,
     adminLabel: DEFAULT_ADMIN_LABEL,
     workerLabel: DEFAULT_WORKER_LABEL,
+    cloudflaredLabel: DEFAULT_CLOUDFLARED_LABEL,
     nodePath: DEFAULT_NODE_PATH,
+    cloudflaredPath: DEFAULT_CLOUDFLARED_PATH,
     npmPath: undefined,
+    launchdDaemonDir: DEFAULT_LAUNCHD_DAEMON_DIR,
+    runUser: os.userInfo().username,
     adminPackageName: DEFAULT_PACKAGE_INFO.adminName,
     workerPackageName: DEFAULT_PACKAGE_INFO.workerName,
     packageVersion: DEFAULT_PACKAGE_INFO.version,
@@ -127,12 +135,28 @@ function parseArgs(argv) {
         options.workerLabel = argv[index + 1];
         index += 1;
         break;
+      case "--cloudflared-label":
+        options.cloudflaredLabel = argv[index + 1];
+        index += 1;
+        break;
       case "--node-path":
         options.nodePath = argv[index + 1];
         index += 1;
         break;
+      case "--cloudflared-path":
+        options.cloudflaredPath = argv[index + 1];
+        index += 1;
+        break;
       case "--npm-path":
         options.npmPath = argv[index + 1];
+        index += 1;
+        break;
+      case "--launchd-daemon-dir":
+        options.launchdDaemonDir = path.resolve(argv[index + 1]);
+        index += 1;
+        break;
+      case "--run-user":
+        options.runUser = argv[index + 1];
         index += 1;
         break;
       case "--admin-package-name":
@@ -195,9 +219,13 @@ function printHelp() {
       `  --service-root <path>                Service root, default ${DEFAULT_SERVICE_ROOT}`,
       `  --label <label>                     Admin launchd label, default ${DEFAULT_ADMIN_LABEL}`,
       `  --worker-label <label>              Worker launchd label, default ${DEFAULT_WORKER_LABEL}`,
+      `  --cloudflared-label <label>         Cloudflared launchd label, default ${DEFAULT_CLOUDFLARED_LABEL}`,
       "  --start-worker                      Also start the worker after bootstrap",
       "  --node-path <path>                  Node binary for launchd",
+      `  --cloudflared-path <path>           Cloudflared binary, default ${DEFAULT_CLOUDFLARED_PATH}`,
       "  --npm-path <path>                   npm binary, default next to --node-path",
+      `  --launchd-daemon-dir <path>         LaunchDaemon plist directory, default ${DEFAULT_LAUNCHD_DAEMON_DIR}`,
+      `  --run-user <user>                   UserName for LaunchDaemons, default ${os.userInfo().username}`,
       "  --admin-package-name <name>         Admin npm package name",
       "  --worker-package-name <name>        Worker npm package name",
       "  --package-version <version>         Broker npm package version",
@@ -398,14 +426,71 @@ function renderEnvFile(env) {
   );
 }
 
-function renderPlist({ label, nodePath, launcherPath, repoRootPath, envFilePath, entryPoint, stdoutPath, stderrPath }) {
+function renderEnvironmentVariables(environment) {
+  const entries = Object.entries(environment)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).length > 0)
+    .flatMap(([key, value]) => [
+      `    <key>${key}</key>`,
+      `    <string>${value}</string>`
+    ]);
+  return [
+    "  <key>EnvironmentVariables</key>",
+    "  <dict>",
+    ...entries,
+    "  </dict>"
+  ];
+}
+
+function renderDaemonCommon({ label, runUser, homeDir, workingDirectory, stdoutPath, stderrPath }) {
+  return [
+    "  <key>Label</key>",
+    `  <string>${label}</string>`,
+    "  <key>UserName</key>",
+    `  <string>${runUser}</string>`,
+    ...renderEnvironmentVariables({
+      HOME: homeDir,
+      PATH: "/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin"
+    }),
+    "  <key>WorkingDirectory</key>",
+    `  <string>${workingDirectory}</string>`,
+    "  <key>RunAtLoad</key>",
+    "  <true/>",
+    "  <key>KeepAlive</key>",
+    "  <true/>",
+    "  <key>ProcessType</key>",
+    "  <string>Background</string>",
+    "  <key>StandardOutPath</key>",
+    `  <string>${stdoutPath}</string>`,
+    "  <key>StandardErrorPath</key>",
+    `  <string>${stderrPath}</string>`
+  ];
+}
+
+function renderPlist({
+  label,
+  nodePath,
+  launcherPath,
+  repoRootPath,
+  envFilePath,
+  entryPoint,
+  stdoutPath,
+  stderrPath,
+  runUser,
+  homeDir
+}) {
   return [
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
     "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
     "<plist version=\"1.0\">",
     "<dict>",
-    "  <key>Label</key>",
-    `  <string>${label}</string>`,
+    ...renderDaemonCommon({
+      label,
+      runUser,
+      homeDir,
+      workingDirectory: repoRootPath,
+      stdoutPath,
+      stderrPath
+    }),
     "  <key>ProgramArguments</key>",
     "  <array>",
     `    <string>${nodePath}</string>`,
@@ -417,18 +502,46 @@ function renderPlist({ label, nodePath, launcherPath, repoRootPath, envFilePath,
     "    <string>--entry-point</string>",
     `    <string>${entryPoint}</string>`,
     "  </array>",
-    "  <key>WorkingDirectory</key>",
-    `  <string>${repoRootPath}</string>`,
-    "  <key>RunAtLoad</key>",
-    "  <true/>",
-    "  <key>KeepAlive</key>",
-    "  <true/>",
-    "  <key>ProcessType</key>",
-    "  <string>Background</string>",
-    "  <key>StandardOutPath</key>",
-    `  <string>${stdoutPath}</string>`,
-    "  <key>StandardErrorPath</key>",
-    `  <string>${stderrPath}</string>`,
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+
+function renderCloudflaredPlist({
+  label,
+  cloudflaredPath,
+  token,
+  serviceRoot,
+  stdoutPath,
+  stderrPath,
+  runUser,
+  homeDir
+}) {
+  return [
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+    "<plist version=\"1.0\">",
+    "<dict>",
+    ...renderDaemonCommon({
+      label,
+      runUser,
+      homeDir,
+      workingDirectory: serviceRoot,
+      stdoutPath,
+      stderrPath
+    }),
+    "  <key>ProgramArguments</key>",
+    "  <array>",
+    `    <string>${cloudflaredPath}</string>`,
+    "    <string>tunnel</string>",
+    "    <string>--no-autoupdate</string>",
+    "    <string>--url</string>",
+    "    <string>http://127.0.0.1:3000</string>",
+    "    <string>run</string>",
+    "    <string>--token</string>",
+    `    <string>${token}</string>`,
+    "  </array>",
     "</dict>",
     "</plist>",
     ""
@@ -437,6 +550,7 @@ function renderPlist({ label, nodePath, launcherPath, repoRootPath, envFilePath,
 
 function buildPaths(serviceRoot, options) {
   const remoteHome = os.homedir();
+  const launchdDaemonDir = options.launchdDaemonDir;
   return {
     serviceRoot,
     repoRoot: serviceRoot,
@@ -456,12 +570,19 @@ function buildPaths(serviceRoot, options) {
     adminEnvFile: path.join(serviceRoot, "config", "admin.env"),
     workerEnvFile: path.join(serviceRoot, "config", "worker.env"),
     logsDir: path.join(serviceRoot, "logs"),
-    adminPlistPath: path.join(remoteHome, "Library", "LaunchAgents", `${options.adminLabel}.plist`),
-    workerPlistPath: path.join(remoteHome, "Library", "LaunchAgents", `${options.workerLabel}.plist`),
+    launchdDaemonDir,
+    adminPlistPath: path.join(launchdDaemonDir, `${options.adminLabel}.plist`),
+    workerPlistPath: path.join(launchdDaemonDir, `${options.workerLabel}.plist`),
+    cloudflaredPlistPath: path.join(launchdDaemonDir, `${options.cloudflaredLabel}.plist`),
+    legacyAdminAgentPath: path.join(remoteHome, "Library", "LaunchAgents", `${options.adminLabel}.plist`),
+    legacyWorkerAgentPath: path.join(remoteHome, "Library", "LaunchAgents", `${options.workerLabel}.plist`),
+    legacyCloudflaredAgentPath: path.join(remoteHome, "Library", "LaunchAgents", `${options.cloudflaredLabel}.plist`),
     adminStdoutPath: path.join(serviceRoot, "logs", "admin.launchd.out.log"),
     adminStderrPath: path.join(serviceRoot, "logs", "admin.launchd.err.log"),
     workerStdoutPath: path.join(serviceRoot, "logs", "worker.launchd.out.log"),
-    workerStderrPath: path.join(serviceRoot, "logs", "worker.launchd.err.log")
+    workerStderrPath: path.join(serviceRoot, "logs", "worker.launchd.err.log"),
+    cloudflaredStdoutPath: path.join(serviceRoot, "logs", "cloudflared.out.log"),
+    cloudflaredStderrPath: path.join(serviceRoot, "logs", "cloudflared.err.log")
   };
 }
 
@@ -665,6 +786,50 @@ async function ensureInitialReleaseTarget(paths, options, targetOptions, version
   };
 }
 
+function shouldInstallLaunchDaemonWithSudo(plistPath) {
+  return path.resolve(plistPath).startsWith(`${DEFAULT_LAUNCHD_DAEMON_DIR}${path.sep}`) &&
+    typeof process.getuid === "function" &&
+    process.getuid() !== 0;
+}
+
+async function writeLaunchDaemonPlist(plistPath, plist) {
+  if (!shouldInstallLaunchDaemonWithSudo(plistPath)) {
+    await ensureDir(path.dirname(plistPath));
+    await fs.writeFile(plistPath, plist, "utf8");
+    await fs.chmod(plistPath, 0o644);
+    if (path.resolve(plistPath).startsWith(`${DEFAULT_LAUNCHD_DAEMON_DIR}${path.sep}`)) {
+      try {
+        runCommand("chown", ["root:wheel", plistPath]);
+      } catch {
+        // Ownership correction is best effort when already running as root in tests.
+      }
+    }
+    return;
+  }
+
+  const tempPath = path.join(os.tmpdir(), `agent-session-broker-${path.basename(plistPath)}.${process.pid}.tmp`);
+  await fs.writeFile(tempPath, plist, "utf8");
+  try {
+    runCommand("sudo", ["install", "-o", "root", "-g", "wheel", "-m", "0644", tempPath, plistPath]);
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
+}
+
+async function removeLegacyLaunchAgent(label, plistPath) {
+  if (!(await fileExists(plistPath))) {
+    return;
+  }
+
+  try {
+    runCommand("launchctl", ["bootout", `gui/${process.getuid()}`, plistPath]);
+  } catch {
+    // The old GUI launchd domain may be absent; removing the stale plist is the important part.
+  }
+  await fs.rm(plistPath, { force: true });
+  console.error(`Removed legacy LaunchAgent for ${label}: ${plistPath}`);
+}
+
 async function writeLaunchdFiles(paths, options, seedBrokerEnv) {
   const adminLauncherPath = path.join(paths.currentAdminReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
   const workerLauncherPath = path.join(paths.currentWorkerReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
@@ -676,7 +841,9 @@ async function writeLaunchdFiles(paths, options, seedBrokerEnv) {
     envFilePath: paths.adminEnvFile,
     entryPoint: "dist/src/admin-index.js",
     stdoutPath: paths.adminStdoutPath,
-    stderrPath: paths.adminStderrPath
+    stderrPath: paths.adminStderrPath,
+    runUser: options.runUser,
+    homeDir: os.homedir()
   });
   const workerPlist = renderPlist({
     label: options.workerLabel,
@@ -686,35 +853,67 @@ async function writeLaunchdFiles(paths, options, seedBrokerEnv) {
     envFilePath: paths.workerEnvFile,
     entryPoint: "dist/src/worker-index.js",
     stdoutPath: paths.workerStdoutPath,
-    stderrPath: paths.workerStderrPath
+    stderrPath: paths.workerStderrPath,
+    runUser: options.runUser,
+    homeDir: os.homedir()
   });
+  const cloudflaredPlist = seedBrokerEnv.CLOUDFLARED_TUNNEL_TOKEN
+    ? renderCloudflaredPlist({
+        label: options.cloudflaredLabel,
+        cloudflaredPath: options.cloudflaredPath,
+        token: seedBrokerEnv.CLOUDFLARED_TUNNEL_TOKEN,
+        serviceRoot: paths.serviceRoot,
+        stdoutPath: paths.cloudflaredStdoutPath,
+        stderrPath: paths.cloudflaredStderrPath,
+        runUser: options.runUser,
+        homeDir: os.homedir()
+      })
+    : null;
 
-  await ensureDir(path.dirname(paths.adminPlistPath));
   await ensureDir(paths.envDir);
-  await fs.writeFile(paths.adminPlistPath, adminPlist, "utf8");
-  await fs.writeFile(paths.workerPlistPath, workerPlist, "utf8");
+  await writeLaunchDaemonPlist(paths.adminPlistPath, adminPlist);
+  await writeLaunchDaemonPlist(paths.workerPlistPath, workerPlist);
+  if (cloudflaredPlist) {
+    await writeLaunchDaemonPlist(paths.cloudflaredPlistPath, cloudflaredPlist);
+  }
+  await removeLegacyLaunchAgent(options.adminLabel, paths.legacyAdminAgentPath);
+  await removeLegacyLaunchAgent(options.workerLabel, paths.legacyWorkerAgentPath);
+  await removeLegacyLaunchAgent(options.cloudflaredLabel, paths.legacyCloudflaredAgentPath);
   await fs.writeFile(paths.adminEnvFile, renderEnvFile(buildAdminEnv(paths, options, seedBrokerEnv)), "utf8");
   await fs.writeFile(paths.workerEnvFile, renderEnvFile(buildWorkerEnv(paths, options, seedBrokerEnv)), "utf8");
+  return Boolean(cloudflaredPlist);
 }
 
-function launchdDomain(label) {
-  return `gui/${process.getuid()}/${label}`;
+function launchdDomain() {
+  return "system";
+}
+
+function useSudoForLaunchctl(plistPath) {
+  return shouldInstallLaunchDaemonWithSudo(plistPath);
+}
+
+function runLaunchctl(args, plistPath) {
+  if (useSudoForLaunchctl(plistPath)) {
+    runCommand("sudo", ["launchctl", ...args]);
+    return;
+  }
+  runCommand("launchctl", args);
 }
 
 function bootout(plistPath) {
   try {
-    runCommand("launchctl", ["bootout", `gui/${process.getuid()}`, plistPath]);
+    runLaunchctl(["bootout", launchdDomain(), plistPath], plistPath);
   } catch {
     // ignore missing services
   }
 }
 
 function bootstrap(plistPath) {
-  runCommand("launchctl", ["bootstrap", `gui/${process.getuid()}`, plistPath]);
+  runLaunchctl(["bootstrap", launchdDomain(), plistPath], plistPath);
 }
 
-function kickstart(label) {
-  runCommand("launchctl", ["kickstart", "-k", launchdDomain(label)]);
+function kickstart(label, plistPath) {
+  runLaunchctl(["kickstart", "-k", `${launchdDomain()}/${label}`], plistPath);
 }
 
 async function main() {
@@ -727,16 +926,22 @@ async function main() {
   await prepareSharedHomes(paths);
   await installTooling(options);
   const initialReleases = await ensureInitialReleases(paths, options);
-  await writeLaunchdFiles(paths, options, seedBrokerEnv);
+  const cloudflaredConfigured = await writeLaunchdFiles(paths, options, seedBrokerEnv);
 
   bootout(paths.adminPlistPath);
   bootstrap(paths.adminPlistPath);
-  kickstart(options.adminLabel);
+  kickstart(options.adminLabel, paths.adminPlistPath);
 
   if (options.startWorker) {
     bootout(paths.workerPlistPath);
     bootstrap(paths.workerPlistPath);
-    kickstart(options.workerLabel);
+    kickstart(options.workerLabel, paths.workerPlistPath);
+  }
+
+  if (cloudflaredConfigured) {
+    bootout(paths.cloudflaredPlistPath);
+    bootstrap(paths.cloudflaredPlistPath);
+    kickstart(options.cloudflaredLabel, paths.cloudflaredPlistPath);
   }
 
   console.log(
@@ -746,10 +951,12 @@ async function main() {
         serviceRoot: paths.serviceRoot,
         adminPlistPath: paths.adminPlistPath,
         workerPlistPath: paths.workerPlistPath,
+        cloudflaredPlistPath: cloudflaredConfigured ? paths.cloudflaredPlistPath : null,
         currentAdminReleasePath: paths.currentAdminReleasePath,
         currentWorkerReleasePath: paths.currentWorkerReleasePath,
         initialReleases,
-        workerStarted: options.startWorker
+        workerStarted: options.startWorker,
+        cloudflaredStarted: cloudflaredConfigured
       },
       null,
       2

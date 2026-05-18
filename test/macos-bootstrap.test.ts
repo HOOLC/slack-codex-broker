@@ -22,13 +22,14 @@ describe("macOS bootstrap", () => {
     );
   });
 
-  it("writes admin and worker launchd agents that both run from the current release", async () => {
+  it("writes admin, worker, and cloudflared LaunchDaemons that do not depend on a GUI launchd domain", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-bootstrap-"));
     tempDirs.push(tempRoot);
 
     const home = path.join(tempRoot, "home");
     const fakeBin = path.join(tempRoot, "bin");
     const serviceRoot = path.join(tempRoot, "service");
+    const daemonDir = path.join(tempRoot, "LaunchDaemons");
     const commandLog = path.join(tempRoot, "commands.log");
     const packageVersion = "0.2.0";
 
@@ -48,6 +49,7 @@ describe("macOS bootstrap", () => {
         "BROKER_DEFAULT_GITHUB_TOKEN=\"default-pr-token\"",
         "GH_TOKEN=\"legacy-gh-token\"",
         "GITHUB_TOKEN=\"legacy-github-token\"",
+        "CLOUDFLARED_TUNNEL_TOKEN=\"cloudflared-test-token\"",
         "CURRENT_RELEASE_PATH=\"stale-single-release-path\""
       ].join("\n") + "\n",
       "utf8"
@@ -55,6 +57,7 @@ describe("macOS bootstrap", () => {
     await writeExecutable(path.join(fakeBin, "npm"), fakeNpmScript());
     await writeExecutable(path.join(fakeBin, "launchctl"), fakeCommandScript("launchctl"));
     await writeExecutable(path.join(fakeBin, "node"), fakeCommandScript("node"));
+    await writeExecutable(path.join(fakeBin, "cloudflared"), fakeCommandScript("cloudflared"));
 
     const result = await runNodeScript(
       [
@@ -69,8 +72,17 @@ describe("macOS bootstrap", () => {
         path.join(fakeBin, "node"),
         "--npm-path",
         path.join(fakeBin, "npm"),
+        "--launchd-daemon-dir",
+        daemonDir,
+        "--run-user",
+        "test-admin",
+        "--cloudflared-label",
+        "test.cloudflared",
+        "--cloudflared-path",
+        path.join(fakeBin, "cloudflared"),
         "--package-version",
-        packageVersion
+        packageVersion,
+        "--start-worker"
       ],
       {
         ...process.env,
@@ -89,7 +101,8 @@ describe("macOS bootstrap", () => {
       serviceRoot,
       currentAdminReleasePath: path.join(serviceRoot, "current-admin"),
       currentWorkerReleasePath: path.join(serviceRoot, "current-worker"),
-      workerStarted: false
+      workerStarted: true,
+      cloudflaredStarted: true
     });
 
     const currentAdminReleasePath = path.join(serviceRoot, "current-admin");
@@ -99,25 +112,37 @@ describe("macOS bootstrap", () => {
     await expect(fs.readlink(currentAdminReleasePath)).resolves.toBe(path.relative(serviceRoot, adminReleaseRoot));
     await expect(fs.readlink(currentWorkerReleasePath)).resolves.toBe(path.relative(serviceRoot, workerReleaseRoot));
 
-    const adminPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.admin.plist"), "utf8");
-    const workerPlist = await fs.readFile(path.join(home, "Library", "LaunchAgents", "test.worker.plist"), "utf8");
+    const adminPlist = await fs.readFile(path.join(daemonDir, "test.admin.plist"), "utf8");
+    const workerPlist = await fs.readFile(path.join(daemonDir, "test.worker.plist"), "utf8");
+    const cloudflaredPlist = await fs.readFile(path.join(daemonDir, "test.cloudflared.plist"), "utf8");
     const adminEnv = await fs.readFile(path.join(serviceRoot, "config", "admin.env"), "utf8");
     const workerEnv = await fs.readFile(path.join(serviceRoot, "config", "worker.env"), "utf8");
     const adminLauncherPath = path.join(currentAdminReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
     const workerLauncherPath = path.join(currentWorkerReleasePath, "scripts", "ops", "macos-launchd-launcher.mjs");
-    const adminPlistPath = path.join(home, "Library", "LaunchAgents", "test.admin.plist");
-    const workerPlistPath = path.join(home, "Library", "LaunchAgents", "test.worker.plist");
+    const adminPlistPath = path.join(daemonDir, "test.admin.plist");
+    const workerPlistPath = path.join(daemonDir, "test.worker.plist");
 
     expectLaunchdRuntime(adminPlist, {
       launcherPath: adminLauncherPath,
       repoRootPath: currentAdminReleasePath,
-      entryPoint: "dist/src/admin-index.js"
+      entryPoint: "dist/src/admin-index.js",
+      runUser: "test-admin",
+      home
     });
     expectLaunchdRuntime(workerPlist, {
       launcherPath: workerLauncherPath,
       repoRootPath: currentWorkerReleasePath,
-      entryPoint: "dist/src/worker-index.js"
+      entryPoint: "dist/src/worker-index.js",
+      runUser: "test-admin",
+      home
     });
+    expect(cloudflaredPlist).toContain("<key>UserName</key>");
+    expect(cloudflaredPlist).toContain("<string>test-admin</string>");
+    expect(cloudflaredPlist).toContain(`<string>${path.join(fakeBin, "cloudflared")}</string>`);
+    expect(cloudflaredPlist).toContain("<string>--url</string>");
+    expect(cloudflaredPlist).toContain("<string>http://127.0.0.1:3000</string>");
+    expect(cloudflaredPlist).toContain("<string>--token</string>");
+    expect(cloudflaredPlist).toContain("<string>cloudflared-test-token</string>");
     expect(adminEnv).toContain(`ADMIN_PLIST_PATH="${adminPlistPath}"`);
     expect(adminEnv).toContain(`WORKER_PLIST_PATH="${workerPlistPath}"`);
     for (const envText of [adminEnv, workerEnv]) {
@@ -132,6 +157,15 @@ describe("macOS bootstrap", () => {
       expect(envText).toContain('GITHUB_TOKEN="legacy-github-token"');
       expect(envText).not.toContain("CURRENT_RELEASE_PATH");
     }
+
+    const commands = await fs.readFile(commandLog, "utf8");
+    expect(commands).toContain(`launchctl bootstrap system ${adminPlistPath}`);
+    expect(commands).toContain(`launchctl kickstart -k system/test.admin`);
+    expect(commands).toContain(`launchctl bootstrap system ${workerPlistPath}`);
+    expect(commands).toContain(`launchctl kickstart -k system/test.worker`);
+    expect(commands).toContain(`launchctl bootstrap system ${path.join(daemonDir, "test.cloudflared.plist")}`);
+    expect(commands).not.toContain("gui/");
+    await expect(fs.stat(path.join(home, "Library", "LaunchAgents", "test.admin.plist"))).rejects.toMatchObject({ code: "ENOENT" });
   }, 15_000);
 });
 
@@ -216,8 +250,15 @@ function expectLaunchdRuntime(
     readonly launcherPath: string;
     readonly repoRootPath: string;
     readonly entryPoint: string;
+    readonly runUser: string;
+    readonly home: string;
   }
 ): void {
+  expect(plist).toContain("<key>UserName</key>");
+  expect(plist).toContain(`<string>${expected.runUser}</string>`);
+  expect(plist).toContain("<key>EnvironmentVariables</key>");
+  expect(plist).toContain("<key>HOME</key>");
+  expect(plist).toContain(`<string>${expected.home}</string>`);
   expect(plist).toContain(`<string>${expected.launcherPath}</string>`);
   expect(plist).toContain([
     "    <string>--repo-root</string>",

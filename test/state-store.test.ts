@@ -560,8 +560,12 @@ describe("StateStore", () => {
           name: "agent_session_derived_summaries"
         },
         {
-          version: CURRENT_STATE_SCHEMA_VERSION,
+          version: 15,
           name: "slack_event_retention_indexes"
+        },
+        {
+          version: CURRENT_STATE_SCHEMA_VERSION,
+          name: "inbound_mention_backfill_indexes"
         }
       ]);
     } finally {
@@ -618,6 +622,98 @@ describe("StateStore", () => {
         ]
       })
     ]);
+    store.close();
+  });
+
+  it("filters inbound messages needing Slack mention identity backfill in SQLite", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "slack-codex-state-mention-backfill-"));
+    const sessionsRoot = path.join(stateDir, "sessions");
+    const store = new StateStore(stateDir, sessionsRoot);
+    await store.load();
+    await store.upsertSession({
+      key: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      workspacePath: "/tmp/sessions/C123-111.222/workspace",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z"
+    });
+
+    await store.upsertInboundMessage({
+      key: "needs-backfill",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.223",
+      source: "thread_reply",
+      userId: "U123",
+      text: "<@U234> follow up",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [],
+      status: "pending",
+      createdAt: "2026-03-15T00:00:01.000Z",
+      updatedAt: "2026-03-15T00:00:01.000Z"
+    });
+    await store.upsertInboundMessage({
+      key: "already-complete",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.224",
+      source: "thread_reply",
+      userId: "U123",
+      text: "<@U234> already resolved",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [
+        {
+          userId: "U234",
+          mention: "<@U234>",
+          username: "mock-user-234",
+          displayName: "Mock Display 234",
+          realName: "Mock User 234"
+        }
+      ],
+      status: "pending",
+      createdAt: "2026-03-15T00:00:02.000Z",
+      updatedAt: "2026-03-15T00:00:02.000Z"
+    });
+    await store.upsertInboundMessage({
+      key: "no-mentions",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.225",
+      source: "thread_reply",
+      userId: "U123",
+      text: "plain message",
+      mentionedUserIds: [],
+      mentionedUsers: [],
+      status: "pending",
+      createdAt: "2026-03-15T00:00:03.000Z",
+      updatedAt: "2026-03-15T00:00:03.000Z"
+    });
+    await store.upsertInboundMessage({
+      key: "wrong-source",
+      sessionKey: "C123:111.222",
+      channelId: "C123",
+      rootThreadTs: "111.222",
+      messageTs: "111.226",
+      source: "background_job_event",
+      userId: "U123",
+      text: "<@U234> synthetic",
+      mentionedUserIds: ["U234"],
+      mentionedUsers: [],
+      status: "pending",
+      createdAt: "2026-03-15T00:00:04.000Z",
+      updatedAt: "2026-03-15T00:00:04.000Z"
+    });
+
+    expect(
+      store.listInboundMessages({
+        source: ["app_mention", "direct_message", "thread_reply"],
+        needsMentionUserBackfill: true
+      }).map((message) => message.key)
+    ).toEqual(["needs-backfill"]);
     store.close();
   });
 

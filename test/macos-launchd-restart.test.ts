@@ -49,7 +49,7 @@ describe("macOS launchd restart helper", () => {
     await execFileAsync(process.execPath, [
       scriptPath,
       "--domain",
-      "gui/501",
+      "system",
       "--plist",
       plistPath,
       "--label",
@@ -69,9 +69,9 @@ describe("macOS launchd restart helper", () => {
     });
 
     await expect(fs.readFile(commandLog, "utf8")).resolves.toBe([
-      `bootout gui/501 ${plistPath}`,
-      `bootstrap gui/501 ${plistPath}`,
-      "kickstart -k gui/501/test.admin",
+      `bootout system ${plistPath}`,
+      `bootstrap system ${plistPath}`,
+      "kickstart -k system/test.admin",
       ""
     ].join("\n"));
     await expect(fs.readFile(helperLog, "utf8")).resolves.toContain("kickstart code=0");

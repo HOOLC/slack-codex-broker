@@ -11,6 +11,8 @@ const DEFAULT_RELEASE_PACKAGES: Record<ReleaseTarget, string> = {
   admin: "@agent-session-broker/admin",
   worker: "@agent-session-broker/worker"
 };
+const LAUNCHD_DOMAIN = "system";
+const LAUNCHDAEMON_DIR = "/Library/LaunchDaemons";
 export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 90_000;
 
 export type ReleaseTarget = "admin" | "worker";
@@ -95,7 +97,6 @@ interface ReleaseTargetPaths {
 }
 
 export class ReleaseDeploymentService {
-  readonly #uid = typeof process.getuid === "function" ? process.getuid() : 0;
   #operationQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -367,7 +368,7 @@ export class ReleaseDeploymentService {
       throw new Error(`Missing admin launchd restart helper: ${restartScriptPath}`);
     }
 
-    const domain = `gui/${this.#uid}`;
+    const domain = LAUNCHD_DOMAIN;
     const restartLogPath = path.join(this.options.serviceRoot, "logs", "admin-restart.log");
     await ensureDir(path.dirname(restartLogPath));
     this.#spawnDetached(process.execPath, [
@@ -407,10 +408,10 @@ export class ReleaseDeploymentService {
       throw new Error(`Missing ${options.serviceName} launchd plist: ${options.plistPath}`);
     }
 
-    const domain = `gui/${this.#uid}`;
-    await this.#exec("launchctl", ["bootout", domain, options.plistPath]).catch(() => undefined);
-    await this.#exec("launchctl", ["bootstrap", domain, options.plistPath]);
-    await this.#exec("launchctl", ["kickstart", "-k", `${domain}/${options.launchdLabel}`]);
+    const domain = LAUNCHD_DOMAIN;
+    await this.#launchctl(["bootout", domain, options.plistPath], options.plistPath).catch(() => undefined);
+    await this.#launchctl(["bootstrap", domain, options.plistPath], options.plistPath);
+    await this.#launchctl(["kickstart", "-k", `${domain}/${options.launchdLabel}`], options.plistPath);
   }
 
   async #assertWorkerHealthy(): Promise<void> {
@@ -488,9 +489,14 @@ export class ReleaseDeploymentService {
   }
 
   async #isLaunchdLoaded(label: string): Promise<boolean> {
-    const domain = `gui/${this.#uid}/${label}`;
+    const domain = `${LAUNCHD_DOMAIN}/${label}`;
+    const plistPath = label === this.options.workerLaunchdLabel
+      ? this.options.workerPlistPath
+      : label === this.options.adminLaunchdLabel
+        ? this.options.adminPlistPath
+        : undefined;
     try {
-      await this.#exec("launchctl", ["print", domain]);
+      await this.#launchctl(["print", domain], plistPath);
       return true;
     } catch {
       return false;
@@ -743,6 +749,23 @@ export class ReleaseDeploymentService {
   ) {
     const exec = this.options.exec ?? execCommand;
     return await exec(command, args, options.cwd ? { cwd: options.cwd, env: process.env } : { env: process.env });
+  }
+
+  async #launchctl(args: readonly string[], plistPath?: string | undefined) {
+    if (this.#shouldUseSudoForLaunchctl(plistPath)) {
+      return await this.#exec("sudo", ["launchctl", ...args]);
+    }
+    return await this.#exec("launchctl", args);
+  }
+
+  #shouldUseSudoForLaunchctl(plistPath?: string | undefined): boolean {
+    if (typeof process.getuid !== "function" || process.getuid() === 0) {
+      return false;
+    }
+    if (!plistPath) {
+      return false;
+    }
+    return path.resolve(plistPath).startsWith(`${LAUNCHDAEMON_DIR}${path.sep}`);
   }
 
   #spawnDetached(

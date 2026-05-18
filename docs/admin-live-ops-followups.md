@@ -94,7 +94,7 @@ The npm package shape is the active runtime contract:
 
 - admin deploy/rollback targets `@agent-session-broker/admin`;
 - worker deploy/rollback targets `@agent-session-broker/worker`;
-- launchd points at `current-admin` and `current-worker`;
+- system launchd LaunchDaemons point at `current-admin` and `current-worker`;
 - old root-level Git-worktree `current` / `previous` symlinks are legacy rollback
   artifacts only, not the deploy source of truth.
 

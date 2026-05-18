@@ -270,7 +270,40 @@ describe("ReleaseDeploymentService", () => {
     expect(detachedCommands[0]).toContain("macos-launchd-restart.mjs");
     expect(detachedCommands[0]).toContain("--plist " + fixture.adminPlistPath);
     expect(detachedCommands[0]).toContain("--label test.admin");
-    expect(detachedCommands[0]).toContain("--domain gui/");
+    expect(detachedCommands[0]).toContain("--domain system");
+    expect(detachedCommands[0]).not.toContain("--domain gui/");
+  });
+
+  it("restarts worker releases through the system launchd domain", async () => {
+    const fixture = await createDeploymentFixture("release-package-system-launchd-");
+    const commands: string[] = [];
+    let launchdLoaded = false;
+
+    stubHealthyRuntime();
+    const exec = createPackageExec({
+      commands,
+      versions: ["0.6.0"],
+      setLaunchdLoaded: (loaded) => {
+        launchdLoaded = loaded;
+      },
+      isLaunchdLoaded: () => launchdLoaded
+    });
+
+    const service = new ReleaseDeploymentService({
+      ...fixture.options,
+      packages: {
+        admin: "@agent-session-broker/admin",
+        worker: "@agent-session-broker/worker"
+      },
+      exec
+    });
+
+    await service.deploy({ target: "worker", version: "0.6.0" });
+    expect(commands).toContain(`launchctl bootout system ${fixture.workerPlistPath}`);
+    expect(commands).toContain(`launchctl bootstrap system ${fixture.workerPlistPath}`);
+    expect(commands).toContain("launchctl kickstart -k system/test.worker");
+    expect(commands).toContain("launchctl print system/test.worker");
+    expect(commands.some((command) => command.includes("gui/"))).toBe(false);
   });
 
   it("keeps legacy single-package deploy options out of the service contract", async () => {
