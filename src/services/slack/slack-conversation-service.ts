@@ -108,6 +108,8 @@ export class SlackConversationService {
   readonly #sessionPageLinkPosts = new Map<string, Promise<SlackSessionRecord>>();
   #botUserId = "";
   #activeTurnReconcileTimer: NodeJS.Timeout | undefined;
+  #startupRecoveryPromise: Promise<void> | undefined;
+  #stopped = true;
   #catchUpPromise: Promise<void> | undefined;
   #lastMissedThreadRecoveryAtMs = 0;
   #missedThreadRecoveryRateLimitBackoffMs = 0;
@@ -160,14 +162,13 @@ export class SlackConversationService {
   }
 
   async start(): Promise<void> {
-    await this.#reconcilePersistedActiveTurns();
-    await this.recoverMissedThreadMessages("socket_ready");
-    await this.#recoverPendingSessionsOnBoot();
-    await this.#recoverPendingSyntheticMessages();
-    this.#startActiveTurnReconciler();
+    this.#stopped = false;
+    this.#startupRecoveryPromise = this.#runStartupRecovery();
+    void this.#startupRecoveryPromise;
   }
 
   async stop(): Promise<void> {
+    this.#stopped = true;
     this.#stopActiveTurnReconciler();
     this.#agentRuntime.off("event", this.#agentRuntimeEventHandler);
     for (const runtime of this.#runtimeSessions.values()) {
@@ -180,6 +181,24 @@ export class SlackConversationService {
     const stopPromises = [...this.#statusControllers.values()].map((controller) => controller.stop());
     this.#statusControllers.clear();
     await Promise.all(stopPromises);
+  }
+
+  async #runStartupRecovery(): Promise<void> {
+    try {
+      await this.#reconcilePersistedActiveTurns();
+      await this.recoverMissedThreadMessages("socket_ready");
+      await this.#recoverPendingSessionsOnBoot();
+      await this.#recoverPendingSyntheticMessages();
+    } catch (error) {
+      logger.error("Failed to finish Slack startup recovery", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      this.#startupRecoveryPromise = undefined;
+      if (!this.#stopped) {
+        this.#startActiveTurnReconciler();
+      }
+    }
   }
 
   isAlreadyHandled(session: SlackSessionRecord, messageTs?: string | undefined): boolean {

@@ -37,6 +37,38 @@ afterEach(() => {
 });
 
 describe("SlackConversationService", () => {
+  it("does not block startup on persisted active turn reconciliation", async () => {
+    const agentRuntime = new EventEmitter();
+    const never = new Promise<never>(() => {});
+    const service = new SlackConversationService({
+      config: TEST_CONFIG,
+      sessions: {
+        listSessions: vi.fn(() => [TEST_SESSION]),
+        getSessionByKey: vi.fn(() => TEST_SESSION),
+        setActiveTurnId: vi.fn(),
+        upsertAgentTraceEvent: vi.fn()
+      } as never,
+      agentRuntime: Object.assign(agentRuntime, {
+        ensureSession: vi.fn(async () => ({ id: TEST_SESSION.agentSessionId })),
+        readTurn: vi.fn(() => never)
+      }) as never,
+      slackApi: {
+        setAssistantThreadStatus: vi.fn(),
+        addReaction: vi.fn(),
+        removeReaction: vi.fn()
+      } as never,
+      selfMessageFilter: {} as never
+    });
+
+    const startup = service.start().then(() => "started");
+    await expect(Promise.race([
+      startup,
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 50))
+    ])).resolves.toBe("started");
+
+    await service.stop();
+  });
+
   it("removes the agent runtime event listener on stop", async () => {
     const agentRuntime = new EventEmitter();
     const getSessionByKey = vi.fn(() => TEST_SESSION);

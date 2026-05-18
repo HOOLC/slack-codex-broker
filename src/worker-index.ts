@@ -63,13 +63,17 @@ export async function startWorkerService(): Promise<{
   try {
     await sessionManager.load();
     await diskCleanup.runOnce("startup");
-    await bridge.start();
-    await jobManager.start();
-    diskCleanup.start();
     await new Promise<void>((resolve, reject) => {
       server.listen(config.port, config.workerBindHost, () => resolve());
       server.once("error", reject);
     });
+    logger.info("Worker HTTP server listening", {
+      port: config.port,
+      workerBindHost: config.workerBindHost
+    });
+    await bridge.start();
+    await jobManager.start();
+    diskCleanup.start();
   } catch (error) {
     diskCleanup.stop();
     await jobManager.stop().catch(() => {});

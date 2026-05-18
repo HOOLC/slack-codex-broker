@@ -122,3 +122,38 @@ delete runtime state or secrets.
 - Obsolete Git-worktree symlinks are no longer presented as active runtime
   symlinks after package deployment verification.
 - `pnpm test` and `pnpm build` pass.
+
+## Worker Startup Readiness
+
+The worker must not require old session recovery to finish before it becomes
+observable and able to accept fresh Slack work.
+
+Production failure this protects against:
+
+- The worker process can be alive under launchd while `127.0.0.1:3001/readyz`
+  is closed.
+- The blocking section is startup recovery: persisted active turn reconciliation,
+  missed-message recovery, pending dispatch recovery, or synthetic message
+  recovery.
+- A single slow or stuck Codex turn snapshot read can keep the HTTP server from
+  listening and delay Slack Socket Mode startup, making the bot look dead even
+  though launchd shows the process as running.
+
+Target behavior:
+
+- Load state and run the cheap startup disk cleanup.
+- Start the worker HTTP server before Slack/runtime recovery so `/readyz` can
+  prove the process is reachable.
+- Start Slack Socket Mode without waiting for old active-turn reconciliation.
+- Run startup recovery in the background, log failures, and keep periodic
+  reconciliation responsible for later cleanup.
+- If a hard dependency such as Slack auth or agent runtime startup fails before
+  Socket Mode can start, fail the worker process so launchd can restart it.
+
+Additional acceptance:
+
+- A test with a persisted active turn whose runtime snapshot read never resolves
+  must show `SlackConversationService.start()` returning promptly.
+- A regression test must keep worker HTTP listen before `bridge.start()`.
+- Live verification must show admin `/readyz`, worker `/readyz`, current worker
+  version, and a recent Slack Socket Mode connection after deploy.
