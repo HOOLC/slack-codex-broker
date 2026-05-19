@@ -55,7 +55,8 @@ Copy `.env.example` to `.env` and fill in:
 - optional `LOG_RAW_CODEX_RPC`
 - optional `LOG_RAW_HTTP_REQUESTS`
 - optional `LOG_RAW_MAX_BYTES`
-- optional disk cleanup settings (`DISK_CLEANUP_*`)
+- optional disk cleanup settings (`DISK_CLEANUP_*`), including safe-by-default
+  dry-run mode and session cache TTL
 - one Codex auth mode
 - optional host Codex home mount if you want the container to inherit your global `~/.codex` memory/instructions
 
