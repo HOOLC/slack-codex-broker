@@ -92,7 +92,7 @@ volumes:
 
 At startup the broker copies that file into its own `CODEX_HOME`/data directory and uses it to authenticate the embedded Codex app-server.
 
-The main Codex runtime disables all built-in MCP servers by default. Keep tool access outside the main runtime and use broker-managed integrations instead. This only removes those MCP servers from the broker's container-local Codex config. It does not modify your host `~/.codex/config.toml`.
+The main Codex runtime disables all built-in MCP servers by default, and starts the Codex app-server with the `apps` feature disabled so Apps/Connectors are not exposed to model turns. Keep tool access outside the main runtime and use broker-managed integrations instead. MCP removal only affects the broker's container-local Codex config. It does not modify your host `~/.codex/config.toml`.
 
 ## Reuse Global Codex Memory
 

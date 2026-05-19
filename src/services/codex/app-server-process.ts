@@ -12,6 +12,7 @@ import { syncUserCodexHome } from "./codex-home.js";
 import { syncGeminiHome } from "./gemini-home.js";
 
 const ALL_MCP_SERVERS = "*";
+const DISABLED_CODEX_APP_SERVER_FEATURES = ["apps"] as const;
 
 export class AppServerProcess {
   readonly #brokerHttpBaseUrl: string;
@@ -127,7 +128,14 @@ export class AppServerProcess {
   }
 
   async #startProcess(env: NodeJS.ProcessEnv, allowPortRecovery: boolean): Promise<void> {
-    this.#child = spawn("codex", ["app-server", "--listen", this.url], {
+    const args = [
+      "app-server",
+      ...DISABLED_CODEX_APP_SERVER_FEATURES.flatMap((feature) => ["--disable", feature]),
+      "--listen",
+      this.url
+    ];
+
+    this.#child = spawn("codex", args, {
       detached: true,
       env,
       stdio: ["ignore", "pipe", "pipe"]

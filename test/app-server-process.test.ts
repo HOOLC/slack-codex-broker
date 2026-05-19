@@ -11,6 +11,10 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 async function startHealthyHttpServer(): Promise<{
   readonly close: () => Promise<void>;
   readonly url: string;
@@ -61,6 +65,7 @@ describe("AppServerProcess", () => {
     const tempadServer = await startHealthyHttpServer();
     const fakeBinDir = path.join(tempRoot, "bin");
     const fakeCodexPath = path.join(fakeBinDir, "codex");
+    const argsFile = path.join(tempRoot, "codex-args.txt");
     const hostCodexHomePath = path.join(tempRoot, "host-codex-home");
     const hostGeminiHomePath = path.join(tempRoot, "host-gemini-home");
     const codexHome = path.join(tempRoot, "codex-home");
@@ -82,6 +87,7 @@ describe("AppServerProcess", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "if [ \"${1:-}\" = \"app-server\" ]; then",
+        `  printf '%s\\n' "$@" > ${shellQuote(argsFile)}`,
         "  printf '%s\\n' 'codex app-server (WebSockets)' >&2",
         "  printf '%s\\n' '  listening on: ws://127.0.0.1:4590' >&2",
         "  sleep 0.1",
@@ -119,6 +125,8 @@ describe("AppServerProcess", () => {
     try {
       await processManager.start();
       await delay(300);
+      const observedArgs = (await fs.readFile(argsFile, "utf8")).trim().split("\n");
+      expect(observedArgs.slice(0, 4)).toEqual(["app-server", "--disable", "apps", "--listen"]);
     } finally {
       await processManager.stop().catch(() => {});
       await tempadServer.close().catch(() => {});
