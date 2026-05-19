@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AppServerProcess } from "../src/services/codex/app-server-process.js";
+import {
+  AppServerProcess,
+  parseCodexAppServerPidsFromPsOutput
+} from "../src/services/codex/app-server-process.js";
 
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,7 +129,13 @@ describe("AppServerProcess", () => {
       await processManager.start();
       await delay(300);
       const observedArgs = (await fs.readFile(argsFile, "utf8")).trim().split("\n");
-      expect(observedArgs.slice(0, 4)).toEqual(["app-server", "--disable", "apps", "--listen"]);
+      expect(observedArgs).toEqual([
+        "app-server",
+        "--disable",
+        "apps",
+        "--listen",
+        "ws://127.0.0.1:4590"
+      ]);
     } finally {
       await processManager.stop().catch(() => {});
       await tempadServer.close().catch(() => {});
@@ -139,5 +148,17 @@ describe("AppServerProcess", () => {
     expect(observedWrites.join("")).toContain(
       "disconnecting slow connection after outbound queue filled: ConnectionId(1)"
     );
+  });
+
+  it("finds app-server listeners in ps output when feature flags appear before --listen", () => {
+    const output = [
+      "123 /opt/homebrew/bin/codex app-server --disable apps --listen ws://127.0.0.1:4590",
+      "124 /opt/homebrew/bin/codex app-server --listen ws://localhost:4590",
+      "125 /opt/homebrew/bin/codex app-server --disable apps --listen ws://127.0.0.1:4591",
+      "126 /opt/homebrew/bin/codex exec --listen ws://127.0.0.1:4590",
+      "123 /opt/homebrew/bin/codex app-server --disable apps --listen ws://127.0.0.1:4590"
+    ].join("\n");
+
+    expect(parseCodexAppServerPidsFromPsOutput(output, 4590)).toEqual([123, 124]);
   });
 });

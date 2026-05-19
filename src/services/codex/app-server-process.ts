@@ -623,10 +623,10 @@ function parsePidList(output: string): number[] {
   )];
 }
 
-function parseCodexAppServerPidsFromPsOutput(output: string, port: number): number[] {
+export function parseCodexAppServerPidsFromPsOutput(output: string, port: number): number[] {
   const listenPatterns = [
-    `app-server --listen ws://127.0.0.1:${port}`,
-    `app-server --listen ws://localhost:${port}`
+    `--listen ws://127.0.0.1:${port}`,
+    `--listen ws://localhost:${port}`
   ];
 
   return [...new Set(
@@ -634,7 +634,7 @@ function parseCodexAppServerPidsFromPsOutput(output: string, port: number): numb
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => listenPatterns.some((pattern) => line.includes(pattern)))
+      .filter((line) => line.includes("app-server") && listenPatterns.some((pattern) => line.includes(pattern)))
       .map((line) => Number.parseInt(line.split(/\s+/, 2)[0] ?? "", 10))
       .filter((value) => Number.isInteger(value) && value > 0)
   )];
